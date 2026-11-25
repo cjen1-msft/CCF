@@ -10,15 +10,20 @@ import all ConsensusCoverage.ReadersCorpus
 import all ConsensusCoverage.Readers
 import all ConsensusCoverage.ReadersGenerated
 import all ConsensusCoverage.ReadersPolarGenerated
+import all ConsensusCoverage.ReadersPolarBacking
+import all ConsensusCoverage.ReadersPolarSummary
+import all ConsensusCoverage.ReadersPolarObserve
 import all ConsensusCoverage.ReadersPolar
 import all ConsensusCoverage.ReplayAnswers
 import all ConsensusCoverage.CaseWitnesses
+import ConsensusCoverage.ReadersWitnessesSplit
 
 namespace ConsensusCoverage.ReadersWitnesses
 
 open ActionProfile ReadersWitnessProof
 
 set_option maxHeartbeats 0
+set_option pp.maxSteps 1500
 set_option maxRecDepth 8192
 
 -- Replay the observed offsets with the kernel; the measurements are not proofs.
@@ -163,18 +168,36 @@ private def claim30 : Claim :=
   ], by decide +kernel⟩
 private def claim31 : Claim :=
   ⟨131, 5, [.receive_message_requestPreVoteRequest], by decide +kernel⟩
+private def claim32 : Claim :=
+  ⟨0, 0, [.appendEntry_configuration_none], by decide +kernel⟩
+private def claim33 : Claim :=
+  ⟨20, 0, [.appendEntry_configuration_some], by decide +kernel⟩
+private def claim34 : Claim :=
+  ⟨121, 5, [.commit_backed_fromSource_neg], by decide +kernel⟩
+private def claim35 : Claim :=
+  ⟨0, 1, [.weaken_backed_inr], by decide +kernel⟩
+private def claim36 : Claim :=
+  ⟨26, 0, [.prefix_small_inr], by decide +kernel⟩
+private def claim37 : Claim :=
+  ⟨131, 3, [.vals_upToDate_lt_or_eq_of_le_inr], by decide +kernel⟩
 
 private def claims : List Claim := [
   claim0, claim1, claim2, claim3, claim4, claim5, claim6, claim7, claim8, claim9, claim10,
   claim11, claim12, claim13, claim14, claim15, claim16, claim17, claim18, claim19, claim20,
   claim21, claim22, claim23, claim24, claim25, claim26, claim27, claim28, claim29, claim30,
-  claim31
+  claim31, claim32, claim33, claim34, claim35, claim36, claim37
 ]
 
-/-- Cases witnessed by an executable reader on a replayed corpus step. -/
-public def witnessed : List Classes.StepBranch := claims.flatMap (·.questions)
+private def caseClaims : List (Claim ReadersCorpus.caseStepAt) :=
+  [⟨20, 4, [
+    .observeTerm_log_message_appendEntriesResponse, .observeTerm_commitIndex_message_appendEntriesResponse
+  ], by decide +kernel⟩]
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 171 := by decide
+/-- Cases witnessed by an executable reader on a replayed corpus step. -/
+public def witnessed : List Classes.StepBranch :=
+  (claims.flatMap (·.questions) ++ caseClaims.flatMap (·.questions)) ++ [.summary_message_requestVoteResponse]
+
+public theorem count : witnessed.Nodup ∧ witnessed.length = 180 := by decide
 
 /-- Count the current union without pinning the independently updated case census. -/
 public theorem union_count :
@@ -182,9 +205,17 @@ public theorem union_count :
       CaseWitnesses.witnessed.length +
         (witnessed.filter fun b => !CaseWitnesses.witnessed.contains b).length := by decide
 
+public theorem certified_union_count :
+    (witnessed ++ CaseWitnesses.witnessed).eraseDups.length = 199 := by decide
+
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
-  obtain ⟨c, _, found⟩ := List.mem_flatMap.mp mem
-  exact c.occurs found
+  rw [witnessed, List.mem_append, List.mem_append, List.mem_singleton] at mem
+  rcases mem with (direct | cases) | rfl
+  · obtain ⟨c, _, found⟩ := List.mem_flatMap.mp direct
+    exact c.occurs found
+  · obtain ⟨c, _, found⟩ := List.mem_flatMap.mp cases
+    exact c.occurs found
+  · exact ReadersWitnessesSplit.voteResponse
 
 end ConsensusCoverage.ReadersWitnesses

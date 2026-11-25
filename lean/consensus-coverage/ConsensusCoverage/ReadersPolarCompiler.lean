@@ -40,18 +40,38 @@ theorem picked_answer {p : Prop} (a : Bool) (b : Unit → Bool)
     | true => simpa [answer, h, picked] using no h
   · simpa [answer, picked] using yes rfl
 
+theorem picked_orElse {p : Prop} {a b : Option Bool} (ha : picked a p) (hb : picked b p) :
+    picked (a.orElse fun _ => b) p := by
+  cases a <;> assumption
+
 theorem false_test {p : Prop} : false = true → p := by simp
 
 meta section
 
 open Lean Meta ReadersCompiler ReadersShapes
 
+def defaultScope := `ConsensusCoverage.ReadersPolarCompiler
+
+structure Plan where
+  scope : Name := defaultScope
+  reuse : Array Name := #[]
+  order : Array Name := #[]
+  heartbeats : Nat := 0
+  positive : Name → Bool := fun _ => true
+  negative : Name → Bool := fun _ => true
+  required : Bool := false
+
 private structure PolarEnv where
   exact : Env
   pools : Expr
+  plan : Plan
   memo : IO.Ref (Std.HashMap (Name × Bool) (Option (Name × Name)))
 
 private def pole (yes : Bool) : String := if yes then "yes" else "no"
+
+private def names (scope n : Name) (yes : Bool) : Name × Name :=
+  let test := scope ++ `R ++ (pole yes ++ "_" ++ shortName n).toName
+  (test, test.appendAfter "_sound")
 
 private def fromProof (h : Expr) : MetaM Compiled := do
   let .forallE _ eq _ _ ← inferType h | throwError "expected a soundness implication"
@@ -73,7 +93,10 @@ private def combine (l r : Option Compiled) : MetaM (Option Compiled) := do
 private def poolFor (pools α : Expr) : MetaM (Option Expr) := do
   if α.isConstOf ``Safety.Observation then
     return some (mkApp (mkConst ``ReadersPolar.observations) pools)
+  if α.isConstOf ``EntryContent then
+    return some (mkApp (mkConst ``ReadersPolar.entryContents) pools)
   let attr := match α.getAppFn.constName? with
+    | some ``AppendEntryInput => some ``Pools.appendInputs
     | some ``Model.State => some ``Pools.states
     | some ``NodeID => some ``Pools.ids
     | some ``NodeState => some ``Pools.records
@@ -359,8 +382,15 @@ private partial def compileP (e : PolarEnv) (n : Name) (info : RInfo) (yes : Boo
     CM (Option (Name × Name)) := do
   let key := (n, yes)
   if let some v := (← e.memo.get)[key]? then return v
+  let build ← getEnv
+  for scope in #[e.plan.scope] ++ e.plan.reuse do
+    let pair := names scope n yes
+    if build.contains pair.1 && build.contains pair.2 then
+      e.memo.modify (·.insert key (some pair))
+      return some pair
   e.memo.modify (·.insert key none)
   let result ← tryCatchRuntimeEx (emitP e n info yes) fun ex => do
+    if e.plan.heartbeats != 0 && ex.isMaxHeartbeat then throw ex
     let text := (← ex.toMessageData.toString).take 350 |>.replace "\n" " " |>.replace "\t" " "
     block n s!"{pole yes}:exception" text
     return none
@@ -395,21 +425,23 @@ private partial def emitP (e : PolarEnv) (n : Name) (info : RInfo) (yes : Bool) 
     if env.isFrame b then
       block n s!"{pole yes}:runtime_frame" ""
       return none
-    let short := (pole yes ++ "_" ++ shortName n).toName
-    let test := `ConsensusCoverage.ReadersPolarCompiler.R ++ short
-    let sound := test.appendAfter "_sound"
+    let (test, sound) := names e.plan.scope n yes
     let rargs := #[env.inst, env.xv, e.pools] ++ params
     let pargs := #[env.inst, env.f, env.t, env.c, env.xv, env.ok, e.pools] ++ params
     let emit : MetaM Unit := commitIfNoEx do
-      addReader <| .defnDecl {
+      let decl := Declaration.defnDecl {
         name := test, levelParams := [], type := ← mkForallFVars rargs (mkConst ``Bool),
         value := ← mkLambdaFVars rargs (← Core.betaReduce b), hints := .regular 0, safety := .safe }
+      addCertificate decl
       let lhs ← mkEq (mkAppN (mkConst test) rargs) (mkConst ``Bool.true)
       let call := mkAppN (mkConst n) (pre ++ args)
       let goal ← mkArrow lhs (if yes then call else mkApp (mkConst ``Not) call)
       addCertificate <| .thmDecl {
         name := sound, levelParams := [], type := ← mkForallFVars pargs goal,
         value := ← mkLambdaFVars pargs cert }
+      -- Code generation may run asynchronously, after this root's proof budget.
+      withOptions (Elab.async.set · false) <|
+        withTheReader Core.Context (fun c => { c with maxHeartbeats := 0 }) (compileDecl decl)
     emit
     return some (test, sound)
 
@@ -471,7 +503,7 @@ private def retained (env : Env) (n : Name) : MetaM RInfo := do
     return { hasC1, pinned, guards, conds, reader := some (run, iff) }
 
 def generate (env : Env) (armNames : Array Name) (xs : Array Expr)
-    (selected : Name → Bool := fun _ => true) : MetaM Unit := do
+    (selected : Name → Bool := fun _ => true) (plan : Plan := {}) : MetaM Unit := do
   let start ← IO.monoMsNow
   let memo ← IO.mkRef {}
   let b := xs[4]!
@@ -488,26 +520,45 @@ def generate (env : Env) (armNames : Array Name) (xs : Array Expr)
       pending := pending ++ children.toList.toArray
   withLocalDeclD `pools (mkConst ``Pools) fun pools => do
     let mut st : St := { memo := exact }
-    let e : PolarEnv := { exact := env, pools, memo }
-    let mut values := #[]
-    let mut proofs := #[]
+    let e : PolarEnv := { exact := env, pools, plan, memo }
+    let order := plan.order ++ armNames.filter (!plan.order.contains ·)
+    let mut compiled : Std.HashMap Name (Expr × Expr) := {}
     let mut rows := #[]
     let rargs := #[env.inst, env.xv, pools]
     let pargs := #[env.inst, env.f, env.t, env.c, env.xv, env.ok, pools]
     let log ← env.reportDir.mapM fun dir => IO.FS.Handle.mk (dir / "polar-blockers.tsv") .write
     let progress ← env.reportDir.mapM fun dir => IO.FS.Handle.mk (dir / "polar-progress.tsv") .write
-    for n in armNames do
+    for n in order do
       let info := exact[n]?.getD {}
       let fallback := info.reader.isNone && selected n
       let blocking := st.blockers.size
       let t0 ← IO.monoMsNow
       if fallback then
-        for polarity in [true, false] do
-          let (_, next) ← (compileP e n info polarity).run st
-          st := next
+        let polarities := [true, false].filter fun yes => (if yes then plan.positive else plan.negative) n
+        for polarity in polarities do
+          let attempt := (compileP e n info polarity).run st
+          if plan.heartbeats == 0 then
+            let (_, next) ← attempt
+            st := next
+          else
+            let before ← memo.get
+            let out ← tryCatchRuntimeEx
+              (some <$> withTheReader Core.Context (fun c => { c with maxHeartbeats := plan.heartbeats })
+                (Core.withCurrHeartbeats attempt)) fun ex =>
+              if ex.isMaxHeartbeat then pure none else throw ex
+            if let some (_, next) := out then
+              st := next
+            else
+              -- An interrupted child is not a failed child. Keep only the
+              -- previous memo; completed declarations can still be reused.
+              memo.set before
+              st := { st with blockers := st.blockers.push (shortName n, s!"{pole polarity}:budget", "heartbeat") }
       let out ← memo.get
-      let pos := lookup out n true
-      let neg := lookup out n false
+      let pos := if fallback && plan.positive n then lookup out n true else none
+      let neg := if fallback && plan.negative n then lookup out n false else none
+      if plan.required && fallback then
+        if plan.positive n && pos.isNone then throwError "could not build required positive reader {n}"
+        if plan.negative n && neg.isNone then throwError "could not build required negative reader {n}"
       let result ← if pos.isNone && neg.isNone then
         pure (mkApp (mkConst ``Option.none [.zero]) (mkConst ``Bool), mkConst ``True.intro)
       else do
@@ -523,8 +574,7 @@ def generate (env : Env) (armNames : Array Name) (xs : Array Expr)
         let cert ← mkAppOptM ``picked_answer #[p, a, negBody, ← prove pos p,
           ← prove neg (mkApp (mkConst ``Not) p)]
         pure (mkApp2 (mkConst ``answer) a negBody, cert)
-      values := values.push result.1
-      proofs := proofs.push result.2
+      compiled := compiled.insert n result
       let mark (ok : Bool) := if ok then "1" else "0"
       rows := rows.push s!"{shortName n}\t{mark info.reader.isSome}\t{mark pos.isSome}\t{mark neg.isSome}"
       if let some log := log then
@@ -538,22 +588,58 @@ def generate (env : Env) (armNames : Array Name) (xs : Array Expr)
     let casesOn (level : Level) (motive : Expr) (arms : Array Expr) :=
       mkAppN (mkConst ``Classes.StepBranch.casesOn [level]) (#[motive, b] ++ arms)
     let callArgs := rargs.push b
+    let readerName := plan.scope ++ `readView
+    let correctName := plan.scope ++ `readView_correct
+    let results := armNames.map (compiled[·]!)
     addReader <| .defnDecl {
       name := readerName, levelParams := [], type := ← mkForallFVars callArgs ret,
-      value := ← mkLambdaFVars callArgs (casesOn (.succ .zero) (← mkLambdaFVars #[b] ret) values),
+      value := ← mkLambdaFVars callArgs (casesOn (.succ .zero) (← mkLambdaFVars #[b] ret)
+        (results.map Prod.fst)),
       hints := .abbrev, safety := .safe }
     let goal := mkApp2 (mkConst ``picked) (mkAppN (mkConst readerName) callArgs)
       (mkAppN (mkConst ``SolvedWitnesses.dispatch) xs)
     let proofArgs := xs ++ #[env.xv, env.ok, pools]
     addCertificate <| .thmDecl {
       name := correctName, levelParams := [], type := ← mkForallFVars proofArgs goal,
-      value := ← mkLambdaFVars proofArgs (casesOn .zero (← mkLambdaFVars #[b] goal) proofs) }
+      value := ← mkLambdaFVars proofArgs (casesOn .zero (← mkLambdaFVars #[b] goal)
+        (results.map Prod.snd)) }
     if let some dir := env.reportDir then
       IO.FS.writeFile (dir / "polar-status.tsv") ("predicate\texact\tyes\tno\n" ++
         String.intercalate "\n" rows.toList ++ "\n")
     let generated ← memo.get
     let successful p := (generated.toArray.filter fun ((_, polarity), v) => polarity == p && v.isSome).size
+    if let some dir := env.reportDir then
+      let output ← IO.FS.Handle.mk (dir / "polar-tests.tsv") .write
+      output.putStrLn "predicate\tpolarity\tmodule_scope"
+      for ((n, yes), result) in generated.toArray do
+        if let some (test, _) := result then
+          output.putStrLn s!"{shortName n}\t{pole yes}\t{test.getPrefix.getPrefix}"
+      output.flush
     logInfo m!"one-sided tests (all predicates): {successful true} yes, {successful false} no; {(← IO.monoMsNow) - start} ms"
+
+def join (env : Env) (xs : Array Expr) (scope : Name) (shards : Array Name) : MetaM Unit := do
+  withLocalDeclD `pools (mkConst ``Pools) fun pools => do
+    let b := xs[4]!
+    let rargs := #[env.inst, env.xv, pools, b]
+    let pargs := xs ++ #[env.xv, env.ok, pools]
+    let p := mkAppN (mkConst ``SolvedWitnesses.dispatch) xs
+    let ret := mkApp (mkConst ``Option [.zero]) (mkConst ``Bool)
+    let mut read := mkApp (mkConst ``Option.none [.zero]) (mkConst ``Bool)
+    let mut proof ← mkExpectedTypeHint (mkConst ``True.intro) (mkApp2 (mkConst ``picked) read p)
+    for shard in shards.reverse do
+      let a := mkAppN (mkConst (shard ++ `readView)) rargs
+      let ha := mkAppN (mkConst (shard ++ `readView_correct)) pargs
+      let tail ← withLocalDeclD `u (mkConst ``Unit) fun u => mkLambdaFVars #[u] read
+      read ← mkAppM ``Option.orElse #[a, tail]
+      proof ← mkAppOptM ``picked_orElse #[p, a, none, ha, proof]
+    let readerName := scope ++ `readView
+    addReader <| .defnDecl {
+      name := readerName, levelParams := [], type := ← mkForallFVars rargs ret,
+      value := ← mkLambdaFVars rargs read, hints := .abbrev, safety := .safe }
+    let goal := mkApp2 (mkConst ``picked) (mkAppN (mkConst readerName) rargs) p
+    addCertificate <| .thmDecl {
+      name := scope ++ `readView_correct, levelParams := [], type := ← mkForallFVars pargs goal,
+      value := ← mkLambdaFVars pargs proof }
 
 end
 
