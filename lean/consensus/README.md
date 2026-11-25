@@ -597,12 +597,13 @@ questions the compiler cannot handle, the reader was written from what the
 case means and proved equal to the question's answer on every initialized
 step: [`HandReadersA`](../consensus-coverage/ConsensusCoverage/HandReadersA.lean)
 (75 questions) and [`HandReadersB`](../consensus-coverage/ConsensusCoverage/HandReadersB.lean)
-(39), each with `read_correct` and `read_total`. A typical one: a
-vote-request summary case holds exactly when the step delivers a vote
-request and the receiver's observed term decides the grant. The 29
-impossible cases are read as constant false. Together with the 188 above
-that makes 319 of the 516 step questions exactly readable; these sources
-are not yet combined into one reader.
+(39), each with `read_correct` and `read_total`. A typical one: the case
+`commit_backed_eq_zero_or_pos_inl` holds exactly when the actor becomes
+primary, was not already primary in that term, and had commit index zero
+before the step. The 29 impossible cases are read as constant false.
+Together with the 188 above, [319 of the 516 step questions are exactly
+readable and 197 are not](../consensus-coverage/ConsensusCoverage/ReaderInventory.lean).
+These sources are not yet combined into one reader.
 
 [`case-meanings.tsv`](../consensus-coverage/case-meanings.tsv) describes,
 for each of the 311 reachable questions that had no compiled reader, what
