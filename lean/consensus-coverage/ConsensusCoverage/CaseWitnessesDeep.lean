@@ -11,6 +11,7 @@ import all ConsensusCoverage.DeepLeaderCases
 import all ConsensusCoverage.DeepEffectCases
 import all ConsensusCoverage.DeepInputCases
 import all ConsensusCoverage.DeepGrantCases
+import all ConsensusCoverage.DeepActorCases
 import all ConsensusCoverage.ReadersCorpus
 import all ConsensusCoverage.EventSupport
 import all ConsensusCoverage.JointWitnesses
@@ -59,6 +60,10 @@ private def grantAt (k : DeepGrantCases.GrantCase) (chosen : Option Step) (voter
     (passed : chosen.any (DeepGrantCases.check · k voter candidate 3 ⟨3, 2, 2⟩) = true) :
     Certificate :=
   checkedAt k.column chosen _ passed (DeepGrantCases.correct · k voter candidate 3 ⟨3, 2, 2⟩)
+
+private def actorAt (k : DeepActorCases.ActorCase) (chosen : Option Step)
+    (passed : chosen.any (DeepActorCases.check · k) = true) : Certificate :=
+  checkedAt k.column chosen _ passed (DeepActorCases.correct · k)
 
 private def transfer (from_ to_ : Classes.StepBranch) (known : from_ ∈ ReadersWitnesses.witnessed)
     (enter : ∀ s : Step, @SolvedWitnesses.sig ⟨s.cfg⟩ s.frame s.after s.context from_ →
@@ -120,6 +125,10 @@ local macro "election " sc:term:arg i:num b:term:arg positive:term:arg enter:ter
     $positive (by decide +kernel) $enter)
 
 open DeepSchedules in
+local macro "onScript " sc:term:arg i:num : term =>
+  `(selected (Script.run $sc) (Script.choices $sc) (by unfold Run.valid; decide) $i)
+
+open DeepSchedules in
 private def certificates : List Certificate :=
   [certify .commit_backed_max_eq_or_inl (selected duplicateAck [] validAck 5) (by decide +kernel),
    observed installLater 12 .leader_floor_led_inr,
@@ -160,11 +169,15 @@ private def certificates : List Certificate :=
    grantAt .selfVote (selected divergent.run divergent.choices (by unfold Run.valid; decide) 6)
      1 1 (by decide +kernel),
    grantAt .peerVote (selected divergent.run divergent.choices (by unfold Run.valid; decide) 7)
-     2 1 (by decide +kernel)]
+     2 1 (by decide +kernel),
+   actorAt .keyHere (onScript installLater 1) (by decide +kernel),
+   actorAt .keyOther (onScript installLater 1) (by decide +kernel),
+   actorAt .bootstrap (onScript installLater 0) (by decide +kernel),
+   actorAt .previousElection (onScript installLater 7) (by decide +kernel)]
 
 public def witnessed : List Classes.StepBranch := certificates.map Subtype.val
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 27 := by decide +kernel
+public theorem count : witnessed.Nodup ∧ witnessed.length = 31 := by decide +kernel
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
