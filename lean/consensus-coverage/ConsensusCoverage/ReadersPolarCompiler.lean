@@ -57,7 +57,9 @@ structure Plan where
   reuse : Array Name := #[]
   order : Array Name := #[]
   heartbeats : Nat := 0
-  yesOnly : Bool := false
+  positive : Name → Bool := fun _ => true
+  negative : Name → Bool := fun _ => true
+  required : Bool := false
 
 private structure PolarEnv where
   exact : Env
@@ -427,15 +429,19 @@ private partial def emitP (e : PolarEnv) (n : Name) (info : RInfo) (yes : Bool) 
     let rargs := #[env.inst, env.xv, e.pools] ++ params
     let pargs := #[env.inst, env.f, env.t, env.c, env.xv, env.ok, e.pools] ++ params
     let emit : MetaM Unit := commitIfNoEx do
-      addReader <| .defnDecl {
+      let decl := Declaration.defnDecl {
         name := test, levelParams := [], type := ← mkForallFVars rargs (mkConst ``Bool),
         value := ← mkLambdaFVars rargs (← Core.betaReduce b), hints := .regular 0, safety := .safe }
+      addCertificate decl
       let lhs ← mkEq (mkAppN (mkConst test) rargs) (mkConst ``Bool.true)
       let call := mkAppN (mkConst n) (pre ++ args)
       let goal ← mkArrow lhs (if yes then call else mkApp (mkConst ``Not) call)
       addCertificate <| .thmDecl {
         name := sound, levelParams := [], type := ← mkForallFVars pargs goal,
         value := ← mkLambdaFVars pargs cert }
+      -- Code generation may run asynchronously, after this root's proof budget.
+      withOptions (Elab.async.set · false) <|
+        withTheReader Core.Context (fun c => { c with maxHeartbeats := 0 }) (compileDecl decl)
     emit
     return some (test, sound)
 
@@ -528,7 +534,7 @@ def generate (env : Env) (armNames : Array Name) (xs : Array Expr)
       let blocking := st.blockers.size
       let t0 ← IO.monoMsNow
       if fallback then
-        let polarities := if plan.yesOnly then [true] else [true, false]
+        let polarities := [true, false].filter fun yes => (if yes then plan.positive else plan.negative) n
         for polarity in polarities do
           let attempt := (compileP e n info polarity).run st
           if plan.heartbeats == 0 then
@@ -548,8 +554,11 @@ def generate (env : Env) (armNames : Array Name) (xs : Array Expr)
               memo.set before
               st := { st with blockers := st.blockers.push (shortName n, s!"{pole polarity}:budget", "heartbeat") }
       let out ← memo.get
-      let pos := if fallback then lookup out n true else none
-      let neg := if fallback && !plan.yesOnly then lookup out n false else none
+      let pos := if fallback && plan.positive n then lookup out n true else none
+      let neg := if fallback && plan.negative n then lookup out n false else none
+      if plan.required && fallback then
+        if plan.positive n && pos.isNone then throwError "could not build required positive reader {n}"
+        if plan.negative n && neg.isNone then throwError "could not build required negative reader {n}"
       let result ← if pos.isNone && neg.isNone then
         pure (mkApp (mkConst ``Option.none [.zero]) (mkConst ``Bool), mkConst ``True.intro)
       else do

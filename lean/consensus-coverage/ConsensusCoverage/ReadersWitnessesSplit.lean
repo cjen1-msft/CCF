@@ -8,6 +8,7 @@ import all ConsensusCoverage.ReadersCorpus
 import all ConsensusCoverage.ReadersAtoms
 import all ConsensusCoverage.ReadersGenerated
 import all ConsensusCoverage.ReadersPolarGenerated
+import all ConsensusCoverage.ReadersPolarSummary
 import all ConsensusCoverage.ReadersPolar
 import all ConsensusCoverage.SolvedWitnesses
 meta import Lean
@@ -42,8 +43,8 @@ local elab "bool_or_witness " ix:num : tactic => do
 
 -- Checking one successful disjunct avoids evaluating the preceding failures.
 private theorem positive :
-    @ReadersPolarCompiler.R.yes_step_summary_message_requestVoteResponse ⟨step.cfg⟩ x pools = true := by
-  unfold ReadersPolarCompiler.R.yes_step_summary_message_requestVoteResponse
+    @ReadersPolarSummary.R.yes_step_summary_message_requestVoteResponse ⟨step.cfg⟩ x pools = true := by
+  unfold ReadersPolarSummary.R.yes_step_summary_message_requestVoteResponse
   bool_or_witness 12
   rw [Bool.and_eq_true]
   exact ⟨by decide +kernel, by decide +kernel⟩
@@ -55,7 +56,7 @@ public theorem voteResponse : ∃ s : Step, label s (.step .summary_message_requ
     Option.eq_some_of_isSome sawView
   have same := Option.some.inj (made.symm.trans made')
   refine ⟨step, (label_true step _).mpr ((SolvedWitnesses.sig_iff step.context _).mpr ?_)⟩
-  exact @ReadersPolarCompiler.R.yes_step_summary_message_requestVoteResponse_sound
+  exact @ReadersPolarSummary.R.yes_step_summary_message_requestVoteResponse_sound
     _ step.frame step.after step.context x (same ▸ ok) pools positive
 
 end ConsensusCoverage.ReadersWitnessesSplit

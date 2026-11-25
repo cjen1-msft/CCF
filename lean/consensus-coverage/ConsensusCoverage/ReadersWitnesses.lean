@@ -10,6 +10,9 @@ import all ConsensusCoverage.ReadersCorpus
 import all ConsensusCoverage.Readers
 import all ConsensusCoverage.ReadersGenerated
 import all ConsensusCoverage.ReadersPolarGenerated
+import all ConsensusCoverage.ReadersPolarBacking
+import all ConsensusCoverage.ReadersPolarSummary
+import all ConsensusCoverage.ReadersPolarObserve
 import all ConsensusCoverage.ReadersPolar
 import all ConsensusCoverage.ReplayAnswers
 import all ConsensusCoverage.CaseWitnesses
@@ -20,6 +23,7 @@ namespace ConsensusCoverage.ReadersWitnesses
 open ActionProfile ReadersWitnessProof
 
 set_option maxHeartbeats 0
+set_option pp.maxSteps 1500
 set_option maxRecDepth 8192
 
 -- Replay the observed offsets with the kernel; the measurements are not proofs.
@@ -200,6 +204,9 @@ public theorem union_count :
     (witnessed ++ CaseWitnesses.witnessed).eraseDups.length =
       CaseWitnesses.witnessed.length +
         (witnessed.filter fun b => !CaseWitnesses.witnessed.contains b).length := by decide
+
+public theorem certified_union_count :
+    (witnessed ++ CaseWitnesses.witnessed).eraseDups.length = 199 := by decide
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
