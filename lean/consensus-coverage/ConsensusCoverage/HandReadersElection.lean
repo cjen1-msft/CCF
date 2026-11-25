@@ -5,6 +5,7 @@ module
 
 public import ConsensusCoverage.HandReadersABase
 import all ConsensusCoverage.HandReadersElectionCarried
+import all ConsensusCoverage.HandReadersElectionGrant
 
 namespace ConsensusCoverage.HandReadersElection
 
@@ -15,6 +16,9 @@ private def lookup : (b : Classes.StepBranch) → Option (Exact b)
   | .carried_of_chain_certificate_backed => some (Carried.exactReader .backed)
   | .carried_of_chain_agreement_inl => some (Carried.exactReader .contained)
   | .carried_of_chain_agreement_inr => some (Carried.exactReader .agree)
+  | .grantFactsBefore_grant_inr => some (Grant.exactReader .recorded)
+  | .grantFactsBefore_supported_inl => some (Grant.exactReader .self)
+  | .grantFactsBefore_supported_inr => some (Grant.exactReader .seen)
   | _ => none
 
 public def covered : List Classes.StepBranch :=
@@ -34,6 +38,6 @@ public theorem read_total (s : Step) {b} (h : b ∈ covered) :
   simpa only [read, Option.isSome_map] using (List.mem_filter.mp h).2
 
 set_option maxRecDepth 8192 in
-public theorem count : covered.Nodup ∧ covered.length = 4 := by decide +kernel
+public theorem count : covered.Nodup ∧ covered.length = 7 := by decide +kernel
 
 end ConsensusCoverage.HandReadersElection
