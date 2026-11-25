@@ -5,21 +5,26 @@ module
 
 public import ConsensusCoverage.MaximumCasesB
 public import ConsensusCoverage.ReceiveCasesB
+public import ConsensusCoverage.CampaignCasesB
 import all ConsensusCoverage.MaximumCasesB
 import all ConsensusCoverage.ReceiveCasesB
+import all ConsensusCoverage.CampaignCasesB
 
 namespace ConsensusCoverage.CaseWitnessesDeepB
 
 open ActionProfile
 
-public def witnessed : List Classes.StepBranch := MaximumCasesB.questions ++ ReceiveCasesB.witnessed
+public def witnessed : List Classes.StepBranch :=
+  MaximumCasesB.questions ++ ReceiveCasesB.witnessed ++ CampaignCasesB.witnessed
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 28 := by decide +kernel
+public theorem count : witnessed.Nodup ∧ witnessed.length = 31 := by decide +kernel
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
-  rcases List.mem_append.mp mem with maximum | message
+  simp only [witnessed, List.mem_append] at mem
+  rcases mem with (maximum | message) | campaign
   · exact MaximumCasesB.occurs maximum
   · exact ReceiveCasesB.occurs message
+  · exact CampaignCasesB.occurs campaign
 
 end ConsensusCoverage.CaseWitnessesDeepB
