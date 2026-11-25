@@ -85,4 +85,28 @@ public def denyVote : Replay := script! ({ DeepSchedules.divergent with
 public def staleVote : Replay := script! ({ DeepSchedules.doomed with
   ops := DeepSchedules.doomed.ops.take 20 ++ [.msg 1 0 .requestVoteRequest] })
 
+-- During the first campaign, 1 sent a vote request to 0. Deliver it
+-- after 0 helps elect 2 in term 4, then return the newer negative reply.
+public def higherVoteReply : Replay := script! ({ DeepSchedules.threeTerms false with
+  ops := (DeepSchedules.threeTerms false).ops ++
+    [.msg 1 0 .requestVoteRequest, .msg 0 1 .requestVoteResponse] })
+
+-- Before accepting the nomination, 1 also requested a pre-vote from 0.
+public def higherPreReply : Replay := script! ({ DeepSchedules.threeTerms false with
+  ops := (DeepSchedules.threeTerms false).ops.take 7 ++ [.input 1 (.timeout .election)] ++
+    (DeepSchedules.threeTerms false).ops.drop 7 ++
+    [.msg 1 0 .requestPreVoteRequest, .msg 0 1 .requestPreVoteResponse] })
+
+public def higherPreRequest : Replay := script! ({ DeepSchedules.divergent with
+  ops := DeepSchedules.divergent.ops.take 7 ++
+    [.input 1 (.timeout .election), .msg 1 0 .requestPreVoteRequest] })
+
+-- A pending duplicate append reaches voter 2 after it voted for leader 1.
+-- Clear the older ACK first so the last reply carries term 3 to primary 0.
+public def higherAck : Replay := script! ({ DeepSchedules.divergent with
+  ops := DeepSchedules.divergent.ops.take 5 ++
+    [.msg 2 0 .appendEntriesResponse, .input 0 (.sendEntries 2 2)] ++
+    (DeepSchedules.divergent.ops.drop 5).take 4 ++
+    [.msg 0 2 .appendEntriesRequest, .msg 2 0 .appendEntriesResponse] })
+
 end ConsensusCoverage.DeepSchedulesB
