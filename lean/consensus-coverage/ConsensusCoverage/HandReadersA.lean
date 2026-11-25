@@ -52,6 +52,7 @@ private def lookup : (b : Classes.StepBranch) → Option (Exact b)
   | .foldlM__items_cons => some (Append.exactReader .cons)
   | .appendBatch_summary_mem_append_inl => some (Batch.exactReader false)
   | .appendBatch_summary_mem_append_inr => some (Batch.exactReader true)
+  | .appendBatch_summary_role_inl => some Batch.retained
   | .handleAppendEntriesRequest_stepDown_pos => some (Handler.exactReader .down)
   | .handleAppendEntriesRequest_stepDown_neg => some (Handler.exactReader .stay)
   | .handleAppendEntriesRequest_conflict_none => some (Handler.exactReader .clear)
@@ -94,6 +95,6 @@ public theorem read_total (s : Step) {b} (h : b ∈ covered) :
   simpa only [read, Option.isSome_map] using (List.mem_filter.mp h).2
 
 set_option maxRecDepth 8192 in
-public theorem count : covered.Nodup ∧ covered.length = 50 := by decide +kernel
+public theorem count : covered.Nodup ∧ covered.length = 51 := by decide +kernel
 
 end ConsensusCoverage.HandReadersA
