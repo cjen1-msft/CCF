@@ -29,15 +29,15 @@ def run(exe, directory, mode, log, term, queue, census=False, exhaust=("--check-
     if census:
         cmd.extend(["--case-out", prefix.with_suffix(".cases.tsv")])
     if readers:
-        cmd.append("--reader-census")
-        if mode == "--scale":
+        cmd.append("--factored-reader-census" if readers == "factored" else "--reader-census")
+        if mode == "--scale" and readers != "factored":
             cmd[3:3] = ["--audit-reader-every", "1"]
     text = subprocess.check_output(cmd, text=True)
     prefix.with_suffix(".log").write_text(text)
     frame = re.search(r"^frames: (\d+); expanded: (\d+); frontier: 0; fixpoint: true$", text, re.M)
     edge = re.search(r"^steps: (\d+);.*?keys: (\d+)", text, re.M)
     assert frame and edge and frame[1] == frame[2], prefix
-    if readers and mode == "--scale":
+    if readers is True and mode == "--scale":
         assert f"ordered-history row comparisons: {edge[1]}\n" in text, prefix
     with out.open() as f:
         keys = sorted(int(x["key"]) for x in csv.DictReader(f, delimiter="\t"))
@@ -52,6 +52,21 @@ def census(directory, mode, queue):
         return list(csv.DictReader(f, delimiter="\t"))
 
 
+def check_reader_audit(log, partial, full, steps):
+    assert len(partial) == len(full) == 516
+    known = extra = 0
+    for small, large in zip(partial, full, strict=True):
+        assert small["question"] == large["question"]
+        for row in (small, large):
+            assert sum(int(row[k]) for k in ("known_true", "known_false", "unknown")) == steps
+        for k in ("known_true", "known_false"):
+            assert int(small[k]) <= int(large[k])
+            known += int(small[k])
+            extra += int(large[k]) - int(small[k])
+    assert f"ordered-history row comparisons: {steps}\n" in log
+    assert f"known finite answers checked: {known}; additional ordered answers: {extra}\n" in log
+
+
 def main():
     if not __debug__:
         raise SystemExit("run without python -O: the oracle comparisons require assertions")
@@ -62,7 +77,11 @@ def main():
                    help="skip the two-million-frame log-five cell and the Lean-only queue-three run")
     p.add_argument("--readers", action="store_true",
                    help="also check generated census and wider keys against ordered histories")
+    p.add_argument("--reader-queue", type=int, choices=(0, 1, 2),
+                   help="run the reader comparison at one queue cap (0 is the five-edge smoke test)")
     args = p.parse_args()
+    if args.reader_queue is not None and not args.readers:
+        p.error("--reader-queue requires --readers")
     exe = args.exe.resolve(strict=True)
     args.directory.mkdir(exist_ok=True, parents=True)
     key = args.directory / "decoder-key.txt"
@@ -105,23 +124,40 @@ def main():
     if args.readers:
         reader_dir = args.directory / "readers"
         reader_dir.mkdir(exist_ok=True)
-        for q in ((1,) if args.small else (1, 2)):
+        factored_dir = reader_dir / "factored"
+        factored_dir.mkdir(exist_ok=True)
+        rejected = subprocess.run(
+            ["nice", exe, "--symbolic", "--max-network", "0", "--reader-census",
+             "--case-out", reader_dir / "invalid.cases.tsv", "--out", reader_dir / "invalid.tsv"],
+            capture_output=True, text=True,
+        )
+        assert rejected.returncode and "no ordered witness pools" in rejected.stderr
+        queues = (0, 1) if args.small else (0, 1, 2)
+        for q in (queues if args.reader_queue is None else (args.reader_queue,)):
             scores = {}
-            for mode in ("--scale", "--symbolic", "--exhaust"):
+            for mode in ("--scale", "--exhaust"):
                 scores[mode] = run(exe, reader_dir, mode, 2, 3, q, True,
                                    exhaust=("--incremental", "--merge-workers", "3", "--merge-every", "0"),
                                    readers=True)
+            for mode in ("--scale", "--symbolic"):
+                scores["factored" + mode] = run(exe, factored_dir, mode, 2, 3, q, True, readers="factored")
             assert len(set(scores.values())) == 1
             reference = census(reader_dir, "exhaust", q)
             # A different BFS action tie-break is allowed; witness depth must be minimal.
             cols = ("question", "known_true", "known_false", "unknown", "depth")
             def observations(rows):
                 return [tuple(r[k] for k in cols) for r in rows]
-            for mode in ("scale", "symbolic"):
-                assert observations(census(reader_dir, mode, q)) == observations(reference)
+            assert observations(census(reader_dir, "scale", q)) == observations(reference)
+            partial = census(factored_dir, "scale", q)
+            assert observations(census(factored_dir, "symbolic", q)) == observations(partial)
+            # Omitting one-sided witness pools may only discard answers. The every-edge
+            # audit also checks the direction of each known answer, before aggregation.
+            check_reader_audit((reader_dir / f"scale-L2T3Q{q}.log").read_text(), partial,
+                               census(reader_dir, "scale", q), scores["--scale"][1])
             wider = []
-            for mode in ("scale", "symbolic", "exhaust"):
-                text = (reader_dir / f"{mode}-L2T3Q{q}.log").read_text()
+            for directory, mode in ((reader_dir, "scale"), (reader_dir, "exhaust"),
+                                    (factored_dir, "scale"), (factored_dir, "symbolic")):
+                text = (directory / f"{mode}-L2T3Q{q}.log").read_text()
                 m = re.search(r"^wider projection: (\d+); extra coordinates: (\d+)$", text, re.M)
                 assert m and int(m[1]) >= scores["--scale"][2] and int(m[2]) > 0
                 wider.append(m.groups())
