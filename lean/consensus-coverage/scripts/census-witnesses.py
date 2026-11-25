@@ -25,6 +25,15 @@ def main():
     a = src[:src.index(start if start in src else "private def certificates :")]
     b = src[src.index(end):]
     old = set(re.findall(r"\.(\w+)", " ".join(re.findall(r"caseAt \d+ \[([^]]+)\]", a))))
+    # Keep an already certified shortest tie if it is still in the input tables:
+    # changing it churns both the proof and downstream indices into the corpus.
+    incumbent = {}
+    for _, schedule, choices, offset, names in re.findall(
+        r"private def (bounded\d+) : Run :=\n  ([^\n]+)\n.*? := certify \1 ([^\n]+?) \1Valid\n"
+        r"  \[caseAt (\d+) \[([^]]+)\]\]", src[src.index(start):] if start in src else "", re.S
+    ):
+        for q in re.findall(r"\.(\w+)", names):
+            incumbent[q] = int(offset) + 1, schedule, choices
     best = {}
     for path in args.tables:
         with path.open() as f:
@@ -42,7 +51,7 @@ def main():
                 raise ValueError(f"positive without a replay: {path}, {q}")
             if args.max_depth is not None and w[0] > args.max_depth:
                 continue
-            best[q] = min(w, best.get(q, w))
+            best[q] = min(w, best.get(q, w), key=lambda x: (x[0], x != incumbent.get(q), x))
     groups = defaultdict(list)
     for q, w in sorted(best.items()):
         groups[w].append(q)
