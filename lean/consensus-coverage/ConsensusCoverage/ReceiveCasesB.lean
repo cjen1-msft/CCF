@@ -69,6 +69,10 @@ private def ack : Node.Message → AppendEntriesResponse
   | .appendEntriesResponse q => q
   | _ => ⟨0, false, 0⟩
 
+private def appendRequest : Node.Message → AppendEntriesRequest
+  | .appendEntriesRequest q => q
+  | _ => ⟨0, 0, 0, [], 0⟩
+
 private abbrev Certificate := {b : Classes.StepBranch // ∃ s : Step, label s (.step b) = true}
 
 local macro "at_sample " r:term:arg i:num b:term:arg a:ident c:ident ok:ident : tactic => `(tactic|
@@ -150,6 +154,77 @@ private theorem preReplyStable (q : RequestVoteResponse) (ev : x.event = .receiv
     · exact absurd h.1 (Nat.not_lt_of_ge le)
     · exact h.2
 
+private abbrev peerGuard (m : Node.Message) (n : NodeID) (x : XView) : Prop :=
+  match m with
+  | .requestVoteResponse _ | .requestPreVoteResponse _ => n ∈ eligiblePeers x.base.pre x.base.actor
+  | _ => True
+
+private theorem bumpEntry (m : Node.Message) (ev : x.event = .receive n m)
+    (kind : Bumping m) (peer : peerGuard m n x) :
+    (reach% step_observe_bumping_bump_pos[15]) f t c x.base.pre m := by
+  cases m with
+  | appendEntriesRequest q =>
+    exact Or.inl ⟨q, by short_path ok changed ev, rfl⟩
+  | requestVoteRequest q =>
+    exact Or.inr (.inl ⟨q, by short_path ok changed ev, rfl⟩)
+  | requestVoteResponse q =>
+    exact Or.inr (.inr (.inl ⟨x.base.actor, n, q, by long_path ok changed ev, fun h => h.2 peer, rfl⟩))
+  | requestPreVoteRequest q =>
+    exact Or.inr (.inr (.inr (.inl ⟨q, by short_path ok changed ev, rfl⟩)))
+  | requestPreVoteResponse q =>
+    exact Or.inr (.inr (.inr (.inr ⟨x.base.actor, n, q, by long_path ok changed ev, fun h => h.2 peer, rfl⟩)))
+  | appendEntriesResponse | proposeRequestVoteRequest => exact kind.elim
+
+private theorem bumpYes (m : Node.Message) (ev : x.event = .receive n m)
+    (kind : Bumping m) (peer : peerGuard m n x) (lt : x.base.pre.currentTerm < m.term) :
+    ∀ {b}, Classes.StepBranch.observe_bumping_bump_pos = b → sig c b := by
+  rintro _ rfl
+  branch_at 15
+  exact ⟨_, _, bumpEntry ok changed n m ev kind peer, lt⟩
+
+private theorem bumpNo (m : Node.Message) (ev : x.event = .receive n m)
+    (kind : Bumping m) (peer : peerGuard m n x) (le : ¬x.base.pre.currentTerm < m.term) :
+    ∀ {b}, Classes.StepBranch.observe_bumping_bump_neg = b → sig c b := by
+  rintro _ rfl
+  branch_at 15
+  exact ⟨_, _, bumpEntry ok changed n m ev kind peer, le⟩
+
+private abbrev bumpQuestion : Node.Message → Classes.StepBranch
+  | .appendEntriesRequest _ => .observe_bumping_message_appendEntriesRequest
+  | .requestVoteRequest _ => .observe_bumping_message_requestVoteRequest
+  | .requestVoteResponse _ => .observe_bumping_message_requestVoteResponse
+  | .requestPreVoteRequest _ => .observe_bumping_message_requestPreVoteRequest
+  | .requestPreVoteResponse _ => .observe_bumping_message_requestPreVoteResponse
+  | _ => .observe_bumping_bump_pos
+
+private theorem bumpKind (m : Node.Message) (ev : x.event = .receive n m)
+    (kind : Bumping m) (peer : peerGuard m n x) (lt : x.base.pre.currentTerm < m.term)
+    {b : Classes.StepBranch} (same : bumpQuestion m = b) : sig c b := by
+  subst b
+  have entry := bumpEntry ok changed n m ev kind peer
+  cases m <;> first | exact kind.elim | (branch_at 15; exact
+    ⟨_, _, entry, lt, _, rfl, trivial, lt, Nat.ne_of_lt lt, Nat.ne_of_lt lt⟩)
+
+private theorem ackLeader (q : AppendEntriesResponse) (ev : x.event = .receive n (.appendEntriesResponse q))
+    (peer : n ∈ eligiblePeers x.base.pre x.base.actor)
+    (leader : x.base.pre.role = .primary) : step_observe_response_leader_pos f t c := by
+  branch_at 15
+  refine ⟨x.base.pre, ⟨x.base.actor, n, ?_, fun h => h.2 peer⟩, leader⟩
+  exact ⟨x.event, ⟨t, c.tr, changedSummary ok changed, (X.tr_actor_eq ok).symm,
+    (X.tr_pre_eq ok).symm, (X.tr_event_eq ok).symm⟩, _, ev, ev, q, rfl⟩
+
+private theorem ackHigher (q : AppendEntriesResponse) (ev : x.event = .receive n (.appendEntriesResponse q))
+    (peer : n ∈ eligiblePeers x.base.pre x.base.actor) (leader : x.base.pre.role = .primary)
+    (lt : x.base.pre.currentTerm < q.term) : step_observe_response_bump_pos f t c := by
+  branch_at 15
+  exact ⟨x.base.pre, q, ⟨x.base.actor, n, by long_path ok changed ev, fun h => h.2 peer⟩, leader, lt⟩
+
+private theorem ackStable (q : AppendEntriesResponse) (ev : x.event = .receive n (.appendEntriesResponse q))
+    (peer : n ∈ eligiblePeers x.base.pre x.base.actor) (leader : x.base.pre.role = .primary)
+    (le : ¬x.base.pre.currentTerm < q.term) : step_observe_response_bump_neg f t c := by
+  branch_at 15
+  exact ⟨x.base.pre, q, ⟨x.base.actor, n, by long_path ok changed ev, fun h => h.2 peer⟩, leader, le⟩
+
 end
 
 private def voteBump : Certificate := by
@@ -164,13 +239,29 @@ local macro "check_receive " b:term:arg r:term:arg i:num get:ident cert:ident : 
   apply $cert (c := c) (x := a.x) ok (by decide +kernel) (src a.x.event) ($get (msg a.x.event))
   all_goals decide +kernel)
 
+local macro "check_bump " b:term:arg r:term:arg i:num tag:term:arg get:ident cert:ident : term => `(by
+  refine ⟨$b, ?_⟩
+  at_sample $r $i $b a c ok
+  exact $cert (c := c) (x := a.x) ok (by decide +kernel) (src a.x.event) ($tag ($get (msg a.x.event)))
+    (by decide +kernel) True.intro (by first | exact True.intro | decide +kernel) (by decide +kernel) (b := $b) rfl)
+
 private def certificates : List Certificate := [
   voteBump,
   check_receive .preVoteRequest_summary_observe_bumping_inl higherPreRequest 8 request preNew,
   check_receive .voteResponse_summary_observe_bumping_inl higherVoteReply 20 response voteReplyNew,
   check_receive .preVoteResponse_summary_observe_bumping_inl higherPreReply 21 response preReplyNew,
   check_receive .voteResponse_summary_observe_bumping_inr campaign 5 response voteReplyStable,
-  check_receive .preVoteResponse_summary_observe_bumping_inr preVote 4 response preReplyStable]
+  check_receive .preVoteResponse_summary_observe_bumping_inr preVote 4 response preReplyStable,
+  check_receive .observe_response_leader_pos firstAck 2 ack ackLeader,
+  check_receive .observe_response_bump_neg firstAck 2 ack ackStable,
+  check_receive .observe_response_bump_pos higherAck 12 ack ackHigher,
+  check_bump .observe_bumping_bump_pos campaign 4 Node.Message.requestVoteRequest request bumpYes,
+  check_bump .observe_bumping_bump_neg firstAck 1 Node.Message.appendEntriesRequest appendRequest bumpNo,
+  check_bump .observe_bumping_message_appendEntriesRequest divergent 10 Node.Message.appendEntriesRequest appendRequest bumpKind,
+  check_bump .observe_bumping_message_requestVoteRequest campaign 4 Node.Message.requestVoteRequest request bumpKind,
+  check_bump .observe_bumping_message_requestVoteResponse higherVoteReply 20 Node.Message.requestVoteResponse response bumpKind,
+  check_bump .observe_bumping_message_requestPreVoteRequest higherPreRequest 8 Node.Message.requestPreVoteRequest request bumpKind,
+  check_bump .observe_bumping_message_requestPreVoteResponse higherPreReply 21 Node.Message.requestPreVoteResponse response bumpKind]
 
 public def witnessed : List Classes.StepBranch := certificates.map Subtype.val
 
