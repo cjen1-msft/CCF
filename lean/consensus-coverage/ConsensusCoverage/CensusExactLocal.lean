@@ -37,6 +37,13 @@ public def Factored (b : Classes.StepBranch) : Prop :=
     let view : XView := {x with base := {x.base with past}, committedBefore := pre, committedAfter := post}
     @CensusGhost.Exec.readView input ⟨cfg⟩ view b = (@ReadersCompiler.readView ⟨cfg⟩ x b).orElse fallback
 
+/-- Whether arbitrary message queues can be substituted after computing the
+physical action's changed bit. The actor, recorded event and outputs stay fixed. -/
+public def QueueStable (b : Classes.StepBranch) : Prop :=
+  ∀ (cfg : FullProfile.Configuration) (x : XView) (before after : List Model.Envelope),
+    let base := {x.base with before := {x.base.before with network := before}, after := {x.base.after with network := after}}
+    @ReadersCompiler.readView ⟨cfg⟩ {x with base} b = @ReadersCompiler.readView ⟨cfg⟩ x b
+
 meta section
 
 open Lean Meta Elab Term
@@ -59,24 +66,38 @@ private partial def localBody (root : Name) : MetaM Bool := do
 end
 
 open Lean Meta Elab Term in
-local elab "local_certificates" : term => do
+local elab "local_certificates " claim:ident : term => do
   let scope := `ConsensusCoverage.ReadersCompiler.R
   let names := (← getEnv).constants.toList.filterMap fun (n, d) => do
     guard (n.getPrefix == scope && n.getString!.startsWith "step_")
     let .defnInfo _ := d | none
     return n
-  let mut expr ← `(([] : List { b : Classes.StepBranch // Factored b }))
+  let mut expr ← `(([] : List { b : Classes.StepBranch // $claim b }))
   for n in names.mergeSort (fun a b => a.getString! ≥ b.getString!) do
     unless ← localBody n do continue
     let arm := mkIdent <| ``Classes.StepBranch ++ Name.mkSimple ((n.getString!.drop 5).toString)
-    expr ← `((⟨$arm, by unfold Factored; intros; rfl⟩) :: $expr)
+    if claim.getId == `QueueStable then
+      let goal := mkApp (mkConst ``QueueStable) (mkConst arm.getId)
+      let stable ← forallTelescopeReducing goal fun _ body => do
+        let some (_, lhs, rhs) := (← whnf body).eq? | return false
+        isDefEq lhs rhs
+      unless stable do continue
+    expr ← `((⟨$arm, by unfold $claim; intros; rfl⟩) :: $expr)
   elabTerm expr none
 
-private def certificates : List { b : Classes.StepBranch // Factored b } := local_certificates
+private def certificates : List { b : Classes.StepBranch // Factored b } := local_certificates Factored
 
 public def columns : List Classes.StepBranch := certificates.map Subtype.val
 
 public theorem correct {b : Classes.StepBranch} (mem : b ∈ columns) : Factored b := by
+  obtain ⟨⟨_, proof⟩, _, rfl⟩ := List.mem_map.mp mem
+  exact proof
+
+private def queueCertificates : List { b : Classes.StepBranch // QueueStable b } := local_certificates QueueStable
+
+public def queueColumns : List Classes.StepBranch := queueCertificates.map Subtype.val
+
+public theorem queue_correct {b : Classes.StepBranch} (mem : b ∈ queueColumns) : QueueStable b := by
   obtain ⟨⟨_, proof⟩, _, rfl⟩ := List.mem_map.mp mem
   exact proof
 
