@@ -6,6 +6,8 @@ module
 public import ConsensusCoverage.CensusPriorRows
 public import ConsensusCoverage.CensusObservationRows
 public import ConsensusCoverage.CensusProbe
+public import ConsensusCoverage.CensusGrantRows
+import all ConsensusCoverage.CensusGrantRows
 import all ConsensusCoverage.CensusPriorRows
 import all ConsensusCoverage.CensusObservationRows
 import all ConsensusCoverage.CensusExactLocal
@@ -53,5 +55,24 @@ public theorem action_read {b : Classes.StepBranch} (mem : b ∈ columns) (cfg :
     exact agree
   · exact CensusObservationRows.action_read obsMem cfg s t act past g h pre post
   · exact CensusPriorRows.action_read priorMem cfg s t act past g h commits
+
+public def withGrants : List Classes.StepBranch := columns ++ CensusGrantRows.columns
+
+public theorem withGrants_count : withGrants.Nodup ∧ withGrants.length = 74 ∧
+    withGrants.all ReadersCompiler.generatedColumns.contains = true := by decide +kernel
+
+/-- Keeping the pre-step grant frontier exact covers the two additional
+campaign branches. No post-step grant or queue equivalence is assumed. -/
+public theorem action_read_with_grants {b : Classes.StepBranch} (mem : b ∈ withGrants)
+    (cfg : FullProfile.Configuration) (s t : Model.State) (act : Model.Action)
+    (past : List Model.State) (g h : ExplorerGhost.Ghost)
+    (pre : CensusObserved.Tracks g (s :: past)) (post : CensusObserved.Tracks h (t :: s :: past))
+    (commits : CensusCommitHistory.CommitHistory (cfg.min?.getD 0) g (s :: past))
+    (grants : CensusGrants.GrantHistory g (s :: past)) :
+    ((CensusGhost.answers cfg g h s t act).bind (· b)) =
+      ((ofXAction cfg s t past act).bind fun x => @ReadersCompiler.readView ⟨cfg⟩ x b) := by
+  rcases List.mem_append.mp mem with old | granted
+  · exact action_read old cfg s t act past g h pre post commits
+  · exact CensusGrantRows.action_read granted cfg s t act past g h pre grants
 
 end ConsensusCoverage.CensusHistoryRows
