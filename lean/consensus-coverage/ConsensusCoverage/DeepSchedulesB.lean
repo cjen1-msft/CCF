@@ -126,4 +126,21 @@ public def delayedAck : Replay := script! (⟨{0, 1}, [0, 1], [
     {content := .signature, flushes := [(0, 4)]}, {content := .signature}]),
   .msg 1 0 .appendEntriesRequest, .msg 1 0 .appendEntriesResponse]⟩ : DeepSchedules.Script)
 
+-- Re-adding a confirmed peer makes it eligible to receive its own committed
+-- removal. Either its log already has the confirmation or a NACK forces a copy.
+private def rejoin (copied : Bool) : DeepSchedules.Script := ⟨{0, 1}, [0, 1], [
+  .input 0 (.append [{content := .transaction 1 {configuration := some {0}}},
+    {content := .signature, flushes := [(1, 3)]}]),
+  .msg 0 1 .appendEntriesRequest, .msg 1 0 .appendEntriesResponse,
+  .input 0 (.append [{content := .transaction 2 {retirementConfirmations := {1}}},
+    {content := .signature, flushes := if copied then [(1, 5)] else []}])] ++
+  (if copied then [.msg 0 1 .appendEntriesRequest] else []) ++
+  [.input 0 (.append [{content := .transaction 3 {configuration := some {0, 1}}}]),
+   .msg 0 1 .appendEntriesRequest] ++
+  (if copied then [] else [.msg 1 0 .appendEntriesResponse,
+    .input 0 (.sendEntries 1 5), .msg 0 1 .appendEntriesRequest])⟩
+
+public def retireOnHeartbeat : Replay := script! (rejoin true)
+public def retireInLoop : Replay := script! (rejoin false)
+
 end ConsensusCoverage.DeepSchedulesB
