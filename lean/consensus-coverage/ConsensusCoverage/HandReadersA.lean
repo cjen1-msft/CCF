@@ -7,10 +7,14 @@ public import ConsensusCoverage.HandReadersABase
 import all ConsensusCoverage.HandReadersAAppend
 import all ConsensusCoverage.HandReadersALeader
 import all ConsensusCoverage.HandReadersAObserve
+import all ConsensusCoverage.HandReadersBSummary
 
 namespace ConsensusCoverage.HandReadersA
 
 open Consensus ActionProfile
+
+private def summary (k : HandReadersBSummary.Kind) : Exact (HandReadersBSummary.column k) :=
+  ⟨(HandReadersBSummary.answer · · · · · k),(HandReadersBSummary.exact_answer · k)⟩
 
 private def lookup : (b : Classes.StepBranch) → Option (Exact b)
   | .leader_logs_commit_pos => some (Leader.exactReader true)
@@ -18,6 +22,11 @@ private def lookup : (b : Classes.StepBranch) → Option (Exact b)
   | .appendEntry_configuration_none => some (Append.exactReader .none)
   | .appendEntry_configuration_some => some (Append.exactReader .some)
   | .foldlM__items_cons => some (Append.exactReader .cons)
+  | .summary_event_internal => some (summary .internal)
+  | .summary_input_append => some (summary .append)
+  | .summary_input_sendEntries => some (summary .send)
+  | .summary_input_timeout => some (summary .timeout)
+  | .summary_kind_election => some (summary .election)
   | .observeTerm_log_message_appendEntriesResponse => some (Observe.ackAlias true)
   | .observeTerm_commitIndex_message_appendEntriesResponse => some (Observe.ackAlias false)
   | .observeTerm_log_message_proposeRequestVoteRequest => some (Observe.exactReader true .call)
@@ -51,6 +60,6 @@ public theorem read_total (s : Step) {b} (h : b ∈ covered) :
   simpa only [read, Option.isSome_map] using (List.mem_filter.mp h).2
 
 set_option maxRecDepth 8192 in
-public theorem count : covered.Nodup ∧ covered.length = 19 := by decide +kernel
+public theorem count : covered.Nodup ∧ covered.length = 24 := by decide +kernel
 
 end ConsensusCoverage.HandReadersA
