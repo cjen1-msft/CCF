@@ -37,7 +37,7 @@ def cut (kind : Kind) (st : NodeState) (r : RequestVoteRequest) (k : Nat) : Bool
   | .older => tied && decide (k < t)
   | .same => tied && (k == t)
 
-def view (kind : Kind) (x : XView) : Bool :=
+def view (kind : Kind) (x : XView) (pick : NodeState → Nat → Bool := fun _ _ => true) : Bool :=
   let hist := x.base.before :: x.base.past
   let elect := electionExact x.base.after x.base.before x.base.past x.base.actor
     x.base.post.currentTerm x.base.pre.log x.base.pre.commitIndex
@@ -48,7 +48,7 @@ def view (kind : Kind) (x : XView) : Bool :=
       Grant.checkSide .recorded v n ((observations hist n).any (·.currentTerm == post.currentTerm)) &&
       (observations hist v).any fun o => decide (o.currentTerm < post.currentTerm) &&
         (signatureIndices o.log).any fun i =>
-          decide (termAt o.log i = o.currentTerm ∧ o.log.take i <+: st.log) &&
+          (pick st i && decide (termAt o.log i = o.currentTerm ∧ o.log.take i <+: st.log)) &&
           ((elect && decide (n = x.base.actor ∧ post.currentTerm = x.base.post.currentTerm) &&
             cut kind st req o.currentTerm) ||
           candidates.any fun r => cut kind st r o.currentTerm && !grantedIn hist v n post.currentTerm r)
@@ -128,8 +128,13 @@ private theorem fresh_iff {x : XView} (ok : x.Matches c) (kind : Kind) {v n k a 
       and_congr (equiv r) (not_congr (request_grant_before ok v n k r).symm))]
   simp only [List.any_eq_true,Bool.and_eq_true,Bool.not_eq_true',Bool.eq_false_iff,X.grant_before ok]
 
-private theorem view_iff {x : XView} (ok : x.Matches c) (kind : Kind) :
-    view kind x = true ↔ Evidence c kind := by
+abbrev Selected (kind : Kind) (pick : NodeState → Nat → Bool) := ∃ v n term r k l i st post,
+  RankSites.Input c v n term r k l i ∧
+  (v,st) ∈ f.current.nodes ∧ (v,post) ∈ t.nodes ∧ st.currentTerm ≤ term ∧
+  post.currentTerm = term ∧ post.votedFor = some n ∧ l.take i <+: st.log ∧ cut kind st r k = true ∧ pick st i
+
+theorem selected_iff {x : XView} (ok : x.Matches c) (kind : Kind) (pick : NodeState → Nat → Bool) :
+    view kind x pick = true ↔ Selected c kind pick := by
   have elect : Grant.Election c ↔ electionExact x.base.after x.base.before x.base.past x.base.actor
       x.base.post.currentTerm x.base.pre.log x.base.pre.commitIndex = true := by
     simp only [Grant.Election,X.elect_now ok,View.actor_eq ok.1,View.pre_eq ok.1,View.post_eq ok.1,true_and]
@@ -143,20 +148,25 @@ private theorem view_iff {x : XView} (ok : x.Matches c) (kind : Kind) :
     ← sig_index]
   simp only [← before,← after,← View.actor_eq ok.1,← View.post_eq ok.1]
   constructor
-  · rintro ⟨v,st,m,_,post,m',⟨rfl,le⟩,n,vote,side,⟨a,l⟩,seen,lt,i,signed,⟨atI,sub⟩,route⟩
+  · rintro ⟨v,st,m,_,post,m',⟨rfl,le⟩,n,vote,side,⟨a,l⟩,seen,lt,i,signed,⟨pass,atI,sub⟩,route⟩
     have obs := (X.seen_before ok ..).mpr seen
     rcases route with ⟨⟨win,hn,ht⟩,guard⟩ | fresh
     · exact ⟨v,n,_,_,a,l,i,st,post,⟨.inr ⟨win,hn,ht,rfl⟩,⟨st,post,m,m',le,rfl,vote,cut_up _ guard⟩,
-        side,obs,lt,signed,atI⟩,m,m',le,rfl,vote,sub,guard⟩
+        side,obs,lt,signed,atI⟩,m,m',le,rfl,vote,sub,guard,pass⟩
     · obtain ⟨r,guard,ng⟩ := (fresh_iff c ok kind m).mp fresh
       exact ⟨v,n,_,r,a,l,i,st,post,⟨.inl ng,⟨st,post,m,m',le,rfl,vote,cut_up _ guard⟩,
-        side,obs,lt,signed,atI⟩,m,m',le,rfl,vote,sub,guard⟩
-  · rintro ⟨v,n,term,r,a,l,i,st,post,⟨route,_,sup,obs,lt,signed,atI⟩,m,m',le,rfl,vote,sub,guard⟩
+        side,obs,lt,signed,atI⟩,m,m',le,rfl,vote,sub,guard,pass⟩
+  · rintro ⟨v,n,term,r,a,l,i,st,post,⟨route,_,sup,obs,lt,signed,atI⟩,m,m',le,rfl,vote,sub,guard,pass⟩
     refine ⟨v,st,m,v,post,m',⟨rfl,le⟩,n,vote,sup,⟨a,l⟩,(X.seen_before ok ..).mp obs,lt,
-      i,signed,⟨atI,sub⟩,?_⟩
+      i,signed,⟨pass,atI,sub⟩,?_⟩
     rcases route with ng | ⟨elect,eq,term,rfl⟩
     · exact .inr ((fresh_iff c ok kind m).mpr ⟨r,guard,ng⟩)
     · exact .inl ⟨⟨elect,eq,term⟩,guard⟩
+
+private theorem view_iff {x : XView} (ok : x.Matches c) (kind : Kind) :
+    view kind x = true ↔ Evidence c kind := by
+  rw [selected_iff c ok]
+  simp only [Selected,Evidence,and_true]
 end
 
 def exactReader (kind : Kind) : Exact (column kind) where
