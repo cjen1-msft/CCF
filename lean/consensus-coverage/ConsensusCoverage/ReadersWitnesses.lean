@@ -168,19 +168,25 @@ private def claim32 : Claim :=
   ⟨0, 0, [.appendEntry_configuration_none], by decide +kernel⟩
 private def claim33 : Claim :=
   ⟨20, 0, [.appendEntry_configuration_some], by decide +kernel⟩
+private def claim34 : Claim :=
+  ⟨121, 5, [.commit_backed_fromSource_neg], by decide +kernel⟩
+private def claim35 : Claim :=
+  ⟨0, 1, [.weaken_backed_inr], by decide +kernel⟩
+private def claim36 : Claim :=
+  ⟨26, 0, [.prefix_small_inr], by decide +kernel⟩
 
 private def claims : List Claim := [
   claim0, claim1, claim2, claim3, claim4, claim5, claim6, claim7, claim8, claim9, claim10,
   claim11, claim12, claim13, claim14, claim15, claim16, claim17, claim18, claim19, claim20,
   claim21, claim22, claim23, claim24, claim25, claim26, claim27, claim28, claim29, claim30,
-  claim31, claim32, claim33
+  claim31, claim32, claim33, claim34, claim35, claim36
 ]
 
 /-- Cases witnessed by an executable reader on a replayed corpus step. -/
 public def witnessed : List Classes.StepBranch :=
   claims.flatMap (·.questions) ++ [.summary_message_requestVoteResponse]
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 174 := by decide
+public theorem count : witnessed.Nodup ∧ witnessed.length = 177 := by decide
 
 /-- Count the current union without pinning the independently updated case census. -/
 public theorem union_count :
