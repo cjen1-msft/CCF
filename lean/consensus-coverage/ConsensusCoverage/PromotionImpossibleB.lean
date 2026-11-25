@@ -131,4 +131,107 @@ public theorem campaign_role (s : Step) : label s (.step .campaign_summary_role_
   iterate 24 (rcases p with p | p; case inl => campaign_request p)
   campaign_request p
 
+private abbrev Bound (s : NodeState) := ∀ e ∈ s.log, e.term ≤ s.currentTerm
+
+private theorem sameBound [Config.InitialConfiguration] {f : Frame} {t : Model.State}
+    (c : Ctx f t) {s middle before : NodeState} (eq : s = middle) (pre : before = c.pre)
+    (log : middle.log = before.log) (term : middle.currentTerm = before.currentTerm) : Bound s := by
+  subst s before
+  intro e mem
+  rw [term]
+  exact c.inv.terms _ _ c.pre_now e (log ▸ mem)
+
+private theorem freshOld {self s candidate} (eq : candidate = freshCandidate self s) (age : Bound s) :
+    Old candidate := eq ▸ fun e h => Nat.lt_succ_of_le (age e h)
+
+private theorem votedOld [Config.InitialConfiguration] {f : Frame} {t : Model.State} (c : Ctx f t)
+    {self before middle event candidate} (eq : candidate = middle) (pre : before = c.pre)
+    (camp : Campaign self before event middle) : Old candidate := eq ▸ campOld c pre camp
+
+private theorem cannotGrow (self : NodeID) {middle candidate : NodeState} (eq : middle = primaryState candidate)
+    (age : Old candidate) : ¬middle.commitIndex < highestCommittableIndex middle self :=
+  eq ▸ noAdvance age
+
+private abbrev Fields := Array (Expr × Expr)
+
+private meta partial def withFields (p h : Expr) (acc : Fields)
+    (finish : Fields → MetaM Expr) : MetaM Expr := do
+  if p.isAppOf ``Or then
+    let branch (q : Expr) := withLocalDeclD `arm q fun a => do
+      mkLambdaFVars #[a] (← withFields q a acc finish)
+    return ← mkAppM ``Or.elim #[h, ← branch (p.getArg! 0), ← branch (p.getArg! 1)]
+  if p.isAppOf ``Exists then
+    let f := p.getArg! 1
+    return ← withLocalDeclD f.bindingName! (p.getArg! 0) fun x => do
+      let q := f.beta #[x]
+      withLocalDeclD `arm q fun a => do
+        let outcome ← withFields q a acc finish
+        mkAppM ``Exists.elim #[h, ← mkLambdaFVars #[x,a] outcome]
+  if p.isAppOf ``And then
+    return ← withFields (p.getArg! 1) (mkProj ``And 1 h)
+      (acc.push (p.getArg! 0, mkProj ``And 0 h)) finish
+  finish (acc.push (p,h))
+
+private meta def firstReach (xs : Fields) : MetaM (Expr × Expr × Expr) := do
+  let some (p,h) := xs.find? fun (p,_) =>
+    p.getAppFn.constName?.any (·.getString!.startsWith "reach_") | throwError "expected caller"
+  let some body ← unfoldDefinition? p | throwError "opaque caller"
+  return (p,h,body)
+
+private meta def nodeEq (s : Expr) (xs : Fields) : MetaM (Expr × Expr) := do
+  for (p,h) in xs do
+    if p.isAppOf ``Eq && p.getArg! 1 == s then return (p.getArg! 2, h)
+  throwError "missing equation for {s}"
+
+private meta def freshBound (c s p h : Expr) : MetaM Expr :=
+  withFields p h #[] fun xs => do
+    let (_,h,p) ← firstReach xs
+    withFields p h #[] fun ys => do
+      let (r,hr,body) ← firstReach ys
+      let some before ← r.getAppArgs.findM? fun x => do
+        return x.isFVar && (← inferType x).isConstOf ``NodeState | throwError "no source state"
+      let (middle,eq) ← (nodeEq s ys) <|> pure (s, ← mkEqRefl s)
+      let pre ← beforeOrigin c before body hr
+      mkAppM ``sameBound #[c, eq, pre, ← mkEqRefl (←mkAppM ``NodeState.log #[middle]),
+        ← mkEqRefl (←mkAppM ``NodeState.currentTerm #[middle])]
+
+private meta def candidateAge (c candidate p h : Expr) : MetaM Expr :=
+  withFields p h #[] fun xs => do
+    let (_,h,p) ← firstReach xs
+    withFields p h #[] fun ys => do
+      let (_,hr,body) ← firstReach ys
+      let (rhs,eq) ← nodeEq candidate ys
+      if rhs.isAppOf ``freshCandidate then
+        return ← mkAppM ``freshOld #[eq, ← freshBound c rhs.appArg! body hr]
+      let some (camp, hc) := ys.find? (fun (p,_) => p.isAppOf ``Campaign) | throwError "no campaign"
+      let pre ← beforeOrigin c (camp.getArg! 1) body hr
+      mkAppM ``votedOld #[c,eq,pre,hc]
+
+local elab "no_promotion_growth " c:term:arg mid:ident orig:ident : tactic => withMainContext do
+  let c ← Term.elabTerm c none
+  let mid ← getFVarFromUserName mid.getId
+  let h ← getFVarFromUserName orig.getId
+  let some p ← unfoldDefinition? (←inferType h) | throwError "no origin"
+  let result ← withFields p h #[] fun xs => do
+    let (r,hr,body) ← firstReach xs
+    let (leader,eq) ← nodeEq mid xs
+    let age ← candidateAge c leader.appArg! body hr
+    mkAppM ``cannotGrow #[r.appFn!.appArg!,eq,age]
+  (←getMainGoal).assign result
+  replaceMainGoal []
+
+local macro "reject_sender " s:ident p:ident : tactic => `(tactic|
+  (obtain ⟨self, middle, _, origin, ⟨_, _, _, _, _, _, grew, target, _⟩, _⟩ := $p
+   have no : ¬ middle.commitIndex < highestCommittableIndex middle self := by
+     no_promotion_growth ($s).context middle origin
+   exact no (target ▸ grew)))
+
+public theorem sent_advance (s : Step) : label s (.step .sentIndex_advance_inr) = false := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  apply CaseUnreachable.solved_false
+  change ¬ step_sentIndex_advance_inr s.frame s.after s.context
+  intro p
+  iterate 24 (rcases p with p | p; case inl => reject_sender s p)
+  reject_sender s p
+
 end ConsensusCoverage.PromotionImpossibleB
