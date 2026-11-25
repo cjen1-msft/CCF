@@ -277,49 +277,57 @@ witnessed](../consensus-coverage/ConsensusCoverage/AckWitnesses.lean), but
 208 answers per action remain undecided on those two fixture actions, so the
 family is still open.
 
-**Per-question reachability: 376 cases witnessed, 23 proved impossible, 117
-unsettled.** Each step question is one case of one case split in the safety
-proof. [`CensusPartition`](../consensus-coverage/ConsensusCoverage/CensusPartition.lean)
-proves that three lists partition the 516 questions: every question in
-`witnessed` is true on some initialized step (`occurs`), every question in
-`refuted` is false on every initialized step (`impossible`), no question is
-in both (`disjoint`), and `unsettled` is the rest. The counts are theorems.
+**Every case is classified: 487 of the 516 step questions are witnessed
+and 29 are impossible.** Each step question is one case of one case split
+in the safety proof. [`CensusPartition`](../consensus-coverage/ConsensusCoverage/CensusPartition.lean)
+proves, for every question `b`:
 
-The witnesses are schedules replayed in the kernel, from four sources.
+- `b` is in `witnessed` or in `refuted` (`classified`), and not in both
+  (`disjoint`);
+- `b` is in `witnessed` if and only if it is true on some initialized step
+  (`witnessed_iff`);
+- `b` is in `refuted` if and only if it is false on every initialized step
+  (`refuted_iff`).
+
+The counts 487 and 29 are theorems. So for every recorded case split of the
+proof it is known whether an initialized run can enter each case.
+
+Each witness is a schedule replayed in the kernel.
 [`CaseWitnesses`](../consensus-coverage/ConsensusCoverage/CaseWitnesses.lean)
 (192 questions) holds schedules found by the bounded search below and read
-with the exact readers.
-[`ReadersWitnesses`](../consensus-coverage/ConsensusCoverage/ReadersWitnesses.lean)
-(180) holds one-sided tests run over the certified schedules.
+with the exact readers. [`ReadersWitnesses`](../consensus-coverage/ConsensusCoverage/ReadersWitnesses.lean)
+(201) holds one-sided tests run over the certified schedules.
 [`CaseWitnessesDeep`](../consensus-coverage/ConsensusCoverage/CaseWitnessesDeep.lean)
-(101) and [`CaseWitnessesDeepB`](../consensus-coverage/ConsensusCoverage/CaseWitnessesDeepB.lean)
-(74) cover questions that have no exact reader: for each, a schedule was
-written by hand from what the case means, and the case's formula is proved
-directly on that step, with the witnesses of its existentials given
-explicitly. The impossible cases are in
+(139) and [`CaseWitnessesDeepB`](../consensus-coverage/ConsensusCoverage/CaseWitnessesDeepB.lean)
+(112) cover the questions that have no exact reader: for each, a schedule
+was written by hand from what the case means, and the case's formula is
+proved directly on that step, with the witnesses of its existentials given
+explicitly. A few more come from smaller modules listed in
+`CensusPartition`. The lists overlap; 487 is the size of their union.
+
+The 29 impossible cases are in
 [`CaseUnreachable`](../consensus-coverage/ConsensusCoverage/CaseUnreachable.lean)
-(19), [`CaseUnreachableB`](../consensus-coverage/ConsensusCoverage/CaseUnreachableB.lean)
-(2) and [`CensusBallots`](../consensus-coverage/ConsensusCoverage/CensusBallots.lean)
-(2).
+(21), [`CaseUnreachableB`](../consensus-coverage/ConsensusCoverage/CaseUnreachableB.lean)
+(6) and [`CensusBallots`](../consensus-coverage/ConsensusCoverage/CensusBallots.lean)
+(2). They are branches the proof handles but no initialized run reaches.
+Some examples: a nomination never changes the actor's own record; a vote
+request is never delivered to its sender; a primary's acknowledgment never
+finds it in a candidate role; two commit certificates never need the
+comparison that would require a second election in a term that already had
+a leader; a term lookup at a recorded index never misses. The proofs use
+new invariants of initialized runs, among them
+[`VoteRequestRoute`](../consensus-coverage/ConsensusCoverage/VoteRequestRoute.lean)
+and [`RetiredRoleOrigin`](../consensus-coverage/ConsensusCoverage/RetiredRoleOrigin.lean).
 
 A bounded search never makes a case impossible. The search found 18
 exactly readable questions that were false on every step of every model it
-completed. Each was then settled separately: six are impossible, twelve are
-reachable on schedules longer than the search covered (a competing
-candidate, an election completing after a later one, a primary retiring
-during a local append). The impossibility proofs use new invariants of
-initialized runs, among them: [a vote request is never addressed to its sender](../consensus-coverage/ConsensusCoverage/VoteRequestRoute.lean),
-and [where a retired role can come from](../consensus-coverage/ConsensusCoverage/RetiredRoleOrigin.lean).
+completed: six turned out impossible and twelve reachable on schedules
+longer than the search covered (a competing candidate, an election
+completing after a later one, a primary retiring during a local append).
 
-None of the 117 unsettled questions has an exact reader.
-[`unsettled.tsv`](../consensus-coverage/unsettled.tsv) lists them with the
-event kinds that can enter each case and the entry points of its formula;
-[`census-unsettled.lean`](../consensus-coverage/scripts/census-unsettled.lean)
-regenerates it from the partition. For most of them a schedule believed to
-enter the case exists but its certificate does not yet.
-[`CensusQueueSearch`](../consensus-coverage/ConsensusCoverage/CensusQueueSearch.lean)
-searches a concrete step for the witnesses of a formula and emits an
-explicit proof for the kernel to check; the search itself is not trusted.
+Classifying each case separately does not give the labels: a label is a
+whole vector of answers, and which combinations occur is a separate
+question. The bounds on that follow.
 
 **Full recorded-action denominator: at least 250; at least 247 on multi-node deployments.**
 The [recorded-action specification](../consensus-coverage/ConsensusCoverage/ActionProfile.lean)
