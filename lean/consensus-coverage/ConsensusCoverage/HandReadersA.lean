@@ -9,6 +9,7 @@ import all ConsensusCoverage.HandReadersAHandler
 import all ConsensusCoverage.HandReadersALeader
 import all ConsensusCoverage.HandReadersAObserve
 import all ConsensusCoverage.HandReadersASeen
+import all ConsensusCoverage.HandReadersASummary
 import all ConsensusCoverage.HandReadersBSummary
 
 namespace ConsensusCoverage.HandReadersA
@@ -24,6 +25,11 @@ private def lookup : (b : Classes.StepBranch) → Option (Exact b)
   | .seen_after_seen_inl => some (SeenRows.exactReader .old)
   | .seen_after_seen_inr => some (SeenRows.exactReader .post)
   | .seen_after_now_after_inl => some (SeenRows.exactReader .actor)
+  | .initAsBackup_summary_eq_zero_or_pos_inl => some (SummaryRows.exactReader .empty)
+  | .initAsBackup_summary_eq_zero_or_pos_inr => some (SummaryRows.exactReader .signed)
+  | .appendEntriesRequest_summary_observe_bumping_inl => some (SummaryRows.exactReader .bump)
+  | .appendEntriesResponse_summary_observe_response_inl => some (SummaryRows.exactReader .higherAck)
+  | .appendEntriesResponse_summary_observe_response_inr => some (SummaryRows.exactReader .otherAck)
   | .appendEntry_configuration_none => some (Append.exactReader .none)
   | .appendEntry_configuration_some => some (Append.exactReader .some)
   | .foldlM__items_cons => some (Append.exactReader .cons)
@@ -69,6 +75,6 @@ public theorem read_total (s : Step) {b} (h : b ∈ covered) :
   simpa only [read, Option.isSome_map] using (List.mem_filter.mp h).2
 
 set_option maxRecDepth 8192 in
-public theorem count : covered.Nodup ∧ covered.length = 31 := by decide +kernel
+public theorem count : covered.Nodup ∧ covered.length = 36 := by decide +kernel
 
 end ConsensusCoverage.HandReadersA
