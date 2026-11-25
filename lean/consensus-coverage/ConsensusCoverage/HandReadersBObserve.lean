@@ -25,6 +25,7 @@ public inductive Kind where
   | preNew | preOld | preBallotNew | preBallotOld
   | ackPrimary | ackOther | ackNew | ackOld | bump | stable
   | appendTag | voteTag | ballotTag | preTag | preBallotTag
+  | grant | deny | inserted | previous
   deriving DecidableEq
 
 public def column : Kind → Classes.StepBranch
@@ -48,6 +49,10 @@ public def column : Kind → Classes.StepBranch
   | .ballotTag => .observe_bumping_message_requestVoteResponse
   | .preTag => .observe_bumping_message_requestPreVoteRequest
   | .preBallotTag => .observe_bumping_message_requestPreVoteResponse
+  | .grant => .voteRequest_summary_granted_pos
+  | .deny => .voteRequest_summary_granted_neg
+  | .inserted => .voteResponse_summary_mem_insert_inl
+  | .previous => .voteResponse_summary_mem_insert_inr
 
 private def accepts (k : Kind) (self : NodeID) (st : NodeState) : Event → Bool
   | .internal _ => false
@@ -57,13 +62,20 @@ private def accepts (k : Kind) (self : NodeID) (st : NodeState) : Event → Bool
     match msg with
     | .appendEntriesRequest _ => match k with
       | .appendOld | .stable => !newTerm | .bump => newTerm | .appendTag => true | _ => false
-    | .requestVoteRequest _ => match k with
-      | .voteOld | .stable => !newTerm | .voteNew | .bump => newTerm | .voteTag => true | _ => false
+    | .requestVoteRequest q =>
+      let observed := observeTerm st msg
+      let granted := decide (q.term = observed.currentTerm ∧ voteLogUpToDate observed q ∧
+        !observed.primaryKnown ∧ (observed.votedFor = none ∨ observed.votedFor = some src))
+      match k with
+      | .voteOld | .stable => !newTerm | .voteNew | .bump => newTerm | .voteTag => true
+      | .grant => granted | .deny => !granted | _ => false
     | .requestPreVoteRequest _ => match k with
       | .preOld | .stable => !newTerm | .preNew | .bump => newTerm | .preTag => true | _ => false
-    | .requestVoteResponse _ => match k with
+    | .requestVoteResponse q =>
+      let add := peer && st.role == .candidate && q.term == st.currentTerm && q.voteGranted
+      match k with
       | .ballotOld | .stable => peer && !newTerm | .ballotNew | .bump => peer && newTerm
-      | .ballotTag => peer | _ => false
+      | .ballotTag => peer | .inserted => add | .previous => add && decide st.votesGranted.Nonempty | _ => false
     | .requestPreVoteResponse _ => match k with
       | .preBallotOld | .stable => peer && !newTerm | .preBallotNew | .bump => peer && newTerm
       | .preBallotTag => peer | _ => false
@@ -140,10 +152,16 @@ run_cmd
         cases e with
         | internal i => simp [accepts, and_assoc]
         | receive src m =>
-          cases m <;> simp [accepts, and_assoc, or_and_right, exists_or, Bool.and_eq_true]
+          cases m <;> simp [accepts, and_assoc, or_and_right, exists_or, Bool.and_eq_true,
+            CCF.Finset.mem_insert, CCF.Finset.Nonempty]
           all_goals first
             | exact fun h => bumped _ _ h trivial
             | exact fun h => unchanged _ _ h trivial
+            | (rename_i req
+               have branches := observe_bumping st (message := .requestVoteRequest req) trivial
+               rcases branches with ⟨lt,eq⟩ | ⟨le,eq⟩
+               all_goals simp only [Node.Message.term] at *
+               all_goals simp [eq, *, Nat.not_lt_of_ge, Nat.not_le_of_lt, bumpedState, Bumping] <;> grind)
             | grind [bumped, unchanged, Bumping, Node.Message.term]))
 
 private theorem recorded (s : Step) (k : Kind)
