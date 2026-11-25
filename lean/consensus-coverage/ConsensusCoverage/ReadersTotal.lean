@@ -19,6 +19,8 @@ import all ConsensusCoverage.HandReadersB
 import all ConsensusCoverage.HandReadersTrunkA
 import all ConsensusCoverage.HandReadersTrunkB
 import all ConsensusCoverage.HandReadersElection
+import all ConsensusCoverage.HandReadersOther
+import all ConsensusCoverage.HandReadersTrunkC
 import all ConsensusCoverage.Readers
 import all ConsensusCoverage.ReadersAtoms
 import all ConsensusCoverage.ReadersEquiv
@@ -236,6 +238,8 @@ public theorem covered_count :
       (HandReadersTrunkA.covered.filter (· ∉ coreColumns ++ HandReadersA.covered ++ HandReadersB.covered)).length = 35 ∧
       (HandReadersTrunkB.covered.filter (· ∉ coreColumns ++ HandReadersA.covered ++ HandReadersB.covered ++ HandReadersTrunkA.covered)).length = 31 ∧
       (HandReadersElection.covered.filter (· ∉ coreColumns ++ HandReadersA.covered ++ HandReadersB.covered ++ HandReadersTrunkA.covered ++ HandReadersTrunkB.covered)).length = 38 ∧
-      covered.length = 435 ∧ unread.length = 81 := by decide +kernel
+      (HandReadersOther.covered.filter (· ∉ coreColumns ++ HandReadersA.covered ++ HandReadersB.covered ++ HandReadersTrunkA.covered ++ HandReadersTrunkB.covered ++ HandReadersElection.covered)).length = 30 ∧
+      (HandReadersTrunkC.covered.filter (· ∉ coreColumns ++ HandReadersA.covered ++ HandReadersB.covered ++ HandReadersTrunkA.covered ++ HandReadersTrunkB.covered ++ HandReadersElection.covered ++ HandReadersOther.covered)).length = 15 ∧
+      covered.length = 480 ∧ unread.length = 36 := by decide +kernel
 
 end ConsensusCoverage.ReadersTotal

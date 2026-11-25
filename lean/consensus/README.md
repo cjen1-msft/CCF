@@ -592,23 +592,25 @@ for the questions whose generation has been verified; most of the 328 do
 not have one yet. The exact readers are used by the bounded census above
 but not yet by `answers`.
 
-**218 more questions have an exact reader written by hand.** For the
+**263 more questions have an exact reader written by hand.** For the
 questions the compiler cannot handle, the reader was written from what the
 case means and proved equal to the question's answer on every initialized
 step: [`HandReadersA`](../consensus-coverage/ConsensusCoverage/HandReadersA.lean)
 (75 questions), [`HandReadersB`](../consensus-coverage/ConsensusCoverage/HandReadersB.lean)
 (39), [`HandReadersTrunkA`](../consensus-coverage/ConsensusCoverage/HandReadersTrunkA.lean)
 (35), [`HandReadersTrunkB`](../consensus-coverage/ConsensusCoverage/HandReadersTrunkB.lean)
-(31), and [`HandReadersElection`](../consensus-coverage/ConsensusCoverage/HandReadersElection.lean)
-(38), each with `read_correct` and `read_total`. A typical one: the case
+(31), [`HandReadersElection`](../consensus-coverage/ConsensusCoverage/HandReadersElection.lean)
+(38), [`HandReadersOther`](../consensus-coverage/ConsensusCoverage/HandReadersOther.lean)
+(30), and [`HandReadersTrunkC`](../consensus-coverage/ConsensusCoverage/HandReadersTrunkC.lean)
+(15), each with `read_correct` and `read_total`. A typical one: the case
 `commit_backed_eq_zero_or_pos_inl` holds exactly when the actor becomes
 primary, was not already primary in that term, and had commit index zero
 before the step. The 29 impossible cases are read as constant false.
 [`ReadersTotal.read`](../consensus-coverage/ConsensusCoverage/ReadersTotal.lean)
 combines these sources with structural equivalences and the compiled
 match-index, accepted-log, and ranking readers. `read_correct` and `read_total`
-certify every returned answer and totality on the 435 covered questions. All 40
-unconditional replay readers are included; 81 of the 516 questions remain
+certify every returned answer and totality on the 480 covered questions. All 40
+unconditional replay readers are included; 36 of the 516 questions remain
 unread.
 
 [`case-meanings.tsv`](../consensus-coverage/case-meanings.tsv) describes,
@@ -617,10 +619,9 @@ the case means on a recorded step. Rows marked `proved` are the initial
 hand-written readers; rows marked `conjecture` give a conjectured meaning
 and the obstacle to proving it, most often that the case sits inside a
 lemma used at many places in the proof. Later rounds added compiled
-match-index, accepted-log, and ranking readers (12) and the trunk and
-election-safety hand-written readers (104), so 116 of its conjecture rows now
-have an exact reader. The current list of cases without an exact reader
-is `ReadersTotal.unread`.
+match-index, accepted-log, and ranking readers (12) and further hand-written
+readers (149), so 161 of its conjecture rows now have an exact reader. The
+current list of cases without an exact reader is `ReadersTotal.unread`.
 
 The rooted- and sorted-log proofs agree on the acting node: both enter their
 actor case exactly when its record changes **or** a new committed key appears.
