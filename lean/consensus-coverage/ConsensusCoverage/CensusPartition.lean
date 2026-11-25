@@ -7,6 +7,7 @@ public import ConsensusCoverage.CaseUnreachable
 public import ConsensusCoverage.CaseUnreachableB
 public import ConsensusCoverage.CaseWitnessesDeep
 public import ConsensusCoverage.CaseWitnessesDeepB
+public import ConsensusCoverage.CaseWitnessesQueued
 public import ConsensusCoverage.CensusBallots
 public import ConsensusCoverage.ReadersWitnesses
 import all ConsensusCoverage.CaseUnreachable
@@ -14,6 +15,7 @@ import all ConsensusCoverage.CaseUnreachableB
 import all ConsensusCoverage.CaseWitnesses
 import all ConsensusCoverage.CaseWitnessesDeep
 import all ConsensusCoverage.CaseWitnessesDeepB
+import all ConsensusCoverage.CaseWitnessesQueued
 import all ConsensusCoverage.MaximumCasesB
 import all ConsensusCoverage.ReceiveCasesB
 import all ConsensusCoverage.CampaignCasesB
@@ -33,7 +35,7 @@ set_option maxHeartbeats 0
 
 public def witnessed : List Classes.StepBranch :=
   (CaseWitnesses.witnessed ++ CaseWitnessesDeep.witnessed ++ ReadersWitnesses.witnessed ++
-    CaseWitnessesDeepB.witnessed).eraseDups
+    CaseWitnessesDeepB.witnessed ++ CaseWitnessesQueued.witnessed).eraseDups
 
 public def refuted : List Classes.StepBranch :=
   (CaseUnreachable.refuted ++ CaseUnreachableB.refuted ++
@@ -47,11 +49,12 @@ public def unsettled : List Classes.StepBranch :=
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
   simp only [witnessed, List.mem_eraseDups, List.mem_append] at mem
-  rcases mem with ((census | deep) | readers) | deepB
+  rcases mem with (((census | deep) | readers) | deepB) | queued
   · exact CaseWitnesses.occurs census
   · exact CaseWitnessesDeep.occurs deep
   · exact ReadersWitnesses.occurs readers
   · exact CaseWitnessesDeepB.occurs deepB
+  · exact CaseWitnessesQueued.occurs queued
 
 public theorem impossible {b : Classes.StepBranch} (mem : b ∈ refuted) (s : Step) :
     label s (.step b) = false := by
@@ -73,11 +76,11 @@ public theorem unsettled_iff (b : Classes.StepBranch) :
     exact Array.getElem_mem _
   simp [unsettled, all]
 
-public theorem witnessed_count : witnessed.Nodup ∧ witnessed.length = 283 := by decide +kernel
+public theorem witnessed_count : witnessed.Nodup ∧ witnessed.length = 285 := by decide +kernel
 
 public theorem refuted_count : refuted.Nodup ∧ refuted.length = 23 := by decide +kernel
 
-public theorem unsettled_count : unsettled.Nodup ∧ unsettled.length = 210 := by decide +kernel
+public theorem unsettled_count : unsettled.Nodup ∧ unsettled.length = 208 := by decide +kernel
 
 /-- Every total generated or legacy reader is accounted for in a proved
 class. One-sided readers may still give evidence about an unsettled case. -/
