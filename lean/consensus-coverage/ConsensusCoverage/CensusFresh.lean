@@ -8,6 +8,7 @@ import all ConsensusCoverage.ReadersGenerated
 import all ConsensusCoverage.ReadersAtoms
 import all ConsensusCoverage.GuardedDomain
 import all ConsensusCoverage.CanonicalLogs
+meta import ConsensusCoverage.CensusReach
 
 namespace ConsensusCoverage.CensusFresh
 
@@ -17,6 +18,11 @@ set_option backward.privateInPublic true
 set_option backward.privateInPublic.warn false
 set_option maxRecDepth 16384
 set_option maxHeartbeats 0
+
+census_reach historicalKey := reach% ReadersCompiler.R.step_rooted_now_after_inl[3,0,0]
+census_reach historicalKeyScan := reach% ReadersCompiler.R.step_rooted_now_after_inl[3,0]
+census_reach historicalNode := reach% ReadersCompiler.R.step_rooted_now_after_inl[3,1]
+census_reach historicalChange := reach% ReadersCompiler.R.step_sorted_now_after_inl[3]
 
 private def possibleElection (s t : Model.State) : Bool :=
   s.nodes.any fun (n, x) => t.nodes.any fun (m, y) =>
@@ -44,14 +50,14 @@ public def changed (x : XView) : Bool :=
 
 private theorem raw2 [Config.InitialConfiguration] (x : XView) (no : changed x = false)
     (k : Nat) (l : List Entry) (n term : Nat) (log : List Entry) (i : Nat) :
-    ReadersCompiler.R.reach_2 x k l n term log i = false := by
+    historicalKey x k l n term log i = false := by
   have old : ∀ key ∈ x.committedAfter, key ∈ x.committedBefore := by
     simpa [changed, present_iff] using (Bool.or_eq_false_iff.mp no).1
   have election : electionExact x.base.after x.base.before x.base.past n term log i = false :=
     Bool.eq_false_iff.mpr fun yes => by
       have := possible_of_election yes
       simp [changed, this] at no
-  simp only [ReadersCompiler.R.reach_2, electedExact, election, Bool.false_or]
+  simp only [historicalKey, electedExact, election, Bool.false_or]
   by_cases inAfter : (k, l) ∈ x.committedAfter
   · simp [inAfter, old _ inAfter]; grind
   · simp [inAfter]
@@ -71,21 +77,21 @@ local macro "no_reach" h:term : tactic => `(tactic| (repeat' first
     | split))
 
 private theorem raw3 [Config.InitialConfiguration] (x : XView) (no : changed x = false) :
-    ReadersCompiler.R.reach_3 x = false := by
-  unfold ReadersCompiler.R.reach_3
+    historicalKeyScan x = false := by
+  unfold historicalKeyScan
   no_reach no
 
 private theorem raw4 [Config.InitialConfiguration] (x : XView) (no : changed x = false)
-    (n : NodeID) (st : NodeState) (k base i : Nat) : ReadersCompiler.R.reach_4 x n st k base i = false := by
-  unfold ReadersCompiler.R.reach_4
+    (n : NodeID) (st : NodeState) (k base i : Nat) : historicalNode x n st k base i = false := by
+  unfold historicalNode
   no_reach no
 
 /-- If neither a commit key nor even an election transition can be new,
 the expensive quantified historical reader is false before enumerating
 any historical marginal. -/
 public theorem raw8 [Config.InitialConfiguration] (x : XView) (no : changed x = false) :
-    ReadersCompiler.R.reach_8 x = false := by
-  unfold ReadersCompiler.R.reach_8
+    historicalChange x = false := by
+  unfold historicalChange
   repeat' first
     | rfl
     | exact raw3 _ no
@@ -96,10 +102,10 @@ public theorem raw8 [Config.InitialConfiguration] (x : XView) (no : changed x = 
     | split
 
 public def guarded [Config.InitialConfiguration] (x : XView) : Bool :=
-  if changed x then ReadersCompiler.R.reach_8 x else false
+  if changed x then historicalChange x else false
 
 public theorem guarded_eq [Config.InitialConfiguration] (x : XView) :
-    guarded x = ReadersCompiler.R.reach_8 x := by
+    guarded x = historicalChange x := by
   unfold guarded
   split
   · rfl

@@ -3,6 +3,8 @@
 # Licensed under the Apache 2.0 License.
 #
 # Usage: LEAN_CC=/path/to/gcc16/bin/cc bash lean/consensus-coverage/scripts/build-explorer.sh
+# The default binary omits generated readers. Pass --with-readers for
+# --reader-census and --factored-reader-census in a separate executable.
 # Prints the executable path on stdout. Requires Python 3.11+ and the checkout's
 # Lean/Lake toolchain on PATH. Use the toolchain's matching GCC wrapper: the
 # Nix Lean 4.35.0 build uses GCC 16 libstdc++ wait/notify symbols absent in GCC 13.
@@ -13,6 +15,12 @@
 
 set -euo pipefail
 
+case "$#:$*" in
+  0:) mode=legacy ;;
+  1:--with-readers) mode=readers ;;
+  *) echo "Usage: $0 [--with-readers]" >&2; exit 2 ;;
+esac
+
 source_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 export LEAN_CC
 LEAN_CC=$(command -v "${LEAN_CC:-cc}")
@@ -22,7 +30,7 @@ if [[ $("$LEAN_CC" -dumpfullversion) != 16.* ]]; then
 fi
 workspace=$(python3 "$source_dir/../relevance/scripts/workspace.py" consensus-coverage)
 
-nice python3 -I - "$source_dir" "$workspace" <<'PY'
+nice python3 -I - "$source_dir" "$workspace" "$mode" <<'PY'
 import json
 import os
 import re
@@ -31,9 +39,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-source, workspace = map(Path, sys.argv[1:])
+source, workspace = map(Path, sys.argv[1:3])
+with_readers = sys.argv[3] == "readers"
 coverage = workspace / "consensus-coverage"
-target = workspace / "native-explorer"
+target = workspace / ("native-explorer" if with_readers else "native-explorer-legacy")
 mirror = target / "src/scripts"
 mirror.mkdir(parents=True, exist_ok=True)
 
@@ -43,6 +52,14 @@ original = (source / "scripts/explore.lean").read_text()
 assert original.count("\nmeta section\n") == 1 and original.endswith("\nend\n")
 runtime = re.sub(r"(?m)^(?:public )?meta import ", "import ", original)
 runtime = runtime.replace("\nmeta section\n", "", 1).removesuffix("\nend\n") + "\n"
+if not with_readers:
+    # An absent adapter is rejected by option parsing; never silently downgrade.
+    for before, after in [
+        ("import ConsensusCoverage.CensusExplorerReaders", "import ConsensusCoverage.CensusExplorerHooks"),
+        ("some CensusExplorerHooks.generated", "none"),
+    ]:
+        assert runtime.count(before) == 1, before
+        runtime = runtime.replace(before, after)
 for name in re.findall(r"(?m)^import all (.+)$", runtime):
     runtime = runtime.replace(f"\nimport {name}\n", "\n", 1)
 (mirror / "explore.lean").write_text(runtime.replace("public def main (args", "public def explorerMain (args"))
@@ -90,6 +107,9 @@ subprocess.run(["lake", "-d", str(target), "--quiet", "build", "bounded-explore"
 exe = target / ".lake/build/bin/bounded-explore"
 args = shlex.split(exe.with_suffix(".rsp").read_text())
 objects = [Path(arg) for arg in args if arg.endswith(".c.o.export")]
+if not with_readers:
+    assert not any(p.name.startswith(("Readers", "CensusExplorerReaders.")) for p in objects), \
+        "the legacy binary unexpectedly links generated readers"
 (obj,) = [o for o in objects if o.name == "FullProfile.c.o.export"]
 symbol = "lp_consensus__coverage_ConsensusCoverage_FullProfile_observationCapacity"
 initialization = f"{symbol} = _init_{symbol}();\nlean_mark_persistent({symbol});\n"

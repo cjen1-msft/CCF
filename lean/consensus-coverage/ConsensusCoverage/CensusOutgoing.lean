@@ -10,6 +10,7 @@ import all ConsensusCoverage.ReadersGenerated
 import all ConsensusCoverage.ReadersAtoms
 import all Consensus.Proofs.SafetyInvariant
 meta import Lean
+meta import ConsensusCoverage.CensusReach
 
 namespace ConsensusCoverage.CensusOutgoing
 
@@ -19,6 +20,14 @@ set_option backward.privateInPublic true
 set_option backward.privateInPublic.warn false
 set_option maxRecDepth 16384
 set_option maxHeartbeats 0
+
+census_reach retainedOrigin := reach% ReadersCompiler.R.step_mem_network_mem_append_inl[0]
+census_reach emittedOrigin := reach% ReadersCompiler.R.step_mem_network_mem_append_inl[1]
+census_reach outgoingMessage := reach% ReadersCompiler.R.step_messages_mem_network_inr[0]
+census_reach messageTerm := reach% ReadersCompiler.R.step_message_terms_h_appendEntriesRequest[0]
+census_reach ledOrigin := reach% ReadersCompiler.R.step_post_led_origin_inl[0]
+census_reach newAppendRequest := reach% ReadersCompiler.R.step_new_message_h_appendEntriesRequest[0]
+census_reach twoActive := reach% ReadersCompiler.R.step_post_two_active_inl[1]
 
 private abbrev swap (x : XView) (before after : List Model.Envelope) : XView :=
   {x with base.before.network := before, base.after.network := after}
@@ -56,15 +65,15 @@ private theorem pending_before (x : XView) (e : Model.Envelope) (mem : e ∈ pen
 private theorem retained_arm [Proofs.Config.InitialConfiguration] (x : XView) :
     step_mem_network_mem_append_inl x = false := by
   have mem (z : {e // e ∈ pendingOf x}) := pending_before x z.val z.property
-  simp [step_mem_network_mem_append_inl, reach_1013, reach_1014, reach_25, reach_43, mem]
+  simp [step_mem_network_mem_append_inl, retainedOrigin, emittedOrigin, outgoingMessage, messageTerm, mem]
 
-private theorem eq238 [Proofs.Config.InitialConfiguration] (x : XView) (s t : List Model.Envelope) (h : Agree x s t) :
-    reach_238 (swap x s t) = reach_238 x := by
-  simp only [reach_238, reach_26, reach_25, XView.sent, swap, h.pre, h.post]
+private theorem ledOrigin_eq [Proofs.Config.InitialConfiguration] (x : XView) (s t : List Model.Envelope) (h : Agree x s t) :
+    ledOrigin (swap x s t) = ledOrigin x := by
+  simp only [ledOrigin, newAppendRequest, outgoingMessage, XView.sent, swap, h.pre, h.post]
 
-private theorem eq64 [Proofs.Config.InitialConfiguration] (x : XView) (s t : List Model.Envelope) (h : Agree x s t) :
-    reach_64 (swap x s t) = reach_64 x := by
-  simp only [reach_64, reach_43, swap, h.pre, h.post]
+private theorem twoActive_eq [Proofs.Config.InitialConfiguration] (x : XView) (s t : List Model.Envelope) (h : Agree x s t) :
+    twoActive (swap x s t) = twoActive x := by
+  simp only [twoActive, messageTerm, swap, h.pre, h.post]
 
 private def Stable (b : Classes.StepBranch) : Prop :=
   ∀ (cfg : FullProfile.Configuration) (x : XView) (s t : List Model.Envelope), Agree x s t →
@@ -91,9 +100,9 @@ local elab "outgoing_certificates" : term => do
       | exact (retained_arm _).trans (retained_arm _).symm
       | unfold $root:ident
         first
-        | rw [@eq238 ⟨cfg⟩ x s t h] <;> rfl
-        | rw [@eq64 ⟨cfg⟩ x s t h] <;> rfl
-        | simp only [reach_26, reach_25, reach_43, reach_1013, reach_1014, XView.sent, swap, h.pre, h.post] <;> rfl
+        | rw [@ledOrigin_eq ⟨cfg⟩ x s t h] <;> rfl
+        | rw [@twoActive_eq ⟨cfg⟩ x s t h] <;> rfl
+        | simp only [newAppendRequest, outgoingMessage, messageTerm, retainedOrigin, emittedOrigin, XView.sent, swap, h.pre, h.post] <;> rfl
       ⟩) :: $out)
     list := value.appArg!
   elabTerm out none

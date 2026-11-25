@@ -11,6 +11,7 @@ import all ConsensusCoverage.CensusCommitHistory
 import all ConsensusCoverage.ReadersGenerated
 import all ConsensusCoverage.ReadersAtoms
 import all ConsensusCoverage.GuardedDomain
+meta import ConsensusCoverage.CensusReach
 
 namespace ConsensusCoverage.CensusPriorRows
 
@@ -20,6 +21,11 @@ set_option backward.privateInPublic true
 set_option backward.privateInPublic.warn false
 set_option maxRecDepth 16384
 set_option maxHeartbeats 0
+
+census_reach finiteCampaignOrigin := reach% CensusGhost.Exec.step_campaign_backed_pre_split_inl[0]
+census_reach rawCampaignOrigin := reach% ReadersCompiler.R.step_campaign_backed_pre_split_inl[0]
+census_reach finiteCandidateOrigin := reach% CensusGhost.Exec.step_candidate_candidate_inl[0]
+census_reach rawCandidateOrigin := reach% ReadersCompiler.R.step_candidate_candidate_inl[0]
 
 public def columns : List Classes.StepBranch := [.candidate_candidate_inl, .campaign_backed_pre_split_inl]
 
@@ -44,7 +50,7 @@ public theorem correct {b : Classes.StepBranch} (mem : b ∈ columns) (cfg : Ful
     set_option linter.unusedSimpArgs false in
       simp only [Exec.step_candidate_candidate_inl, ReadersCompiler.R.step_candidate_candidate_inl,
         Exec.step_campaign_backed_pre_split_inl, ReadersCompiler.R.step_campaign_backed_pre_split_inl,
-        Exec.reach_269, ReadersCompiler.R.reach_269, Exec.reach_12, ReadersCompiler.R.reach_12,
+        finiteCampaignOrigin, rawCampaignOrigin, finiteCandidateOrigin, rawCandidateOrigin,
         stripped, CensusObservationRows.any_as_exists, List.mem_attach, true_and, Subtype.exists,
         exists_prop, List.mem_eraseDups, List.mem_flatMap, List.mem_map, old]
 
