@@ -93,4 +93,17 @@ public theorem correct {b : Classes.StepBranch} (mem : b ∈ columns) : Factored
   obtain ⟨⟨_, proof⟩, _, rfl⟩ := List.mem_map.mp mem
   exact proof
 
+/-- Both input premises are maintained by `tracks_start`/`tracks_read`;
+the dispatcher also agrees when either actor lookup fails. -/
+public theorem action_read {b : Classes.StepBranch} (mem : b ∈ columns) (cfg : FullProfile.Configuration)
+    (s t : Model.State) (act : Model.Action) (past : List Model.State) (g h : Ghost)
+    (pre : CensusObserved.Tracks g (s :: past)) (post : CensusObserved.Tracks h (t :: s :: past)) :
+    ((CensusGhost.answers cfg g h s t act).bind (· b)) =
+      ((ofXAction cfg s t past act).bind fun x => @ReadersCompiler.readView ⟨cfg⟩ x b) := by
+  cases a : CCF.MultiNodeTransitionSystem.nodeState s (GuardedDomain.actionActor act) <;>
+    cases z : CCF.MultiNodeTransitionSystem.nodeState t (GuardedDomain.actionActor act) <;>
+    simp only [CensusGhost.answers, ofXAction, GuardedDomain.ofAction, a, z,
+      Option.bind_eq_bind, Option.bind_none, Option.bind_some, pure]
+  exact correct mem cfg (packX (GuardedDomain.pack _ s t past _ _ _) (eventOf act)) g h pre post
+
 end ConsensusCoverage.CensusObservationRows
