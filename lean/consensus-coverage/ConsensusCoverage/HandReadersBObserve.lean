@@ -98,8 +98,7 @@ private def accepts (k : Kind) (self : NodeID) (st : NodeState) : Event → Bool
 
 public def answer (cfg : FullProfile.Configuration) (before : State) (act : Action)
     (after : State) (past : List State) (k : Kind) : Bool :=
-  (ofAction cfg before after past act).any (fun v => accepts k v.actor v.pre (ReadersAtoms.eventOf act)) &&
-    active cfg before act after past
+  activeWith cfg before act after past (fun v => accepts k v.actor v.pre (ReadersAtoms.eventOf act))
 
 open Lean Meta Elab Command
 
@@ -239,7 +238,7 @@ private theorem recorded (s : Step) (k : Kind)
     change ReadersAtoms.eventOf (ActionContext.encode s.context.tr.actor s.context.tr.event) = s.context.tr.event
     cases s.context.tr.event <;> rfl
   apply Bool.eq_iff_iff.mpr
-  rw [label_true,holds,sig_iff,h,answer,made,Option.any_some,Bool.and_eq_true,live,pre,actor,event,and_comm]
+  rw [label_true,holds,sig_iff,h,answer,activeWith_eq,made,Option.any_some,Bool.and_eq_true,live,pre,actor,event,and_comm]
 
 run_cmd
   let mut proofs := #[]
