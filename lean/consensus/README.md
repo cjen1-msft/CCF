@@ -277,7 +277,7 @@ witnessed](../consensus-coverage/ConsensusCoverage/AckWitnesses.lean), but
 208 answers per action remain undecided on those two fixture actions, so the
 family is still open.
 
-**Per-question reachability: 211 cases witnessed, 12 proved impossible, 293
+**Per-question reachability: 376 cases witnessed, 23 proved impossible, 117
 unsettled.** Each step question is one case of one case split in the safety
 proof. [`CensusPartition`](../consensus-coverage/ConsensusCoverage/CensusPartition.lean)
 proves that three lists partition the 516 questions: every question in
@@ -285,16 +285,21 @@ proves that three lists partition the 516 questions: every question in
 `refuted` is false on every initialized step (`impossible`), no question is
 in both (`disjoint`), and `unsettled` is the rest. The counts are theorems.
 
-The witnesses are schedules replayed in the kernel, from three sources:
+The witnesses are schedules replayed in the kernel, from four sources.
 [`CaseWitnesses`](../consensus-coverage/ConsensusCoverage/CaseWitnesses.lean)
-(192 questions; schedules found by the bounded search below and read with
-the exact readers),
+(192 questions) holds schedules found by the bounded search below and read
+with the exact readers.
 [`ReadersWitnesses`](../consensus-coverage/ConsensusCoverage/ReadersWitnesses.lean)
-(180; one-sided tests run over the certified schedules) and
+(180) holds one-sided tests run over the certified schedules.
 [`CaseWitnessesDeep`](../consensus-coverage/ConsensusCoverage/CaseWitnessesDeep.lean)
-(12; longer schedules written by hand). The impossible cases are in
+(101) and [`CaseWitnessesDeepB`](../consensus-coverage/ConsensusCoverage/CaseWitnessesDeepB.lean)
+(74) cover questions that have no exact reader: for each, a schedule was
+written by hand from what the case means, and the case's formula is proved
+directly on that step, with the witnesses of its existentials given
+explicitly. The impossible cases are in
 [`CaseUnreachable`](../consensus-coverage/ConsensusCoverage/CaseUnreachable.lean)
-(10) and [`CensusBallots`](../consensus-coverage/ConsensusCoverage/CensusBallots.lean)
+(19), [`CaseUnreachableB`](../consensus-coverage/ConsensusCoverage/CaseUnreachableB.lean)
+(2) and [`CensusBallots`](../consensus-coverage/ConsensusCoverage/CensusBallots.lean)
 (2).
 
 A bounded search never makes a case impossible. The search found 18
@@ -302,15 +307,19 @@ exactly readable questions that were false on every step of every model it
 completed. Each was then settled separately: six are impossible, twelve are
 reachable on schedules longer than the search covered (a competing
 candidate, an election completing after a later one, a primary retiring
-during a local append). The impossibility proofs use two new invariants of
-initialized runs: [a vote request is never addressed to its sender](../consensus-coverage/ConsensusCoverage/VoteRequestRoute.lean),
+during a local append). The impossibility proofs use new invariants of
+initialized runs, among them: [a vote request is never addressed to its sender](../consensus-coverage/ConsensusCoverage/VoteRequestRoute.lean),
 and [where a retired role can come from](../consensus-coverage/ConsensusCoverage/RetiredRoleOrigin.lean).
 
-None of the 293 unsettled questions has an exact reader.
+None of the 117 unsettled questions has an exact reader.
 [`unsettled.tsv`](../consensus-coverage/unsettled.tsv) lists them with the
 event kinds that can enter each case and the entry points of its formula;
 [`census-unsettled.lean`](../consensus-coverage/scripts/census-unsettled.lean)
-regenerates it from the partition.
+regenerates it from the partition. For most of them a schedule believed to
+enter the case exists but its certificate does not yet.
+[`CensusQueueSearch`](../consensus-coverage/ConsensusCoverage/CensusQueueSearch.lean)
+searches a concrete step for the witnesses of a formula and emits an
+explicit proof for the kernel to check; the search itself is not trusted.
 
 **Full recorded-action denominator: at least 250; at least 247 on multi-node deployments.**
 The [recorded-action specification](../consensus-coverage/ConsensusCoverage/ActionProfile.lean)
