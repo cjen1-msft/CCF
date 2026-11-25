@@ -3,7 +3,7 @@ module
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
-public import ConsensusCoverage.CensusExactLocal
+public import ConsensusCoverage.CensusOutgoing
 import all ConsensusCoverage.CensusExactLocal
 import all ConsensusCoverage.CensusGhost
 import all ConsensusCoverage.ReadersGenerated
@@ -39,21 +39,21 @@ private theorem pack_eq (s t : Model.State) (before after : List Model.Envelope)
   unfold GuardedDomain.pack LeaderEffect.sameNode LeaderEffect.probes
   rw [all_eq mask]
 
-private theorem result_eq {b : Classes.StepBranch} (queueMem : b ∈ CensusExactLocal.queueColumns) (cfg : FullProfile.Configuration)
+private abbrev swapped (x : XView) (before after : List Model.Envelope) : XView :=
+  {x with base.before.network := before, base.after.network := after}
+
+private theorem result_eq {b : Classes.StepBranch} (localMem : b ∈ CensusExactLocal.columns) (cfg : FullProfile.Configuration)
     (s t : Model.State) (before after : List Model.Envelope) (mask : SameProbes s t before after)
     (past : List Model.State) (boot n : NodeID) (pre post : NodeState) (e : Event)
-    (input : CensusGhost.Input) (p q : List (Nat × List Entry)) (fallback : Unit → Option Bool) :
+    (input : CensusGhost.Input) (p q : List (Nat × List Entry)) (fallback : Unit → Option Bool)
+    (stable : let x := packX (GuardedDomain.pack boot s t past n pre post) e
+              @ReadersCompiler.readView ⟨cfg⟩ (swapped x before after) b = @ReadersCompiler.readView ⟨cfg⟩ x b) :
     (let v := GuardedDomain.pack boot {s with network := before} {t with network := after} [] n pre post
      @CensusGhost.Exec.readView input ⟨cfg⟩ ⟨v, e, outputsOf n pre e, p, q⟩ b) =
       (@ReadersCompiler.readView ⟨cfg⟩ (packX (GuardedDomain.pack boot s t past n pre post) e) b).orElse fallback := by
   let x := packX (GuardedDomain.pack boot s t past n pre post) e
-  let base := {x.base with before := {s with network := before}, after := {t with network := after}}
-  let y : XView := {x with base}
-  have subset : CensusExactLocal.queueColumns.all CensusExactLocal.columns.contains = true := by decide +kernel
-  have localMem := List.contains_iff_mem.mp ((List.all_eq_true.mp subset) b queueMem)
-  have eq := CensusExactLocal.correct localMem input cfg y [] p q fallback
-  have stable : @ReadersCompiler.readView ⟨cfg⟩ y b = @ReadersCompiler.readView ⟨cfg⟩ x b :=
-    CensusExactLocal.queue_correct queueMem cfg x before after
+  have eq := CensusExactLocal.correct localMem input cfg (swapped x before after) [] p q fallback
+  change @ReadersCompiler.readView ⟨cfg⟩ (swapped x before after) b = @ReadersCompiler.readView ⟨cfg⟩ x b at stable
   rw [stable] at eq
   rw [pack_eq s t before after mask past]
   exact eq
@@ -61,19 +61,45 @@ private theorem result_eq {b : Classes.StepBranch} (queueMem : b ∈ CensusExact
 private theorem lookup (s : Model.State) (q : List Model.Envelope) (n : NodeID) :
     CCF.MultiNodeTransitionSystem.nodeState {s with network := q} n = CCF.MultiNodeTransitionSystem.nodeState s n := rfl
 
-/-- For these local coordinates the real finite dispatcher accepts any other
-queues with the same endpoint mask and even arbitrary ghosts. Compare the
-actual ordered view, including its actual commit lists, not a synthetic path. -/
-public theorem answers_eq {b : Classes.StepBranch} (queueMem : b ∈ CensusExactLocal.queueColumns) (cfg : FullProfile.Configuration)
+private theorem answers_of_stable {b : Classes.StepBranch} (mem : b ∈ CensusExactLocal.columns) (cfg : FullProfile.Configuration)
     (s t : Model.State) (act : Model.Action) (past : List Model.State)
     (before after : List Model.Envelope) (mask : SameProbes s t before after)
-    (g h : ExplorerGhost.Ghost) (fallback : XView → Unit → Option Bool) :
+    (g h : ExplorerGhost.Ghost) (fallback : XView → Unit → Option Bool)
+    (stable : ∀ x, ofXAction cfg s t past act = some x →
+      @ReadersCompiler.readView ⟨cfg⟩ (swapped x before after) b = @ReadersCompiler.readView ⟨cfg⟩ x b) :
     ((CensusGhost.answers cfg g h {s with network := before} {t with network := after} act).bind (· b)) =
       ((ofXAction cfg s t past act).bind fun x => (@ReadersCompiler.readView ⟨cfg⟩ x b).orElse (fallback x)) := by
   cases a : CCF.MultiNodeTransitionSystem.nodeState s (GuardedDomain.actionActor act) <;>
     cases z : CCF.MultiNodeTransitionSystem.nodeState t (GuardedDomain.actionActor act) <;>
     simp only [CensusGhost.answers, ofXAction, GuardedDomain.ofAction, lookup, a, z,
       Option.bind_eq_bind, Option.bind_none, Option.bind_some, pure]
-  · exact result_eq queueMem cfg s t before after mask past _ _ _ _ _ _ _ _ _
+  · apply result_eq mem cfg s t before after mask past
+    apply stable
+    simp only [ofXAction, GuardedDomain.ofAction, a, z, Option.bind_eq_bind, Option.bind_some, pure]
+
+/-- These local coordinates permit arbitrary queues with the same endpoint
+mask, including when the replacement envelopes were never emitted. -/
+public theorem answers_eq {b : Classes.StepBranch} (queueMem : b ∈ CensusExactLocal.queueColumns) (cfg : FullProfile.Configuration)
+    (s t : Model.State) (act : Model.Action) (past : List Model.State)
+    (before after : List Model.Envelope) (mask : SameProbes s t before after)
+    (g h : ExplorerGhost.Ghost) (fallback : XView → Unit → Option Bool) :
+    ((CensusGhost.answers cfg g h {s with network := before} {t with network := after} act).bind (· b)) =
+      ((ofXAction cfg s t past act).bind fun x => (@ReadersCompiler.readView ⟨cfg⟩ x b).orElse (fallback x)) := by
+  have subset : CensusExactLocal.queueColumns.all CensusExactLocal.columns.contains = true := by decide +kernel
+  have mem := List.contains_iff_mem.mp ((List.all_eq_true.mp subset) b queueMem)
+  exact answers_of_stable mem cfg s t act past before after mask g h fallback
+    fun x _ => CensusExactLocal.queue_correct queueMem cfg x before after
+
+/-- For all the local coordinates one-copy membership on emitted envelopes
+(`CensusOutgoing.agree_of_one_copy`) and the native endpoint mask suffice. -/
+public theorem answers_eq_outgoing {b : Classes.StepBranch} (mem : b ∈ CensusExactLocal.columns) (cfg : FullProfile.Configuration)
+    (s t : Model.State) (act : Model.Action) (past : List Model.State)
+    (before after : List Model.Envelope) (mask : SameProbes s t before after)
+    (g h : ExplorerGhost.Ghost) (fallback : XView → Unit → Option Bool)
+    (agree : ∀ x, ofXAction cfg s t past act = some x → CensusOutgoing.Agree x before after) :
+    ((CensusGhost.answers cfg g h {s with network := before} {t with network := after} act).bind (· b)) =
+      ((ofXAction cfg s t past act).bind fun x => (@ReadersCompiler.readView ⟨cfg⟩ x b).orElse (fallback x)) :=
+  answers_of_stable mem cfg s t act past before after mask g h fallback
+    fun x made => CensusOutgoing.correct mem cfg x before after (agree x made)
 
 end ConsensusCoverage.CensusProbe
