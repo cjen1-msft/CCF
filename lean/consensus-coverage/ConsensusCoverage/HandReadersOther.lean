@@ -5,6 +5,8 @@ module
 
 public import ConsensusCoverage.HandReadersABase
 import all ConsensusCoverage.HandReadersOtherAdvance
+import all ConsensusCoverage.HandReadersOtherFold
+import all ConsensusCoverage.HandReadersOtherFoldNil
 import all ConsensusCoverage.HandReadersOtherFrontier
 import all ConsensusCoverage.HandReadersOtherPromotion
 import all ConsensusCoverage.HandReadersOtherVote
@@ -20,6 +22,14 @@ private def lookup : (b : Classes.StepBranch) → Option (Exact b)
   | .advance_backed_postRole_inr => some (Advance.exactReader .retired)
   | .advance_backed_self_pos => some (Advance.exactReader .self)
   | .advance_backed_self_neg => some (Advance.exactReader .peer)
+  | .foldl_select_max_values_nil => some Fold.nilExact
+  | .foldl_select_max_values_cons => some (Fold.exactReader .cons)
+  | .foldl_select_max_ih_inl => some (Fold.exactReader .kept)
+  | .foldl_select_max_chosen_pos => some (Fold.exactReader .selected)
+  | .foldl_select_max_le_total_inl => some (Fold.exactReader .smaller)
+  | .foldl_select_max_le_total_inr => some (Fold.exactReader .larger)
+  | .foldl_select_max_chosen_neg => some (Fold.exactReader .rejected)
+  | .foldl_select_max_ih_inr => some (Fold.exactReader .found)
   | .advance_le_total_inl => some (Frontier.exactReader true)
   | .advance_le_total_inr => some (Frontier.exactReader false)
   | .promotedLog_committed_pos => some (Promotion.exactReader true)
@@ -44,6 +54,6 @@ public theorem read_total (s : Step) {b} (h : b ∈ covered) :
   simpa only [read, Option.isSome_map] using (List.mem_filter.mp h).2
 
 set_option maxRecDepth 8192 in
-public theorem count : covered.Nodup ∧ covered.length = 11 := by decide +kernel
+public theorem count : covered.Nodup ∧ covered.length = 19 := by decide +kernel
 
 end ConsensusCoverage.HandReadersOther
