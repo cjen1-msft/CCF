@@ -1,0 +1,60 @@
+module
+
+-- Copyright (c) Microsoft Corporation. All rights reserved.
+-- Licensed under the Apache 2.0 License.
+
+public import ConsensusCoverage.HandReadersABase
+import all ConsensusCoverage.HandReadersTrunkCFollower
+import all ConsensusCoverage.HandReadersTrunkCReply
+import all ConsensusCoverage.HandReadersTrunkCAppend
+import all ConsensusCoverage.HandReadersTrunkCCommit
+import all ConsensusCoverage.HandReadersTrunkCSent
+import all ConsensusCoverage.HandReadersTrunkCLog
+import all ConsensusCoverage.HandReadersTrunkCMatch
+import all ConsensusCoverage.HandReadersTrunkCRoleStrict
+import all ConsensusCoverage.HandReadersTrunkCRoleIdentity
+import all ConsensusCoverage.HandReadersTrunkCVote
+import all ConsensusCoverage.HandReadersTrunkCVoteIdentity
+
+namespace ConsensusCoverage.HandReadersTrunkC
+
+open Consensus ActionProfile HandReadersA
+
+private def lookup : (b : Classes.StepBranch) → Option (Exact b)
+  | .appendBatch_summary_role_inr => some Batch.retired
+  | .commit_le_advance_inr => some Batch.commitStrict
+  | .sentIndex_advance_inl => some Sent.identity
+  | .log_advance_inl => some LogSites.identity
+  | .log_advance_inr => some LogSites.strict
+  | .matchIndex_advance_inl => some (Match.reader false)
+  | .matchIndex_advance_inr => some (Match.reader true)
+  | .role_advance_inr => some RoleSites.strict
+  | .role_advance_inl => some RoleSites.identity
+  | .votedFor_advance_inr => some VoteSites.strict
+  | .votedFor_advance_inl => some VoteSites.identity
+  | .handleAppendEntiresFromPrimary_eq_roleCase__inl => some (Fold.reader false)
+  | .handleAppendEntiresFromPrimary_eq_roleCase__inr => some (Fold.reader true)
+  | .aeReply_stepDown_pos => some (Reply.reader true)
+  | .aeReply_stepDown_neg => some (Reply.reader false)
+  | _ => none
+
+public def covered : List Classes.StepBranch :=
+  FullProfile.stepBranches.toList.filter fun b => (lookup b).isSome
+
+public def read (cfg : FullProfile.Configuration) (before : Model.State) (act : Model.Action)
+    (after : Model.State) (past : List Model.State) (b : Classes.StepBranch) : Option Bool :=
+  (lookup b).map fun r => r.eval cfg before act after past
+
+public theorem read_correct (s : Step) {b v} (h : read s.cfg s.before s.act s.after s.past b = some v) :
+    label s (.step b) = v := by
+  obtain ⟨r,_,rfl⟩ := Option.map_eq_some_iff.mp h
+  exact r.eq_label s
+
+public theorem read_total (s : Step) {b} (mem : b ∈ covered) :
+    (read s.cfg s.before s.act s.after s.past b).isSome = true := by
+  simpa only [read, Option.isSome_map] using (List.mem_filter.mp mem).2
+
+set_option maxRecDepth 8192 in
+public theorem count : covered.Nodup ∧ covered.length = 15 := by decide +kernel
+
+end ConsensusCoverage.HandReadersTrunkC
