@@ -11,7 +11,10 @@ import all ConsensusCoverage.ClauseSmallA
 import all ConsensusCoverage.ClauseSmallAActive
 import all ConsensusCoverage.FrontierWitnesses
 import all ConsensusCoverage.FullProfile
+import all ConsensusCoverage.Historical
 import all ConsensusCoverage.JointWitnesses
+import all ConsensusCoverage.LeaderCoverage
+import all ConsensusCoverage.NoBackingWitness
 import all ConsensusCoverage.ReadersTotal
 import all ConsensusCoverage.SolvedWitnesses
 import all ConsensusCoverage.StateCoverage
@@ -191,7 +194,7 @@ private def tighter (bits : List Bool) : Bool :=
   !bits[2]! || bits[1]! || bits[3]!
 
 private def floorOK (r : RestrictedProfile) : Bool :=
-  !(r.bits[5]! || r.bits[6]!) || r.post.2
+  !(r.bits[5]! || r.bits[6]!) || (r.post.2 && (r.pre.2 || r.post.1))
 
 public def upperPatterns : List (List Bool) :=
   Active.upperPatterns.filter tighter
@@ -228,14 +231,60 @@ private theorem floors_after (s : Step)
   exact (StateCoverage.read_iff s.after (s.before :: s.past) c.inv_step).2.mpr
     ((StateCoverage.backed_iff _ c.inv_step).mpr ⟨List.ne_nil_of_mem c.post_now,k,p,committed⟩)
 
+private theorem floor_no_leap (s : Step) (noBack : (endpoints s).1.2 = false)
+    (noZero : (endpoints s).2.1 = false)
+    (hit : label s (.step ff) = true ∨ label s (.step gg) = true) : False := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  let c := s.context
+  have old : ∀ k p, ¬ Committed s.frame k p := by
+    intro k p commit
+    have yes := (StateCoverage.read_iff s.before s.past c.inv).2.mpr
+      ((StateCoverage.backed_iff _ c.inv).mpr ⟨List.ne_nil_of_mem c.pre_now,k,p,commit⟩)
+    exact Bool.noConfusion (noBack.symm.trans yes)
+  have mono : ¬ LeaderCoverage.MultiNode s.nodes := fun multi =>
+    Bool.noConfusion (noZero.symm.trans (LeaderCoverage.unbacked_keeps_zero s multi noBack))
+  have spec (b : Classes.StepBranch) := (label_true s (.step b)).trans (sig_iff s.context b)
+  rcases floor_source c (hit.imp (spec ff).mp (spec gg).mp) with
+    ⟨l,ev,pos,sig_,_⟩ | ⟨k,p,v,later,l,i,commit,election,lt,_⟩
+  · obtain ⟨_,_,_,term,p,committed,_⟩ := c.snap_available ev pos sig_
+    exact old term p committed
+  · change Committed (s.frame.advance s.after) k p at commit
+    rcases commit with was | ⟨n,st,j,index,cert,_,backed⟩
+    · exact old k p was
+    · have now := cert.1.1
+      have stamp := cert.1.2.1
+      have electLed : Led (s.frame.advance s.after) v later := .inr ⟨l,i,election⟩
+      have vIn : v ∈ s.nodes := by
+        rcases c.elected_after election with earlier | next
+        · rcases (Historical.logFacts_correct (s.before :: s.past)).elected v later l i |>.mp
+            (by rwa [← StateCoverage.frame_logs]) with ⟨after,before,hist,sub,run⟩
+          obtain ⟨_,value,_,hit,_,_⟩ := run
+          have elem := List.mem_map_of_mem (f := Prod.fst) hit
+          rw [NoBackingWitness.run_keys s.run after (sub.subset List.mem_cons_self)] at elem
+          exact elem
+        · have actor := (c.electStep next).1
+          rw [actor, ← NoBackingWitness.run_keys (.step s.run s.ran) s.after List.mem_cons_self]
+          exact List.mem_map_of_mem (f := Prod.fst) c.post_now
+      have nIn : n ∈ s.nodes := by
+        rw [← NoBackingWitness.run_keys (.step s.run s.ran) s.after List.mem_cons_self]
+        exact List.mem_map_of_mem (f := Prod.fst) now
+      have eq : n = v := Classical.not_not.mp (fun neq => mono ⟨n,nIn,v,vIn,neq⟩)
+      rw [← eq] at electLed
+      rcases (c.inv_step.led_cur n st later now electLed) with smaller | ⟨same,_⟩ <;> omega
+
 private theorem floor_step (s : Step) : floorOK (nonTrunkLabel .active s) = true := by
   unfold floorOK nonTrunkLabel restrictedLabel
   change (!(((nonTrunk .active).map (fun b => label s (.step b)))[5]! ||
-    ((nonTrunk .active).map (fun b => label s (.step b)))[6]!) || (endpoints s).2.2) = true
+    ((nonTrunk .active).map (fun b => label s (.step b)))[6]!) ||
+      ((endpoints s).2.2 && ((endpoints s).1.2 || (endpoints s).2.1))) = true
   rw [show nonTrunk .active = _ from Active.columns]
-  change (!(label s (.step ff) || label s (.step gg)) || (endpoints s).2.2) = true
+  change (!(label s (.step ff) || label s (.step gg)) ||
+    ((endpoints s).2.2 && ((endpoints s).1.2 || (endpoints s).2.1))) = true
   by_cases hit : label s (.step ff) = true ∨ label s (.step gg) = true
-  · simp [floors_after s hit]
+  · have ep : ((endpoints s).1.2 || (endpoints s).2.1) = true := by
+      cases hb : (endpoints s).1.2 <;> cases hz : (endpoints s).2.1 <;>
+        first | rfl | exact (floor_no_leap s hb hz hit).elim
+    simp [floors_after s hit,ep]
   · have no : (label s (.step ff) || label s (.step gg)) = false :=
       Bool.eq_false_iff.mpr (fun yes => hit (by simpa only [Bool.or_eq_true] using yes))
     simp [no]
@@ -264,8 +313,8 @@ public def remainingRows : List RestrictedProfile := upperRows.filter (· ∉ wi
 
 public theorem counts :
     upperPatterns.Nodup ∧ upperPatterns.length = 39 ∧
-    witnessed.Nodup ∧ witnessed.length = 26 ∧ upperRows.Nodup ∧ upperRows.length = 187 ∧
-    remainingPatterns.length = 31 ∧ remainingRows.length = 161 :=
+    witnessed.Nodup ∧ witnessed.length = 26 ∧ upperRows.Nodup ∧ upperRows.length = 160 ∧
+    remainingPatterns.length = 31 ∧ remainingRows.length = 134 :=
   by decide +kernel
 
 public theorem lower (r : RestrictedProfile) (mem : r ∈ witnessed) :
