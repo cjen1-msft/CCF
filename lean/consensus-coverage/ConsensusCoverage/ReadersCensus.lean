@@ -13,13 +13,13 @@ namespace ConsensusCoverage.Readers
 
 set_option maxRecDepth 8192
 
-public theorem covered_count : covered.length = 184 := by decide
+public theorem covered_count : covered.length = 186 := by decide
 
 /-- Additional total readers, relative to the baseline before composition. -/
 public theorem beyond_baseline_count :
-    (covered.filter (· ∉ ReplayAnswers.unconditional)).length = 146 := by decide
+    (covered.filter (· ∉ ReplayAnswers.unconditional)).length = 148 := by decide
 
 public theorem combined_count :
-    (covered ++ ReplayAnswers.unconditional).eraseDups.length = 186 := by decide
+    (covered ++ ReplayAnswers.unconditional).eraseDups.length = 188 := by decide
 
 end ConsensusCoverage.Readers
