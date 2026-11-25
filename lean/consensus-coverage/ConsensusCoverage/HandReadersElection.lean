@@ -10,6 +10,7 @@ import all ConsensusCoverage.HandReadersElectionCore
 import all ConsensusCoverage.HandReadersElectionGrant
 import all ConsensusCoverage.HandReadersElectionRank
 import all ConsensusCoverage.HandReadersElectionTip
+import all ConsensusCoverage.HandReadersElectionZip
 
 namespace ConsensusCoverage.HandReadersElection
 
@@ -37,6 +38,8 @@ private def lookup : (b : Classes.StepBranch) → Option (Exact b)
   | .rankAtGrant_term_inr => some (Rank.exactReader .same)
   | .tip_chain_fresh => some (Tip.exactReader true)
   | .tip_chain_backed => some (Tip.exactReader false)
+  | .zipIdx_sorted_log_nil => some (Zip.exactReader false)
+  | .zipIdx_sorted_log_cons => some (Zip.exactReader true)
   | _ => none
 
 public def covered : List Classes.StepBranch :=
@@ -56,6 +59,6 @@ public theorem read_total (s : Step) {b} (h : b ∈ covered) :
   simpa only [read, Option.isSome_map] using (List.mem_filter.mp h).2
 
 set_option maxRecDepth 8192 in
-public theorem count : covered.Nodup ∧ covered.length = 21 := by decide +kernel
+public theorem count : covered.Nodup ∧ covered.length = 23 := by decide +kernel
 
 end ConsensusCoverage.HandReadersElection
