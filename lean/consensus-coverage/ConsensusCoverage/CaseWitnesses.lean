@@ -402,14 +402,76 @@ private def bounded25Cert : Certificate := certify bounded25 [] bounded25Valid
   [caseAt 10 [.candidate_candidate_inl,
     .candidate_kind_inr]]
 
-private def certificates : List Certificate := [cert0, cert1, bounded0Cert, bounded1Cert, bounded2Cert, bounded3Cert, bounded4Cert, bounded5Cert, bounded6Cert, bounded7Cert, bounded8Cert, bounded9Cert, bounded10Cert, bounded11Cert, bounded12Cert, bounded13Cert, bounded14Cert, bounded15Cert, bounded16Cert, bounded17Cert, bounded18Cert, bounded19Cert, bounded20Cert, bounded21Cert, bounded22Cert, bounded23Cert, bounded24Cert, bounded25Cert]
+private def bounded26 : Run :=
+  ⟨{0, 1}, [0, 1], [.input 0 (.append [{content := .transaction 1 {configuration := some {0}}}, {content := .signature, flushes := [(1, 3)]}, {content := .signature}]), .deliver 0 1, .input 0 (.sendEntries 1 3), .deliver 0 1, .deliver 1 0, .deliver 1 0]⟩
+private theorem bounded26Valid : bounded26.valid := by decide
+private def bounded26Cert : Certificate := certify bounded26 [] bounded26Valid
+  [caseAt 5 [.commit_backed_max_eq_or_inl]]
+
+private def bounded27 : Run :=
+  ⟨{0, 1, 2}, [0, 1, 2], [.input 0 (.append [{content := .signature, flushes := [(1, 2), (2, 2)]}]), .deliver 0 1, .deliver 0 2, .deliver 1 0, .input 0 (.nominateSuccessor), .input 0 (.append [{content := .signature}]), .deliver 0 1, .deliver 1 2, .deliver 2 1]⟩
+private theorem bounded27Valid : bounded27.valid := by decide
+private def bounded27Cert : Certificate := certify bounded27 [] bounded27Valid
+  [caseAt 8 [.new_in_elected_backing_inl]]
+
+private def bounded28 : Run :=
+  ⟨{0, 1, 2}, [0, 1, 2], [.input 0 (.append [{content := .transaction 1 {configuration := some {1, 2}}}, {content := .signature, flushes := [(1, 3), (2, 3)]}]), .deliver 0 1, .deliver 0 2, .deliver 1 0, .deliver 2 0, .input 0 (.append [{content := .transaction 2 {configuration := some {1}}}, {content := .signature, flushes := [(2, 5)]}, {content := .transaction 3 {retirementConfirmations := {0}}}, {content := .signature, flushes := [(1, 7)]}]), .deliver 0 1, .deliver 0 2, .deliver 1 0, .deliver 2 0, .input 0 (.append [{content := .transaction 4 {}}])]⟩
+private theorem bounded28Valid : bounded28.valid := by decide
+private def bounded28Cert : Certificate := certify bounded28 [] bounded28Valid
+  [caseAt 10 [.post_log_role_inr]]
+
+private def bounded29 : Run :=
+  ⟨{0, 1, 2}, [0, 1, 2], [.input 0 (.append [{content := .signature, flushes := [(1, 2), (2, 2)]}]), .deliver 0 1, .deliver 0 2, .deliver 1 0, .input 0 (.nominateSuccessor), .input 0 (.append [{content := .signature}]), .deliver 0 1, .deliver 1 2, .deliver 2 1, .input 1 (.append [{content := .signature, flushes := [(0, 3)]}]), .deliver 1 0, .deliver 1 0]⟩
+private theorem bounded29Valid : bounded29.valid := by decide
+private def bounded29Cert : Certificate := certify bounded29 [(10, 2), (11, 3)] bounded29Valid
+  [caseAt 11 [.accept_persist_inSender_neg,
+    .persist_persist_inr]]
+
+private def bounded30 : Run :=
+  ⟨{0, 1}, [0, 1, 2], [.input 0 (.append [{content := .signature, flushes := [(1, 2)]}]), .deliver 0 1, .deliver 1 0, .input 0 (.nominateSuccessor), .deliver 0 1, .deliver 1 0, .deliver 0 1, .input 1 (.append [{content := .signature, flushes := [(0, 3)]}]), .deliver 1 0, .deliver 1 0, .deliver 0 1, .deliver 0 1, .input 2 (.initAsBackup [{term := 2, content := .transaction 0 {configuration := some {0, 1}}}, {term := 2, content := .signature}, {term := 3, content := .signature}])]⟩
+private theorem bounded30Valid : bounded30.valid := by decide
+private def bounded30Cert : Certificate := certify bounded30 [] bounded30Valid
+  [caseAt 12 [.leader_floor_led_inr]]
+
+private def bounded31 : Run :=
+  ⟨{0, 1, 2, 3, 4}, [0, 1, 2, 3, 4], [.input 0 (.append [{content := .signature, flushes := [(1, 2), (2, 2)]}]), .deliver 0 1, .deliver 0 2, .deliver 1 0, .deliver 2 0, .input 0 (.append [{content := .signature, flushes := [(1, 3), (4, 3)]}]), .deliver 0 1, .deliver 1 0, .input 0 (.nominateSuccessor), .deliver 0 1, .deliver 1 2, .deliver 2 1, .deliver 1 3, .deliver 3 1, .deliver 0 4]⟩
+private theorem bounded31Valid : bounded31.valid := by decide
+private def bounded31Cert : Certificate := certify bounded31 [] bounded31Valid
+  [caseAt 14 [.old_complete_elected_after_inl,
+    .rankedElections_elected_inl]]
+
+private def bounded32 : Run :=
+  ⟨{0, 1, 2}, [0, 1, 2], [.input 0 (.append [{content := .signature, flushes := [(1, 2), (2, 2)]}]), .deliver 0 1, .deliver 0 2, .deliver 1 0, .input 0 (.nominateSuccessor), .input 0 (.sendEntries 2 2), .deliver 0 2, .deliver 0 1, .deliver 1 2, .deliver 2 1, .input 1 (.append [{content := .signature, flushes := [(2, 3)]}]), .deliver 1 2, .deliver 1 2, .deliver 2 1, .deliver 2 1, .input 1 (.nominateSuccessor), .deliver 1 2, .deliver 2 0, .deliver 0 2]⟩
+private theorem bounded32Valid : bounded32.valid := by decide
+private def bounded32Cert : Certificate := certify bounded32 [(17, 4)] bounded32Valid
+  [caseAt 18 [.new_in_elected_lt_trichotomy_inl]]
+
+private def bounded33 : Run :=
+  ⟨{0, 1, 2, 3, 4}, [0, 1, 2, 3, 4], [.input 0 (.append [{content := .signature, flushes := [(1, 2), (2, 2), (3, 2), (4, 2)]}]), .deliver 0 1, .deliver 1 0, .input 0 (.nominateSuccessor), .deliver 0 2, .deliver 0 3, .deliver 0 4, .deliver 4 0, .input 0 (.nominateSuccessor), .deliver 0 4, .deliver 4 0, .deliver 0 4, .deliver 4 3, .deliver 3 4, .input 4 (.append [{content := .signature, flushes := [(0, 3), (3, 3)]}]), .deliver 4 0, .deliver 4 0, .deliver 4 3, .deliver 4 3, .deliver 0 1]⟩
+private theorem bounded33Valid : bounded33.valid := by decide
+private def bounded33Cert : Certificate := certify bounded33 [] bounded33Valid
+  [caseAt 19 [.campaign_backed_pre_split_inr]]
+
+private def bounded34 : Run :=
+  ⟨{0, 1, 2}, [0, 1, 2], [.input 0 (.append [{content := .signature, flushes := [(1, 2), (2, 2)]}]), .deliver 0 1, .deliver 0 2, .deliver 1 0, .input 0 (.nominateSuccessor), .input 0 (.sendEntries 2 2), .deliver 0 2, .deliver 0 1, .deliver 1 2, .deliver 2 1, .input 1 (.append [{content := .signature, flushes := [(2, 3)]}]), .deliver 1 2, .deliver 1 2, .deliver 2 1, .deliver 2 1, .input 1 (.sendEntries 2 3), .deliver 1 2, .input 1 (.nominateSuccessor), .deliver 1 2, .deliver 2 1, .deliver 1 2]⟩
+private theorem bounded34Valid : bounded34.valid := by decide
+private def bounded34Cert : Certificate := certify bounded34 [(19, 6)] bounded34Valid
+  [caseAt 20 [.new_in_elected_lt_trichotomy_inr_inr]]
+
+private def bounded35 : Run :=
+  ⟨{0, 1, 2, 3, 4}, [0, 1, 2, 3, 4], [.input 0 (.append [{content := .signature, flushes := [(1, 2), (2, 2), (3, 2), (4, 2)]}]), .deliver 0 1, .deliver 1 0, .input 0 (.nominateSuccessor), .deliver 0 2, .deliver 0 3, .deliver 0 4, .deliver 4 0, .input 0 (.nominateSuccessor), .deliver 0 4, .deliver 4 0, .deliver 0 4, .deliver 4 3, .deliver 3 4, .input 4 (.append [{content := .signature, flushes := [(0, 3), (3, 3)]}]), .deliver 4 0, .deliver 4 0, .deliver 4 3, .deliver 4 3, .deliver 0 1, .deliver 1 2, .deliver 2 1]⟩
+private theorem bounded35Valid : bounded35.valid := by decide
+private def bounded35Cert : Certificate := certify bounded35 [] bounded35Valid
+  [caseAt 21 [.candidate_candidate_inr]]
+
+private def certificates : List Certificate := [cert0, cert1, bounded0Cert, bounded1Cert, bounded2Cert, bounded3Cert, bounded4Cert, bounded5Cert, bounded6Cert, bounded7Cert, bounded8Cert, bounded9Cert, bounded10Cert, bounded11Cert, bounded12Cert, bounded13Cert, bounded14Cert, bounded15Cert, bounded16Cert, bounded17Cert, bounded18Cert, bounded19Cert, bounded20Cert, bounded21Cert, bounded22Cert, bounded23Cert, bounded24Cert, bounded25Cert, bounded26Cert, bounded27Cert, bounded28Cert, bounded29Cert, bounded30Cert, bounded31Cert, bounded32Cert, bounded33Cert, bounded34Cert, bounded35Cert]
 -- END GENERATED CERTIFICATES
 
 /-- The positive cases computed by running the sound reader on the cover. -/
 public def witnessed : List Classes.StepBranch :=
   (certificates.flatMap (·.questions)).eraseDups
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 169 := by decide +kernel
+public theorem count : witnessed.Nodup ∧ witnessed.length = 181 := by decide +kernel
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
