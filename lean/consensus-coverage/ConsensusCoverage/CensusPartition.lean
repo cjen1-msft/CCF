@@ -8,6 +8,7 @@ public import ConsensusCoverage.CaseUnreachableB
 public import ConsensusCoverage.CaseWitnessesDeep
 public import ConsensusCoverage.CaseWitnessesDeepB
 public import ConsensusCoverage.CaseWitnessesQueued
+public import ConsensusCoverage.CaseWitnessesRescueA
 public import ConsensusCoverage.CensusBallots
 public import ConsensusCoverage.ReadersWitnesses
 public import ConsensusCoverage.ReadersWitnessesClosed
@@ -18,6 +19,7 @@ import all ConsensusCoverage.CaseWitnesses
 import all ConsensusCoverage.CaseWitnessesDeep
 import all ConsensusCoverage.CaseWitnessesDeepB
 import all ConsensusCoverage.CaseWitnessesQueued
+import all ConsensusCoverage.CaseWitnessesRescueA
 import all ConsensusCoverage.DeepReceiveCases
 import all ConsensusCoverage.DeepBatchCases
 import all ConsensusCoverage.DeepPrefixCases
@@ -52,6 +54,12 @@ import all ConsensusCoverage.BatchArmsB
 import all ConsensusCoverage.BatchPacketCasesB
 import all ConsensusCoverage.NominationRetirementB
 import all ConsensusCoverage.AckComparisonB
+import all ConsensusCoverage.OverlapCasesB
+import all ConsensusCoverage.AssistOverlapA
+import all ConsensusCoverage.AssistFollowerA
+import all ConsensusCoverage.AssistAcceptedA
+import all ConsensusCoverage.AssistCampaignA
+import all ConsensusCoverage.AssistEffectA
 import all ConsensusCoverage.FullProfile
 import all ConsensusCoverage.ReadersWitnesses
 import all ConsensusCoverage.ReadersWitnessesClosed
@@ -73,7 +81,7 @@ set_option maxHeartbeats 0
 public def witnessed : List Classes.StepBranch :=
   (CaseWitnesses.witnessed ++ CaseWitnessesDeep.witnessed ++ ReadersWitnesses.witnessed ++
     CaseWitnessesDeepB.witnessed ++ CaseWitnessesQueued.witnessed ++ ReadersWitnessesQueue.witnessed ++
-    ReadersWitnessesClosed.witnessed).eraseDups
+    ReadersWitnessesClosed.witnessed ++ CaseWitnessesRescueA.witnessed).eraseDups
 
 public def refuted : List Classes.StepBranch :=
   (CaseUnreachable.refuted ++ CaseUnreachableB.refuted ++
@@ -87,7 +95,7 @@ public def unsettled : List Classes.StepBranch :=
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
   simp only [witnessed, List.mem_eraseDups, List.mem_append] at mem
-  rcases mem with (((((census | deep) | readers) | deepB) | queued) | readerQueue) | closed
+  rcases mem with ((((((census | deep) | readers) | deepB) | queued) | readerQueue) | closed) | rescue
   · exact CaseWitnesses.occurs census
   · exact CaseWitnessesDeep.occurs deep
   · exact ReadersWitnesses.occurs readers
@@ -95,6 +103,7 @@ public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
   · exact CaseWitnessesQueued.occurs queued
   · exact ReadersWitnessesQueue.occurs readerQueue
   · exact ReadersWitnessesClosed.occurs closed
+  · exact CaseWitnessesRescueA.occurs rescue
 
 public theorem impossible {b : Classes.StepBranch} (mem : b ∈ refuted) (s : Step) :
     label s (.step b) = false := by
@@ -116,11 +125,11 @@ public theorem unsettled_iff (b : Classes.StepBranch) :
     exact Array.getElem_mem _
   simp [unsettled, all]
 
-public theorem witnessed_count : witnessed.Nodup ∧ witnessed.length = 449 := by decide +kernel
+public theorem witnessed_count : witnessed.Nodup ∧ witnessed.length = 474 := by decide +kernel
 
 public theorem refuted_count : refuted.Nodup ∧ refuted.length = 29 := by decide +kernel
 
-public theorem unsettled_count : unsettled.Nodup ∧ unsettled.length = 38 := by decide +kernel
+public theorem unsettled_count : unsettled.Nodup ∧ unsettled.length = 13 := by decide +kernel
 
 /-- Every total generated or legacy reader is accounted for in a proved
 class. One-sided readers may still give evidence about an unsettled case. -/
