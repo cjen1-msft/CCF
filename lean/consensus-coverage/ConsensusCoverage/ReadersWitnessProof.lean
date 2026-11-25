@@ -18,20 +18,21 @@ private def accepts (s : Step) (questions : List Classes.StepBranch) : Bool :=
     (Readers.covered.contains b && ReplayAnswers.answer baseline.get (.step b) == some true) ||
       Readers.read? e b == some true
 
-public def checked (schedule offset : Nat) (questions : List Classes.StepBranch) : Bool :=
-  (ReadersCorpus.stepAt schedule offset).any (accepts · questions)
+public def checked (schedule offset : Nat) (questions : List Classes.StepBranch)
+    (locate : Nat → Nat → Option Step := ReadersCorpus.stepAt) : Bool :=
+  (locate schedule offset).any (accepts · questions)
 
-public structure Claim where
+public structure Claim (locate : Nat → Nat → Option Step := ReadersCorpus.stepAt) where
   schedule : Nat
   offset : Nat
   questions : List Classes.StepBranch
-  accepted : checked schedule offset questions = true
+  accepted : checked schedule offset questions locate = true
 
-private theorem Claim.reads (c : Claim) {b : Classes.StepBranch} (mem : b ∈ c.questions) :
+private theorem Claim.reads {locate} (c : Claim locate) {b : Classes.StepBranch} (mem : b ∈ c.questions) :
     ∃ s : Step, Readers.read? (Readers.read s.cfg s.before s.act s.after s.past) b = some true := by
   have ran := c.accepted
   unfold checked at ran
-  cases found : ReadersCorpus.stepAt c.schedule c.offset with
+  cases found : locate c.schedule c.offset with
   | none => simp [found] at ran
   | some s =>
     simp only [found, Option.any_some, accepts] at ran
@@ -44,7 +45,7 @@ private theorem Claim.reads (c : Claim) {b : Classes.StepBranch} (mem : b ∈ c.
         (congrArg some (ReplayAnswers.sound s (.step b) (beq_iff_eq.mp prior.2)))
     · exact beq_iff_eq.mp test
 
-public theorem Claim.occurs (c : Claim) {b : Classes.StepBranch} (mem : b ∈ c.questions) :
+public theorem Claim.occurs {locate} (c : Claim locate) {b : Classes.StepBranch} (mem : b ∈ c.questions) :
     ∃ s : Step, label s (.step b) = true := by
   obtain ⟨s, yes⟩ := c.reads mem
   exact ⟨s, Readers.read?_correct s b yes⟩

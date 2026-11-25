@@ -20,6 +20,7 @@ public structure Pools where
   states : List Model.State
   ids : Thunk (List NodeID)
   records : Thunk (List NodeState)
+  appendInputs : Thunk (List AppendEntryInput)
   entries : Thunk (List Entry)
   logs : Thunk (List (List Entry))
   envelopes : Thunk (List Model.Envelope)
@@ -35,6 +36,9 @@ public structure Pools where
 open Safety in
 def observations (pools : Pools) : List Observation :=
   (pools.records.get.map observe).eraseDups
+
+def entryContents (pools : Pools) : List EntryContent :=
+  (pools.appendInputs.get.map (·.content) ++ pools.entries.get.map (·.content)).eraseDups
 
 theorem finset_mem {v : NodeID} {s : CCF.Finset NodeID} (h : v ∈ s) : v ∈ s.val :=
   h
@@ -100,6 +104,9 @@ public def prepare (cfg : CCF.Finset NodeID) (x : XView) : Pools :=
     let values := (0 :: ids.get ++ nodeValues ++ logValues ++ messageValues).eraseDups
     (values ++ values.map Nat.succ).eraseDups
   { states, ids, envelopes, messages, requests, configurations, naturals
+    appendInputs := Thunk.mk fun _ => match x.event with
+      | .internal (.append entries) => entries
+      | _ => []
     records := Thunk.mk fun _ => nodes.get.map Prod.snd
     entries := Thunk.mk fun _ => (logs.get.flatten).eraseDups
     logs := Thunk.mk fun _ => ([] :: logs.get.flatMap ReadersAtoms.prefixes).eraseDups

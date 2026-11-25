@@ -1,5 +1,6 @@
 name = "consensus_coverage"
 version = "0.1.0"
+defaultTargets = ["ConsensusCoverage"]
 moreLeanArgs = ["-DwarningAsError=true"]
 
 [[require]]
@@ -14,3 +15,4 @@ copy = false
 
 [[lean_lib]]
 name = "ConsensusCoverage"
+globs = ["ConsensusCoverage.+"]

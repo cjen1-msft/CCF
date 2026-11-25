@@ -6,6 +6,9 @@ module
 import all ConsensusCoverage.ReadersGenerated
 import all ConsensusCoverage.ReadersCompiler
 import all ConsensusCoverage.ReadersPolarGenerated
+import all ConsensusCoverage.ReadersPolarBacking
+import all ConsensusCoverage.ReadersPolarSummary
+import all ConsensusCoverage.ReadersPolarObserve
 import all ConsensusCoverage.ReadersPolar
 meta import Lean
 
@@ -55,6 +58,7 @@ private def inputs (name : Name) : Array String :=
   | `ConsensusCoverage.LeaderEffect.probes => #["queue"]
   | `ConsensusCoverage.ReadersPolar.Pools.states => #["history_input", "node_table", "queue"]
   | `ConsensusCoverage.ReadersPolar.Pools.records => #["history_input", "historical_nodes", "node_table"]
+  | `ConsensusCoverage.ReadersPolar.Pools.appendInputs => #["action"]
   | `ConsensusCoverage.ReadersPolar.Pools.sets
   | `ConsensusCoverage.ReadersPolar.Pools.ids => #["configuration", "history_input", "historical_nodes",
     "node_table", "commits"]
@@ -145,6 +149,22 @@ run_cmd liftTermElabM do
         cols.toList.map (fun field => if !covered then "-" else if flags.contains field then "1" else "0")))
   out.flush
 
+private def polarRoots (env : Environment) : Std.HashMap String Name := Id.run do
+  let mut pending := #[`ConsensusCoverage.ReadersPolarCompiler.readView]
+  let mut seen : NameSet := {}
+  let mut found : Std.HashMap String Name := {}
+  while let some name := pending.back? do
+    pending := pending.pop
+    if seen.contains name then continue
+    seen := seen.insert name
+    let leaf := name.getString!
+    if leaf.startsWith "yes_step_" || leaf.startsWith "no_step_" then
+      found := found.insert leaf name
+    else if leaf == "readView" then
+      if let some (.defnInfo d) := env.find? name then
+        pending := pending ++ d.value.getUsedConstants.toList.toArray
+  return found
+
 run_cmd liftTermElabM do
   let some file ← IO.getEnv "CCF_READERS_POLAR_DEPENDENCIES" | return
   let env ← getEnv
@@ -152,16 +172,15 @@ run_cmd liftTermElabM do
     "canonical", "observations", "leaders", "elections", "grants", "votes", "action", "envelope",
     "changed_bit", "queue"]
   let ctors := (← getConstInfoInduct ``Classes.StepBranch).ctors
-  let dispatch ← getConstInfo `ConsensusCoverage.ReadersPolarCompiler.readView
-  let used := dispatch.value!.getUsedConstants
+  let used := polarRoots env
   let out ← IO.FS.Handle.mk file .write
   out.putStrLn (String.intercalate "\t" ("reader" :: "polarity" :: "available" :: cols.toList))
   let mut memo := {}
   for ctor in ctors do
     for polarity in ["yes", "no"] do
-      let n := Name.mkStr `ConsensusCoverage.ReadersPolarCompiler.R (polarity ++ "_step_" ++ ctor.getString!)
-      let available := used.contains n
-      let (flags, next) := summarize env n memo
+      let n := used[polarity ++ "_step_" ++ ctor.getString!]?
+      let available := n.isSome
+      let (flags, next) := n.map (fun name => summarize env name memo) |>.getD ({}, memo)
       memo := next
       out.putStrLn (String.intercalate "\t"
         (ctor.toString :: polarity :: (if available then "1" else "0") ::
