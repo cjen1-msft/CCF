@@ -610,9 +610,13 @@ unread.
 
 [`case-meanings.tsv`](../consensus-coverage/case-meanings.tsv) describes,
 for each of the 311 reachable questions that had no baseline reader, what
-the case means on a recorded step. This snapshot predates the compiled
-match-index and accepted-log readers. The current roster of cases without
-an exact reader is `ReadersTotal.unread`.
+the case means on a recorded step. Rows marked `proved` are the
+hand-written readers; rows marked `conjecture` give a conjectured meaning
+and the obstacle to proving it, most often that the case sits inside a
+lemma used at many places in the proof. The table predates the compiled
+match-index and accepted-log readers, so twelve of its conjecture rows now
+have a compiled reader. The current list of cases without an exact reader
+is `ReadersTotal.unread`.
 
 The rooted- and sorted-log proofs agree on the acting node: both enter their
 actor case exactly when its record changes **or** a new committed key appears.
