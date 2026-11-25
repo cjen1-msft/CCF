@@ -73,36 +73,35 @@ private theorem singleton {α : Type} {e : α} {P : α → Prop}
 
 -- The postcondition quantifies output lists; it does not assert that these
 -- same lists were the recorded outgoing messages. Supply one of each kind.
-local macro "outputs " s:ident : tactic => `(tactic|
-  (let nom := successor ($s).self ($s).fresh.currentTerm
-   let vote := ballot ($s).self ($s).fresh
-   let ping := heartbeat ($s).self ($s).leader
-   have adv : Advance ($s).self ($s).leader ($s).leader := Or.inl rfl
-   have nomOK : ∀ e ∈ [nom], e.source = ($s).self ∧
-       e.payload = .proposeRequestVoteRequest ($s).fresh.currentTerm := singleton ⟨rfl, rfl⟩
-   have start : ∀ e ∈ [nom], LeaderStart ($s).self ($s).fresh.currentTerm ($s).leader e :=
-     fun e h => Or.inl (nomOK e h)
-   have vs : ∀ e ∈ [vote], e.source = ($s).self ∧ ¬e.target = ($s).self ∧
-       e.payload = .requestVoteRequest (makeRequestVoteRequest ($s).fresh) :=
-     singleton ⟨rfl, Nat.succ_ne_self _, rfl⟩
-   have ae : ∀ e ∈ [ping], AEFrom ($s).self ($s).leader.currentTerm
-     ($s).leader.commitIndex ($s).leader.log e := singleton (beat _ _)
-   iterate 6 right
-   left
-   first
-   | (refine ⟨($s).self, ($s).fresh, ($s).promotion, ($s).leader, [nom], ⟨adv, nomOK⟩,
-        adv, nomOK, [ping], ae, ?_⟩
-      first | exact ⟨nom, .head _, .head _⟩ | exact ⟨ping, .tail _ (.head _), .head _⟩)
-   | (have done := And.intro (show ($s).fresh.role = .candidate from rfl)
-        (And.intro ($s).quorum (And.intro adv start))
-      refine ⟨($s).self, ($s).state, ($s).campaign, ($s).leader, [nom], Or.inr done,
-        [vote], vs, done, done.1, done.2, done.2.1, done.2.2, adv, start, ?_⟩
-      first | exact ⟨nom, .head _, .head _⟩ | exact ⟨vote, .tail _ (.head _), .head _⟩)))
-
 private theorem output_cases (s : Seed c) :
     step_becomeCandidate_sends_mem_append_inl f t c ∧ step_becomeCandidate_sends_mem_append_inr f t c ∧
     step_becomePrimary_sends_mem_append_inl f t c ∧ step_becomePrimary_sends_mem_append_inr f t c := by
-  refine ⟨?_, ?_, ?_, ?_⟩ <;> outputs s
+  let nom := successor s.self s.fresh.currentTerm
+  let vote := ballot s.self s.fresh
+  let ping := heartbeat s.self s.leader
+  have adv : Advance s.self s.leader s.leader := Or.inl rfl
+  have nomOK : ∀ e ∈ [nom], e.source = s.self ∧
+      e.payload = .proposeRequestVoteRequest s.fresh.currentTerm := singleton ⟨rfl, rfl⟩
+  have start : ∀ e ∈ [nom], LeaderStart s.self s.fresh.currentTerm s.leader e :=
+    fun e h => Or.inl (nomOK e h)
+  have vs : ∀ e ∈ [vote], e.source = s.self ∧ ¬e.target = s.self ∧
+      e.payload = .requestVoteRequest (makeRequestVoteRequest s.fresh) :=
+    singleton ⟨rfl, Nat.succ_ne_self _, rfl⟩
+  have ae : ∀ e ∈ [ping], AEFrom s.self s.leader.currentTerm
+    s.leader.commitIndex s.leader.log e := singleton (beat _ _)
+  have done := And.intro (show s.fresh.role = .candidate from rfl)
+    (And.intro s.quorum (And.intro adv start))
+  refine ⟨?_, ?_, ?_, ?_⟩
+  all_goals iterate 6 right
+  all_goals left
+  all_goals first
+    | refine ⟨s.self, s.state, s.campaign, s.leader, [nom], Or.inr done, [vote], vs,
+        done, done.1, done.2, done.2.1, done.2.2, adv, start, ?_⟩
+    | refine ⟨s.self, s.fresh, s.promotion, s.leader, [nom], ⟨adv, nomOK⟩, adv, nomOK, [ping], ae, ?_⟩
+  · exact ⟨nom, .head _, .head _⟩
+  · exact ⟨vote, .tail _ (.head _), .head _⟩
+  · exact ⟨nom, .head _, .head _⟩
+  · exact ⟨ping, .tail _ (.head _), .head _⟩
 
 private theorem result_cases (s : Seed c) :
     step_becomeCandidate_result_done_inl f t c ∧ step_becomeCandidate_result_done_inr f t c ∧
