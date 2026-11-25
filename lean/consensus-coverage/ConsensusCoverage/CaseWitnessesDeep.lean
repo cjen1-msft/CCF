@@ -18,6 +18,12 @@ import all ConsensusCoverage.DeepBatchCases
 import all ConsensusCoverage.DeepPrefixCases
 import all ConsensusCoverage.DeepListCases
 import all ConsensusCoverage.DeepObserveCases
+import all ConsensusCoverage.DeepHandlerCases
+import all ConsensusCoverage.DeepSignedCases
+import all ConsensusCoverage.DeepBoundCases
+import all ConsensusCoverage.DeepWinningCases
+import all ConsensusCoverage.DeepRankingCases
+import all ConsensusCoverage.DeepHistoryCases
 import all ConsensusCoverage.ReadersCorpus
 import all ConsensusCoverage.EventSupport
 import all ConsensusCoverage.JointWitnesses
@@ -193,11 +199,13 @@ private def earlier : List Certificate :=
 
 private def certificates : List Certificate :=
   earlier ++ DeepReceiveCases.certificates ++ DeepBatchCases.certificates ++
-    DeepPrefixCases.certificates ++ DeepListCases.certificates ++ DeepObserveCases.certificates
+    DeepPrefixCases.certificates ++ DeepListCases.certificates ++ DeepObserveCases.certificates ++
+    DeepHandlerCases.certificates ++ DeepSignedCases.certificates ++ DeepBoundCases.certificates ++
+    DeepWinningCases.certificates ++ DeepRankingCases.certificates ++ DeepHistoryCases.certificates
 
 public def witnessed : List Classes.StepBranch := certificates.map Subtype.val
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 65 := by decide +kernel
+public theorem count : witnessed.Nodup ∧ witnessed.length = 101 := by decide +kernel
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
