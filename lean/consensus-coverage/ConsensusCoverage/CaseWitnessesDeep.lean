@@ -8,6 +8,7 @@ import all ConsensusCoverage.ReadersWitnesses
 import all ConsensusCoverage.DeepSchedules
 import all ConsensusCoverage.DeepElectionCases
 import all ConsensusCoverage.DeepLeaderCases
+import all ConsensusCoverage.DeepEffectCases
 import all ConsensusCoverage.EventSupport
 import all ConsensusCoverage.JointWitnesses
 import all ConsensusCoverage.ActionProfile
@@ -127,11 +128,13 @@ private def certificates : List Certificate :=
    election (threeTerms true) 20 .wins_elect_committed_pos true (fun s a b _ h =>
      @DeepLeaderCases.electedPositive ⟨s.cfg⟩ _ _ s.context a b (of_decide_eq_true h)),
    election divergent 8 .wins_elect_committed_neg false (fun s a b _ h =>
-     @DeepLeaderCases.electedZero ⟨s.cfg⟩ _ _ s.context a b (of_decide_eq_false h))]
+     @DeepLeaderCases.electedZero ⟨s.cfg⟩ _ _ s.context a b (of_decide_eq_false h)),
+   transfer .foldlM__items_nil .foldlM__items_cons (by decide +kernel)
+     (fun s => @DeepEffectCases.flushCons ⟨s.cfg⟩ _ _ s.context)]
 
 public def witnessed : List Classes.StepBranch := certificates.map Subtype.val
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 20 := by decide +kernel
+public theorem count : witnessed.Nodup ∧ witnessed.length = 21 := by decide +kernel
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
