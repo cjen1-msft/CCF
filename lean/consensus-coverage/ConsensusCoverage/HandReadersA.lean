@@ -4,6 +4,7 @@ module
 -- Licensed under the Apache 2.0 License.
 
 public import ConsensusCoverage.HandReadersABase
+import all ConsensusCoverage.HandReadersAAppend
 import all ConsensusCoverage.HandReadersALeader
 import all ConsensusCoverage.HandReadersAObserve
 
@@ -14,6 +15,9 @@ open Consensus ActionProfile
 private def lookup : (b : Classes.StepBranch) → Option (Exact b)
   | .leader_logs_commit_pos => some (Leader.exactReader true)
   | .leader_logs_commit_neg => some (Leader.exactReader false)
+  | .appendEntry_configuration_none => some (Append.exactReader .none)
+  | .appendEntry_configuration_some => some (Append.exactReader .some)
+  | .foldlM__items_cons => some (Append.exactReader .cons)
   | .observeTerm_log_message_appendEntriesResponse => some (Observe.ackAlias true)
   | .observeTerm_commitIndex_message_appendEntriesResponse => some (Observe.ackAlias false)
   | .observeTerm_log_message_proposeRequestVoteRequest => some (Observe.exactReader true .call)
@@ -47,6 +51,6 @@ public theorem read_total (s : Step) {b} (h : b ∈ covered) :
   simpa only [read, Option.isSome_map] using (List.mem_filter.mp h).2
 
 set_option maxRecDepth 8192 in
-public theorem count : covered.Nodup ∧ covered.length = 16 := by decide +kernel
+public theorem count : covered.Nodup ∧ covered.length = 19 := by decide +kernel
 
 end ConsensusCoverage.HandReadersA
