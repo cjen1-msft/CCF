@@ -5,12 +5,14 @@ module
 
 public import ConsensusCoverage.ReadersAtoms
 public import ConsensusCoverage.ReadersIndex
+public import ConsensusCoverage.ReadersMatchGuard
 public import ConsensusCoverage.ReadersRequestCuts
 public import ConsensusCoverage.ReadersVoteReply
 public import ConsensusCoverage.CommitKeys
 public import Consensus.Proofs.LogFacts
 import all ConsensusCoverage.ReadersAtoms
 import all ConsensusCoverage.ReadersIndex
+import all ConsensusCoverage.ReadersMatchGuard
 import all ConsensusCoverage.ReadersRequestCuts
 import all ConsensusCoverage.ReadersRequestTransport
 import all ConsensusCoverage.ReadersShapes
@@ -98,6 +100,8 @@ structure Env where
   basic : SimpTheorems
   simprocs : Simp.SimprocsArray
   reportDir : Option System.FilePath
+  target : Name := `ConsensusCoverage.ReadersCompiler
+  extraRules : Bool := false
 
 structure St where
   memo : Std.HashMap Name RInfo := {}
@@ -552,6 +556,19 @@ def atomGuards : List (Name × Nat × Nat × Name) :=
    (``grantedIn, 5, 1, ``grant_voter_bound), (``grantedIn, 5, 2, ``grant_candidate_bound),
    (``grantedIn, 5, 3, ``grant_term_bound)]
 
+private def postMatchGuard (env : Env) (peer p h : Expr) : MetaM (Option Guard) := do
+  unless (p.find? (·.isConstOf ``Role.primary)).isSome do return none
+  unless ← withReducible (isDefEq (← inferType peer) (mkConst ``NodeID)) do return none
+  try
+    let rule ← mkAppOptM ``ReadersMatchGuard.positiveAfter
+      #[none, none, none, none, none, some env.ok, some peer]
+    forallTelescope (← inferType rule) fun premises _ => do
+      let hs ← premises.mapM fun pr => do conjunctProof (← inferType pr) h p
+      let #[some primary, some other, some positive] := hs | return none
+      let mem := mkAppN rule #[primary, other, positive]
+      return some {kind := .plain, list := ← typeArg mem 3, mem, rank := 2, tag := "matchPeers"}
+  catch _ => pure none
+
 mutual
 
 partial def findGuards (env : Env) (x p h : Expr) : CM (Array Guard) := do
@@ -623,6 +640,12 @@ partial def findGuards (env : Env) (x p h : Expr) : CM (Array Guard) := do
       if let some (L, mem) ← ctorPin x b a (← mkEqSymm h) then
         if free L then out := out.push { kind := .plain, list := L, mem, rank := 2, tag := "ctorPin" }
     for (whole, expr, eq) in #[(a, b, h), (b, a, ← mkEqSymm h)] do
+      if env.extraRules && whole == x && expr.isAppOfArity ``List.take 3 && free expr.appArg! &&
+          (expr.getArg! 1).isAppOfArity ``List.length 2 && (expr.getArg! 1).appArg! == x then
+        let iff ← mkAppOptM ``List.prefix_iff_eq_take #[none, some x, some expr.appArg!]
+        let pref ← mkAppM ``Iff.mpr #[iff, eq]
+        let mem ← mkAppM ``guard_prefix #[pref]
+        out := out.push { kind := .plain, list := ← typeArg mem 3, mem, rank := 4, tag := "prefixEq" }
       if free whole then
         if let some (ctor, np) ← isCtorApp expr then
           let ci ← getConstInfoCtor ctor
@@ -684,13 +707,19 @@ partial def findGuards (env : Env) (x p h : Expr) : CM (Array Guard) := do
     unless terminal do
       out := out ++ (← findGuards env x r (← mkAppOptM ``And.right #[l, r, h]))
     if out.isEmpty then
-      if let some g ← envelopeGuard env x p h then
+      let matchGuard ← if env.extraRules then postMatchGuard env x p h else pure none
+      if let some g := matchGuard then
+        out := out.push g
+      else if let some g ← envelopeGuard env x p h then
         out := out.push g
   else if p.isAppOfArity ``Exists 2 then
     let inner ← withLocalDeclD `inner (p.getArg! 0) fun y => do
       let q := (p.getArg! 1).beta #[y]
       withLocalDeclD `h q fun hq => do
-        let gs ← findGuards env x q hq
+        let mut gs ← findGuards env x q hq
+        let ty := p.getArg! 0
+        if env.extraRules && ty.containsFVar xid && (← isProp ty) then
+          gs := (← findGuards env x ty y) ++ gs
         let mut res := #[]
         let mut yGuards : Option (Array Guard) := none
         let yid := y.fvarId!
@@ -897,7 +926,7 @@ partial def reflectExists (env : Env) (owner : Name) (p : Expr) (swapped := fals
       let rq ← reflect env owner (pred.beta #[hx])
       let some (_, ha) := ra | return none
       let some (bq, hq) := rq | return none
-      if bq.containsFVar hx.fvarId! then
+      if !env.extraRules && bq.containsFVar hx.fvarId! then
         block owner "depProp" ""
         return none
       let cert ← mkAppOptM ``dite_cert #[α, pred, none, ha, ← mkLambdaFVars #[hx] bq,
@@ -1012,6 +1041,22 @@ partial def reflectExists (env : Env) (owner : Name) (p : Expr) (swapped := fals
       let dummy ← withLocalDeclD `x α fun x => pure x
       return ← quantify env owner true α pred { kind := .plain, list, mem := mkConst ``True.intro, rank := 9, tag := "enum" } dummy bounded
     if ← isNatType α then
+      if env.extraRules then
+        let erased := pred.beta #[mkNatLit 0]
+        let vacuous? ← withLocalDeclD `n α fun n => do
+          let body := pred.beta #[n]
+          unless ← withNewMCtxDepth (withTransparency .default (isDefEq body erased)) do
+            return none
+          let refl := mkApp (mkConst ``Iff.rfl) erased
+          let eq ← mkExpectedTypeHint refl (← mkAppM ``Iff #[body, erased])
+          let eq ← mkLambdaFVars #[n] eq
+          return some (← mkAppM ``exists_congr #[eq])
+        if let some eq := vacuous? then
+          let some (b, cert) ← reflect env owner erased | return none
+          let vacuous ← mkAppM ``exists_vacuous #[mkNatLit 0, erased]
+          let back ← mkAppM ``Iff.trans #[← mkAppM ``Iff.symm #[vacuous], ← mkAppM ``Iff.symm #[eq]]
+          modify fun s => { s with guardTags := s.guardTags.push (shortName owner, "irrelevantNat") }
+          return some (b, ← mkAppM ``Iff.trans #[cert, back])
       if let some sat ← saturateNat true pred then
         let rhs ← Core.betaReduce (← typeArg sat 1)
         if let some (b, cert) ← reflect env owner rhs then
@@ -1071,7 +1116,7 @@ partial def reflectForall (env : Env) (owner : Name) (p : Expr) : CM (Option Com
       let rq ← reflect env owner (body.instantiate1 hx)
       let some (_, ha) := ra | return none
       let some (bq, hq) := rq | return none
-      if bq.containsFVar hx.fvarId! then
+      if !env.extraRules && bq.containsFVar hx.fvarId! then
         block owner "depProp" ""
         return none
       let cert ← mkAppOptM ``forall_prop_cert #[α, pred, none, ha, ← mkLambdaFVars #[hx] bq,
@@ -1162,7 +1207,10 @@ partial def reflect (env : Env) (owner : Name) (p : Expr) : CM (Option Compiled)
         let run ← mkAppM ``X.run_for #[env.ok, eq]
         rules ← addRule rules run (post := false)
         changed := true
-      else if l.isAppOfArity ``Eq 3 && ((l.getArg! 1).isFVar || l.appArg!.isFVar) then
+      else if l.isAppOfArity ``Eq 3 && ((l.getArg! 1).isFVar || l.appArg!.isFVar) &&
+          (!env.extraRules ||
+            ((l.getArg! 1).isFVar && !l.appArg!.containsFVar (l.getArg! 1).fvarId!) ||
+            (l.appArg!.isFVar && !(l.getArg! 1).containsFVar l.appArg!.fvarId!)) then
         rules ← addRule rules h
         changed := true
       else if l.isAppOfArity ``Membership.mem 5 && (l.getArg! 3).isAppOf ``XView.sent then
@@ -1409,7 +1457,7 @@ partial def compileUncached (env : Env) (n : Name) : CM RInfo := do
           let memTy ← instantiateMVars (← inferType g.mem)
           if env.isFrame memTy then continue
           if (match g.kind with | .subst e => e.containsFVar x.fvarId! | _ => false) then continue
-          let gname := Name.mkStr `ConsensusCoverage.ReadersCompiler.G s!"{short}_{j}"
+          let gname := Name.mkStr (env.target ++ `G) s!"{short}_{j}"
           let allArgs := #[env.inst, env.f, env.t, env.c, env.xv, env.ok] ++ params ++ #[h]
           let thmTy ← mkForallFVars allArgs memTy
           let thmVal ← mkLambdaFVars allArgs g.mem
@@ -1439,8 +1487,8 @@ partial def compileUncached (env : Env) (n : Name) : CM RInfo := do
       let cert ← recertify r2 cert
       let cert ← recertify r1 cert
       let b ← Core.betaReduce b
-      let rname := Name.mkStr `ConsensusCoverage.ReadersCompiler.R short
-      let iname := Name.mkStr `ConsensusCoverage.ReadersCompiler.R s!"{short}_iff"
+      let rname := Name.mkStr (env.target ++ `R) short
+      let iname := Name.mkStr (env.target ++ `R) s!"{short}_iff"
       let rargs := #[env.inst, env.xv] ++ params
       addReader <| .defnDecl {
         name := rname, levelParams := [],
@@ -1463,13 +1511,14 @@ def tryAddConst (rules : SimpTheorems) (n : Name) (missing : IO.Ref (Array Name)
 def tryUnfold (rules : SimpTheorems) (n : Name) (missing : IO.Ref (Array Name)) : MetaM SimpTheorems := do
   if (← getEnv).contains n then rules.addDeclToUnfold n else do missing.modify (·.push n); pure rules
 
-def readerName := `ConsensusCoverage.ReadersCompiler.readView
-def coveredName := `ConsensusCoverage.ReadersCompiler.generatedColumns
-def correctName := `ConsensusCoverage.ReadersCompiler.readView_correct
-def supportedName := `ConsensusCoverage.ReadersCompiler.readView_supported
+structure ExactTarget where
+  namespaceName : Name := `ConsensusCoverage.ReadersCompiler
+  columns : Option NameSet := none
+  /-- Additional guards not included in the audited factored dispatch. -/
+  extraRules : Bool := false
 
-public def driverWith (run? : Option (Env → Array Name → Array Expr → MetaM Unit)) :
-    MetaM Unit := do
+public def driverWith (run? : Option (Env → Array Name → Array Expr → MetaM Unit))
+    (target : ExactTarget := {}) : MetaM Unit := do
   let start ← IO.monoMsNow
   let ci ← getConstInfo ``SolvedWitnesses.dispatch
   let branch ← getConstInfoInduct ``Classes.StepBranch
@@ -1482,7 +1531,7 @@ public def driverWith (run? : Option (Env → Array Name → Array Expr → Meta
     unless xs.size == 5 && body.isAppOf ``Classes.StepBranch.casesOn &&
         args.size == branch.ctors.length + 2 && args[1]! == xs[4]! do
       throwError "unexpected normalized dispatcher"
-    let armNames ← (args.extract 2 args.size).mapM fun arm => do
+    let armNames : Array Name ← (args.extract 2 args.size).mapM fun arm => do
       let .const n _ := arm.getAppFn | throwError "expected generated arm"
       return n
     let inst := xs[0]!
@@ -1582,18 +1631,28 @@ public def driverWith (run? : Option (Env → Array Name → Array Expr → Meta
           mkLambdaFVars args normalized
       for proof in sendRules do
         basic ← addRule basic proof
-      let reportDir := (← IO.getEnv "CCF_READERS_REPORT").map System.FilePath.mk
+      let reportDir := (← IO.getEnv "CCF_READERS_REPORT").map fun path =>
+        let parent := System.FilePath.mk path
+        if target.columns.isSome then parent / target.namespaceName.getString! else parent
       if let some dir := reportDir then
+        IO.FS.createDirAll dir
         IO.FS.writeFile (dir / "progress.log") ""
         IO.FS.writeFile (dir / "attempts.log") ""
-      let env : Env := { inst, f, t, c, xv, ok, first, second, basic, simprocs := #[simprocs], reportDir }
+      let env : Env := {
+        inst, f, t, c, xv, ok, first, second, basic, simprocs := #[simprocs], reportDir,
+        target := target.namespaceName, extraRules := target.extraRules }
       let miss ← missing.get
       unless miss.isEmpty do logInfo m!"missing simp names: {miss}"
       if let some run := run? then return ← run env armNames xs
       let st ← IO.mkRef ({} : St)
       -- Try shallow formulas first. The order changes only when work is
       -- attempted; the dispatcher is emitted in constructor order.
-      let byDepth ← armNames.mapM fun n => do
+      let chosen := match target.columns with
+        | none => armNames
+        | some columns =>
+          (Array.zip armNames branch.ctors.toArray).filterMap fun (entry : Name × Name) =>
+            if columns.contains entry.2 then some entry.1 else none
+      let byDepth ← chosen.mapM fun n => do
         return (n, (← getConstInfo n).value!.approxDepth)
       for (n, _) in byDepth.qsort (·.2 < ·.2) do
         let (_, s') ← (compileConst env n).run (← st.get)
@@ -1635,6 +1694,10 @@ public def driverWith (run? : Option (Env → Array Name → Array Expr → Meta
           pending := pending ++ callees.toList.toArray
         h.flush
       -- assemble
+      let readerName := env.target ++ `readView
+      let coveredName := env.target ++ `generatedColumns
+      let correctName := env.target ++ `readView_correct
+      let supportedName := env.target ++ `readView_supported
       let ret := mkApp (mkConst ``Option [.zero]) (mkConst ``Bool)
       let values := results.map fun (r, _) => match r with
         | none => mkApp (mkConst ``Option.none [.zero]) (mkConst ``Bool)

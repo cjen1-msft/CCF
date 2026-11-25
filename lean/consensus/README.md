@@ -601,16 +601,18 @@ step: [`HandReadersA`](../consensus-coverage/ConsensusCoverage/HandReadersA.lean
 `commit_backed_eq_zero_or_pos_inl` holds exactly when the actor becomes
 primary, was not already primary in that term, and had commit index zero
 before the step. The 29 impossible cases are read as constant false.
-Together with the 188 above, [319 of the 516 step questions are exactly
-readable and 197 are not](../consensus-coverage/ConsensusCoverage/ReaderInventory.lean).
-These sources are not yet combined into one reader.
+[`ReadersTotal.read`](../consensus-coverage/ConsensusCoverage/ReadersTotal.lean)
+combines these sources with structural equivalences and the compiled
+match-index and accepted-log readers. `read_correct` and `read_total` certify
+every returned answer and totality on the 329 covered questions. All 40
+unconditional replay readers are included; 187 of the 516 questions remain
+unread.
 
 [`case-meanings.tsv`](../consensus-coverage/case-meanings.tsv) describes,
-for each of the 311 reachable questions that had no compiled reader, what
-the case means on a recorded step. 114 rows are proved (the readers above).
-The other 197 are conjectures with the obstacle to proving them, most
-often that the case sits inside a lemma used at many places in the proof
-and every use has to be handled.
+for each of the 311 reachable questions that had no baseline reader, what
+the case means on a recorded step. This snapshot predates the compiled
+match-index and accepted-log readers. The current roster of cases without
+an exact reader is `ReadersTotal.unread`.
 
 The rooted- and sorted-log proofs agree on the acting node: both enter their
 actor case exactly when its record changes **or** a new committed key appears.
