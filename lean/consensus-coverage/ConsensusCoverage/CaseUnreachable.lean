@@ -223,7 +223,8 @@ private def individual : List Classes.StepBranch :=
     .commit_backed_now_after_inr, .certificates_agree_backing_inl,
     .certificates_agree_backing_inr, .new_in_elected_led_inr, .rv_stable_now_after_inl,
     .led_cur_role_inr, .led_cur_now_after_inr, .persist_now_after_inr, .seen_after_now_after_inr,
-    .facts_advance_inr_2, .facts_role_inl, .facts_role_inr]
+    .facts_advance_inr_2, .facts_role_inl, .facts_role_inr,
+    .certificates_agree_le_total_inl, .certificates_agree_le_total_inr]
 
 private theorem old_seen_other [Config.InitialConfiguration] {f : Frame} {t : State}
     (c : Ctx f t) {n o} (other : n ≠ c.actor) (h : Seen (f.advance t) n o) : Seen f n o := by
@@ -303,11 +304,26 @@ public theorem winning_advance_false (s : Step) (b : Classes.StepBranch)
     intro h
     winning_advance_paths s.context h
 
+public theorem certificate_order_false (s : Step) (b : Classes.StepBranch)
+    (arm : b = .certificates_agree_le_total_inl ∨ b = .certificates_agree_le_total_inr) :
+    label s (.step b) = false := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  apply solved_false
+  rcases arm with rfl | rfl
+  all_goals
+    first | change ¬ SolvedWitnesses.step_certificates_agree_le_total_inl _ _ _
+          | change ¬ SolvedWitnesses.step_certificates_agree_le_total_inr _ _ _
+    rintro (h|h|h|h|h|h|h|h)
+    all_goals
+      obtain ⟨n, m, k, l, i, _, _, r, _⟩ := h
+      apply no_repeat_election s.context (n := n) (m := m) (k := k) (l := l) (i := i)
+      all_goals path_premise r
+
 /-- Cases refuted by the generic support checks or individual proofs below. -/
 public def refuted : List Classes.StepBranch :=
   FullProfile.stepBranches.toList.filter fun b => noSupport b || decide (b ∈ individual)
 
-public theorem count : refuted.Nodup ∧ refuted.length = 16 := by decide +kernel
+public theorem count : refuted.Nodup ∧ refuted.length = 18 := by decide +kernel
 
 public theorem label_false {b : Classes.StepBranch} (mem : b ∈ refuted) :
     ∀ s : Step, label s (.step b) = false := by
@@ -319,7 +335,7 @@ public theorem label_false {b : Classes.StepBranch} (mem : b ∈ refuted) :
   · have mem := of_decide_eq_true direct
     simp only [individual, List.mem_cons, List.not_mem_nil, or_false] at mem
     rcases mem with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
-      | rfl | rfl | rfl
+      | rfl | rfl | rfl | rfl | rfl
     · exact retained_false s
     · exact act_nomination_false s
     · exact nomination_some_false s
@@ -333,6 +349,6 @@ public theorem label_false {b : Classes.StepBranch} (mem : b ∈ refuted) :
     · exact led_cur_other_false s
     · exact persist_other_false s
     · exact seen_other_false s
-    all_goals exact winning_advance_false s _ (by decide)
+    all_goals first | exact winning_advance_false s _ (by decide) | exact certificate_order_false s _ (by decide)
 
 end ConsensusCoverage.CaseUnreachable
