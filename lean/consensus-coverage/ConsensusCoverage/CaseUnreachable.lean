@@ -8,6 +8,8 @@ public import ConsensusCoverage.EvidenceSupport
 public import ConsensusCoverage.EventSupport
 public import ConsensusCoverage.ReducedQuestions
 public import ConsensusCoverage.SolvedWitnesses
+public import ConsensusCoverage.VoteRequestRoute
+import all ConsensusCoverage.RetiredRoleOrigin
 import all ConsensusCoverage.ActionProfile
 import all ConsensusCoverage.ReducedQuestions
 import all ConsensusCoverage.SolvedWitnesses
@@ -63,6 +65,125 @@ private theorem solved_false (s : Step) (b : Classes.StepBranch)
   exact Bool.eq_false_iff.mpr fun yes =>
     no ((SolvedWitnesses.sig_iff s.context b).mp ((label_true s _).mp yes))
 
+public theorem commit_backed_other_false (s : Step) :
+    label s (.step .commit_backed_now_after_inr) = false := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  apply solved_false
+  change ¬ SolvedWitnesses.step_commit_backed_now_after_inr s.frame s.after s.context
+  rintro ⟨n, st, reach, ⟨different, _⟩, _⟩
+  reach_unfold SolvedWitnesses.step_commit_backed_now_after_inr[0] at reach
+  repeat' first | exact different reach.1 | obtain ⟨_, reach⟩ := reach
+
+-- Election safety makes the old leader the actor. Its term/role invariant
+-- then rules out both ways this actor could newly win in the same term.
+private theorem no_repeat_election [Config.InitialConfiguration] {f : Frame} {t : Model.State}
+    (c : Ctx f t) {n m k l i} (e : ElectStep f t n k l i) (old : Led f m k) : False := by
+  obtain rfl := c.new_old_unique e old
+  obtain ⟨actor, _, _, campaign, _⟩ := c.electStep e
+  subst n
+  rcases c.inv.led_cur c.actor c.pre k c.pre_now old with lt | ⟨eq, notCandidate⟩
+  · rcases campaign with newer | ⟨same, _⟩ <;> omega
+  · rcases campaign with newer | ⟨_, candidate⟩
+    · omega
+    · exact notCandidate candidate
+
+local macro "certificate_paths " c:term:arg h:term:arg : tactic => `(tactic|
+  (rcases ($h) with h | h | h | h | h | h | h | h | h | h | h | h | h | h | h | h
+   all_goals
+     first
+     | obtain ⟨_, _, _, _, _, _, _, reach, _⟩ := h
+       exact no_repeat_election $c reach.2.2.2.2.1 reach.2.2.2.2.2.1
+     | obtain ⟨_, _, _, _, _, _, reach, _⟩ := h
+       exact no_repeat_election $c reach.2.2.2.2.1 reach.2.2.2.2.2.1
+     | obtain ⟨_, _, _, _, _, _, _, reach, _⟩ := h
+       rcases reach with r | r <;> exact no_repeat_election $c r.2.2.2.2.1 r.2.2.2.2.2.1
+     | obtain ⟨_, _, _, _, _, _, reach, _⟩ := h
+       rcases reach with r | r <;> exact no_repeat_election $c r.2.2.2.2.1 r.2.2.2.2.2.1))
+
+public theorem certificates_zero_false (s : Step) :
+    label s (.step .certificates_agree_backing_inl) = false := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  apply solved_false
+  change ¬ SolvedWitnesses.step_certificates_agree_backing_inl s.frame s.after s.context
+  intro h
+  certificate_paths s.context h
+
+public theorem certificates_committed_false (s : Step) :
+    label s (.step .certificates_agree_backing_inr) = false := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  apply solved_false
+  change ¬ SolvedWitnesses.step_certificates_agree_backing_inr s.frame s.after s.context
+  intro h
+  certificate_paths s.context h
+
+-- A copied or retained entry has a pre-step canonical log in its term.
+-- Appending in that term instead needs a pre-step leader in the term.
+private theorem no_election_entry [Config.InitialConfiguration] {f : Frame} {t : Model.State}
+    (c : Ctx f t) {n k l i j} (e : ElectStep f t n k l i)
+    (pos : 0 < j) (bound : j ≤ c.post.log.length) (term : termAt c.post.log j = k) : False := by
+  have noCanon {log} (old : Canon f k log) : False := by
+    obtain ⟨_, led⟩ := c.inv.owner old
+    exact no_repeat_election c e led
+  rcases c.post_log with sub | ⟨_, _, _, primary, same, _⟩ | ⟨log, size, copy, _, eq⟩
+  · obtain ⟨_, anchor, _⟩ := c.inv.anchor _ _ j c.pre_now pos (Nat.le_trans bound sub.length_le)
+    rw [termAt_of_prefix sub bound, term] at anchor
+    exact noCanon anchor
+  · have sameTerm := (c.electStep e).2.2.2.2.1
+    exact no_repeat_election c e ((same.symm.trans sameTerm) ▸ c.pre_led primary)
+  · have sub : c.post.log <+: log := eq ▸ List.take_prefix _ _
+    obtain ⟨_, anchor, _⟩ := copy.anchor j pos (Nat.le_trans bound sub.length_le)
+    rw [termAt_of_prefix sub bound, term] at anchor
+    exact noCanon anchor
+
+private theorem no_election_commit [Config.InitialConfiguration] {f : Frame} {t : Model.State}
+    (c : Ctx f t) {n k l i st b j} (e : ElectStep f t n k l i)
+    (cert : CommitStep (f.advance t) n st k b j) : False := by
+  obtain rfl := (c.electStep e).1
+  obtain rfl := c.now_post cert.1.1
+  exact no_election_entry c e (signature_pos cert.2.2.2.1) cert.2.2.1 cert.2.2.2.2.1
+
+public theorem new_in_elected_fresh_leader_false (s : Step) :
+    label s (.step .new_in_elected_led_inr) = false := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  apply solved_false
+  change ¬ SolvedWitnesses.step_new_in_elected_led_inr s.frame s.after s.context
+  rintro (h | h | h | h | h)
+  all_goals repeat' first
+    | exact no_election_commit s.context h.1 h.2.1
+    | obtain ⟨_, h⟩ := h
+
+public theorem rv_stable_actor_false (s : Step) :
+    label s (.step .rv_stable_now_after_inl) = false := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  apply solved_false
+  change ¬ SolvedWitnesses.step_rv_stable_now_after_inl s.frame s.after s.context
+  rintro ⟨_, request, reach, _⟩
+  obtain ⟨out, _, _, _, _, _, _, _, _, _, _, received, rest⟩ := reach
+  have target : s.context.actor = out.target := by
+    repeat' first | exact rest.1 | obtain ⟨_, rest⟩ := rest
+  obtain ⟨packet, queued, source, dest, payload⟩ := s.context.received received
+  exact VoteRequestRoute.folded s.folded queued payload (source.trans (target.symm.trans dest.symm))
+
+public theorem led_cur_retired_false (s : Step) :
+    label s (.step .led_cur_role_inr) = false := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  let c := s.context
+  apply solved_false
+  change ¬ SolvedWitnesses.step_led_cur_role_inr s.frame s.after c
+  rintro ⟨_, _, _, _, _, _, election, rest⟩
+  have gone : c.post.role = .none := by
+    repeat' first | exact rest.1 | obtain ⟨_, rest⟩ := rest
+  rcases RetiredRoleOrigin.step c gone with ⟨role, term⟩ | ⟨_, pos, bound, atJ⟩ |
+      ⟨_, _, arrived, same⟩
+  · rcases (c.electStep election).2.2.2.1 with fresh | ⟨_, candidate⟩
+    · omega
+    · simp [role] at candidate
+  · exact no_election_entry c election pos bound atJ
+  · obtain ⟨_, ok, _, _, payload⟩ := c.received_ok arrived
+    simp only [MessageOK, payload] at ok
+    obtain ⟨_, evidence⟩ := ok
+    exact no_repeat_election c election (same ▸ evidence.led)
+
 public theorem act_nomination_false (s : Step) :
     label s (.step .act_input_nominateSuccessor) = false := by
   letI : Config.InitialConfiguration := ⟨s.cfg⟩
@@ -97,13 +218,16 @@ public theorem nomination_none_false (s : Step) :
 
 private def individual : List Classes.StepBranch :=
   [.mem_network_mem_append_inl, .act_input_nominateSuccessor,
-    .nominateSuccessor_successor_some, .nominateSuccessor_successor_none]
+    .nominateSuccessor_successor_some, .nominateSuccessor_successor_none,
+    .commit_backed_now_after_inr, .certificates_agree_backing_inl,
+    .certificates_agree_backing_inr, .new_in_elected_led_inr, .rv_stable_now_after_inl,
+    .led_cur_role_inr]
 
 /-- Cases refuted by the generic support checks or individual proofs below. -/
 public def refuted : List Classes.StepBranch :=
   FullProfile.stepBranches.toList.filter fun b => noSupport b || decide (b ∈ individual)
 
-public theorem count : refuted.Nodup ∧ refuted.length = 4 := by decide +kernel
+public theorem count : refuted.Nodup ∧ refuted.length = 10 := by decide +kernel
 
 public theorem label_false {b : Classes.StepBranch} (mem : b ∈ refuted) :
     ∀ s : Step, label s (.step b) = false := by
@@ -114,10 +238,16 @@ public theorem label_false {b : Classes.StepBranch} (mem : b ∈ refuted) :
   · exact support_false s b unsupported
   · have mem := of_decide_eq_true direct
     simp only [individual, List.mem_cons, List.not_mem_nil, or_false] at mem
-    rcases mem with rfl | rfl | rfl | rfl
+    rcases mem with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
     · exact retained_false s
     · exact act_nomination_false s
     · exact nomination_some_false s
     · exact nomination_none_false s
+    · exact commit_backed_other_false s
+    · exact certificates_zero_false s
+    · exact certificates_committed_false s
+    · exact new_in_elected_fresh_leader_false s
+    · exact rv_stable_actor_false s
+    · exact led_cur_retired_false s
 
 end ConsensusCoverage.CaseUnreachable
