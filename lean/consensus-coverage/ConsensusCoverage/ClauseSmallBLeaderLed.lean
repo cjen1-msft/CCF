@@ -8,18 +8,21 @@ import ConsensusCoverage.ClauseSmallBMonotone
 import all ConsensusCoverage.ClauseSmallB
 import all ConsensusCoverage.ClauseMatchAck
 import all ConsensusCoverage.ClauseQuestions
+import all ConsensusCoverage.DeepBoundCases
 import all ConsensusCoverage.EventSupport
 import all ConsensusCoverage.FrontierRows
 import all ConsensusCoverage.HandReadersACampaign
 import all ConsensusCoverage.HandReadersAPrimary
 import all ConsensusCoverage.HandReadersAVoter
 import all ConsensusCoverage.HandReadersAWin
+import all ConsensusCoverage.HandReadersOtherVote
 import all ConsensusCoverage.PinnedLeader
 import all ConsensusCoverage.ReadersRefuted
 import all ConsensusCoverage.ReadersShapes
 import all ConsensusCoverage.ReadersTotal
 import all ConsensusCoverage.SolvedWitnesses
 import all Consensus.Proofs.SafetyInvariant
+meta import ConsensusCoverage.ReachPath
 
 namespace ConsensusCoverage.ClauseSmallB.LeaderLed
 
@@ -125,10 +128,81 @@ private theorem more_campaign (old : Bool) (more : sig c (HandReadersA.Voter.col
     exact .inl ⟨fresh, candidate, fun _ => ⟨n, mem⟩⟩
   · exact .inr won.1
 
+private theorem stable_voters_split :
+    sig c .campaign_votes_campaign_inr ↔
+      sig c .campaign_votes_more_inl ∨ sig c .campaign_votes_more_inr := by
+  constructor
+  · intro stable
+    obtain ⟨guard, site⟩ := HandReadersA.CampaignRows.necessary c true false stable
+    have same : c.post.currentTerm = c.pre.currentTerm := by
+      have no := of_decide_eq_false guard
+      have le := c.term_le
+      omega
+    have close {cand} (campaign : Campaign c.actor c.pre c.event cand)
+        (stamp : c.post.currentTerm = cand.currentTerm) {n} (mem : n ∈ cand.votesGranted) :
+        n ∈ c.pre.votesGranted ∨ HandReadersA.Voter.Responds c n := by
+      obtain ⟨_, _, _, fresh | old⟩ := campaign
+      · have inc := fresh.2.1
+        omega
+      · exact old.2.2.2 n mem
+    obtain local_ | won := site
+    · obtain ⟨n, mem⟩ := local_.2.2 rfl
+      have cam := Summary.candidate c.sum local_.2.1
+      rcases close cam rfl mem with prev | next
+      · exact .inl (HandReadersA.Voter.sufficient c true
+          ⟨same, .inl ⟨local_.1, local_.2.1, n, mem, prev⟩⟩)
+      · exact .inr (HandReadersA.Voter.sufficient c false
+          ⟨same, .inl ⟨local_.1, local_.2.1, n, mem, next⟩⟩)
+    · obtain ⟨cand, cam, quorum, _, stamp, _⟩ := Wins.facts won
+      obtain ⟨n, mem⟩ := HandReadersA.CampaignRows.voter_of_quorum quorum
+      rcases close cam stamp mem with prev | next
+      · exact .inl (HandReadersA.Voter.sufficient c true ⟨same, .inr ⟨won, n, prev⟩⟩)
+      · exact .inr (HandReadersA.Voter.sufficient c false ⟨same, .inr ⟨won, n, next⟩⟩)
+  · rintro (old | new)
+    · exact more_campaign c true old
+    · exact more_campaign c false new
+
+private theorem retained_no_campaign (old : sig c .leader_led_leader_inl) (fresh : Bool) :
+    ¬ sig c (HandReadersA.CampaignRows.column false fresh) := by
+  intro campaign
+  have primary := old.2.2.1
+  obtain ⟨_, local_ | win⟩ := HandReadersA.CampaignRows.necessary c false fresh campaign
+  · have candidate := local_.2.1
+    rw [primary] at candidate
+    exact Model.Node.Role.noConfusion candidate
+  · exact leader_disjoint c old ((wins_iff c).mpr win)
+
 private theorem win_commit (pos : Bool) : sig c (HandReadersA.Win.column pos) ↔
     sig c .leader_led_leader_inr ∧ decide (0 < c.pre.commitIndex) = pos := by
   rw [HandReadersA.Win.iff_test, HandReadersA.Win.test, decide_eq_true_eq,
     wins_iff c, ReadersShapes.wins_recorded c, and_assoc]
+
+private theorem win_scan_empty (win : sig c .leader_led_leader_inr) :
+    sig c .maxCommittableIndexBounded_values_nil := by
+  have elect := c.wins_elect ((wins_iff c).mp win)
+  have call := DeepBoundCases.entered c elect
+  exact .inl (.inl ⟨_,_,_,_,call.1,elect,call.2.2⟩)
+
+private theorem committed_win_signed (win : sig c .wins_elect_committed_pos) :
+    sig c .maxCommittableIndexBounded_signature_pos := by
+  obtain ⟨won, cut⟩ := (win_commit c true).mp win
+  have positive := of_decide_eq_true cut
+  have elect := c.wins_elect ((wins_iff c).mp won)
+  have call := DeepBoundCases.entered c elect
+  obtain ⟨st,w,mem,mem',log,idx,le,terms,turn,role,pfx,floor,xs,q,grants⟩ := elect
+  have root : (reach% step_maxCommittableIndexBounded_signature_pos[0]) f t c c.pre.log := by
+    left
+    refine ⟨_,_,_,_,call,st,⟨w,mem,mem',log,idx,le,terms,turn,role,pfx,floor,xs,q,grants⟩,
+      w,?_,mem,?_,mem',?_,log,?_,idx,?_,le,?_,terms,?_,turn,?_,role,?_,pfx,?_,floor,
+      ⟨xs,q,grants⟩,xs,⟨q,grants⟩,q,grants,Nat.lt_of_lt_of_le positive (Nat.le_max_left _ _),?_,rfl⟩
+    all_goals repeat' first
+      | assumption | exact ⟨xs,q,grants⟩
+      | exact ⟨st,w,mem,mem',log,idx,le,terms,turn,role,pfx,floor,xs,q,grants⟩
+      | apply And.intro
+  have small : ∀ j, j ∈ List.range (c.pre.log.length+1) → j ≤ c.pre.log.length :=
+    fun _ m => Nat.le_of_lt_succ (List.mem_range.mp m)
+  exact .inl ⟨_,root,c.pre.commitIndex,[],by simp,0,by simpa using c.frontier_pre,
+    Nat.zero_le _,(c.inv.frontier _ _ c.pre_now).2 positive,small,c.frontier_pre⟩
 
 end
 
@@ -139,14 +213,14 @@ private def pack (v : List Bool) : List Bool :=
   let fresh := get 4
   [old || won, old, won, get 2, get 3, fresh, get 5, fresh, get 6, get 7, get 8, won,
     false, false, false, get 9, get 10, get 11, get 10, false,
-    get 12 || get 13, get 12, get 13, false, get 14]
+    get 12 || get 13, get 12, get 13, false, fresh]
 
 private def selected : List Classes.StepBranch :=
   [.leader_led_leader_inl, .leader_led_leader_inr, .wins_elect_committed_pos, .wins_elect_committed_neg,
     .campaign_votes_campaign_inl, .campaign_three_campaign_inr, .campaign_votes_campaign_inr,
     .campaign_votes_more_inl, .campaign_votes_more_inr, .maxCommittableIndexBounded_values_nil,
     .maxCommittableIndexBounded_values_cons, .maxCommittableIndexBounded_signature_pos,
-    .termAt_mono_eq_or_lt_of_le_inl, .termAt_mono_eq_or_lt_of_le_inr, .vals_upToDate_lt_or_eq_of_le_inr]
+    .termAt_mono_eq_or_lt_of_le_inl, .termAt_mono_eq_or_lt_of_le_inr]
 
 private theorem shape (s : Step) : (nonTrunkLabel .leader_led s).bits = pack (selected.map (bit s)) := by
   letI : Config.InitialConfiguration := ⟨s.cfg⟩
@@ -164,6 +238,8 @@ private theorem shape (s : Step) : (nonTrunkLabel .leader_led s).bits = pack (se
   simp only [nonTrunkLabel, restrictedLabel, columns, selected, List.map_cons, List.map_nil, pack,
     List.getElem?_cons_zero, List.getElem?_cons_succ, Option.getD_some, split,
     eq (fresh_campaign_votes s.context), eq won, term_mono_split, ← frontier_scan_unsigned s,
+    eq (a := .vals_upToDate_lt_or_eq_of_le_inr) (x := .campaign_votes_campaign_inl)
+      (HandReadersOther.Vote.alias s.context),
     no .facts_advance_inr_2 (by decide +kernel),
     no .facts_role_inl (by decide +kernel), no .facts_role_inr (by decide +kernel),
     no .termAt_mono_eq_zero_or_pos_inl (by decide +kernel),
@@ -172,8 +248,9 @@ private theorem shape (s : Step) : (nonTrunkLabel .leader_led s).bits = pack (se
 private def valid (v : List Bool) : Bool :=
   let get := fun i => v[i]?.getD false
   !(get 0 && get 1) && !(get 4 && get 5) && (!get 6 || get 5) &&
-    (!get 1 || get 4 || get 6) && (!(get 7 || get 8) || get 6) &&
-    (!(get 2 && get 3)) && (get 1 == (get 2 || get 3)) && (!get 11 || get 10)
+    (!get 1 || get 4 || get 6) && (get 6 == (get 7 || get 8)) &&
+    (!(get 2 && get 3)) && (get 1 == (get 2 || get 3)) && (!get 11 || get 10) &&
+    (!get 0 || !(get 4 || get 5)) && (!get 1 || get 9) && (!get 2 || get 11)
 
 private theorem valid_all (s : Step) : valid (selected.map (bit s)) = true := by
   letI : Config.InitialConfiguration := ⟨s.cfg⟩
@@ -183,13 +260,17 @@ private theorem valid_all (s : Step) : valid (selected.map (bit s)) = true := by
   have votes := vote_implies_campaign s.context false
   change sig s.context .campaign_votes_campaign_inr → sig s.context .campaign_three_campaign_inr at votes
   have won := wins_campaign s.context
-  have prev := more_campaign s.context true
-  have new := more_campaign s.context false
-  change sig s.context .campaign_votes_more_inl → _ at prev
-  change sig s.context .campaign_votes_more_inr → _ at new
+  have stable := stable_voters_split s.context
+  have retainedFresh := fun old => retained_no_campaign s.context old true
+  have retainedStable := fun old => retained_no_campaign s.context old false
+  change sig s.context .leader_led_leader_inl → ¬ sig s.context .campaign_three_campaign_inl at retainedFresh
+  change sig s.context .leader_led_leader_inl → ¬ sig s.context .campaign_three_campaign_inr at retainedStable
+  have fresh := fresh_campaign_votes s.context
   have pos := win_commit s.context true
   have neg := win_commit s.context false
   have signed := frontier_signed_scan s
+  have empty := win_scan_empty s.context
+  have signedWin := committed_win_signed s.context
   change sig s.context .wins_elect_committed_pos ↔ _ at pos
   change sig s.context .wins_elect_committed_neg ↔ _ at neg
   have cuts (a b : Bool) : (a == b) = true ↔ (a = true ↔ b = true) := by
@@ -198,9 +279,10 @@ private theorem valid_all (s : Step) : valid (selected.map (bit s)) = true := by
   simp only [valid, selected, List.map_cons, List.map_nil, List.getElem?_cons_zero,
     List.getElem?_cons_succ, Option.getD_some, Bool.and_eq_true, Bool.or_eq_true,
     Bool.not_eq_true', ← Bool.not_eq_true, cuts, test]
-  grind only
+  repeat' apply And.intro
+  all_goals grind only
 
-public def upperPatterns : List (List Bool) := ((vectors 15).filter valid).map pack
+public def upperPatterns : List (List Bool) := ((vectors 14).filter valid).map pack
 
 public theorem patterns_complete (s : Step) : (nonTrunkLabel .leader_led s).bits ∈ upperPatterns := by
   rw [shape]
@@ -232,6 +314,9 @@ public theorem complete (s : Step) : nonTrunkLabel .leader_led s ∈ upperRows :
   · rfl
   · simp [wins_diagonal s h]
 
+public theorem upper_counts : upperPatterns.length = 232 ∧ upperRows.length = 1200 := by
+  decide +kernel
+
 private def picks : List Pick :=
   [(row (z, p) (bits "1100000000000000000000000"), 0, 0),
     (row (p, p) (bits "1100000000000000000000000"), 0, 1),
@@ -245,7 +330,14 @@ private def picks : List Pick :=
     (row (z, z) (bits "0000010100000001111011001"), 3, 4),
     (row (z, z) (bits "1010101011110001111011000"), 3, 6),
     (row (p, p) (bits "1011001011110001111011000"), 4, 12),
-    (row (p, p) (bits "1011010100010001111011001"), 168, 5)]
+    (row (p, p) (bits "1011010100010001111011001"), 168, 5),
+    (row (b, b) (bits "1011010100010001111011101"), 73, 8),
+    (row (b, b) (bits "1011001011110001111011100"), 37, 13),
+    (row (z, z) (bits "1010101011110001111011100"), 28, 11),
+    (row (b, b) (bits "1011001011110001111011000"), 5, 12),
+    (row (p, p) (bits "0000000000000000000000000"), 4, 6),
+    (row (p, p) (bits "0000000000000001111011000"), 4, 11),
+    (row (z, z) (bits "0000001011100000000000000"), 35, 9)]
 
 public def rows : List RestrictedProfile := picks.map Prod.fst
 
@@ -257,11 +349,11 @@ public theorem covered_or_unresolved (s : Step) :
     nonTrunkLabel .leader_led s ∈ rows ∨ nonTrunkLabel .leader_led s ∈ unresolvedRows :=
   witnessed_or_unresolved (complete s)
 
-public theorem counts : rows.Nodup ∧ rows.length = 13 ∧ patterns.Nodup ∧ patterns.length = 8 := by
+public theorem counts : rows.Nodup ∧ rows.length = 20 ∧ patterns.Nodup ∧ patterns.length = 13 := by
   decide +kernel
 
 private theorem picked : picks.all (checkPick .leader_led) = true :=
-  all_split 8 (by decide +kernel) (by decide +kernel)
+  all_split 8 (by decide +kernel) (all_split 5 (by decide +kernel) (by decide +kernel))
 
 public theorem lower (r : RestrictedProfile) (mem : r ∈ rows) :
     ∃ s, nonTrunkLabel .leader_led s = r :=
