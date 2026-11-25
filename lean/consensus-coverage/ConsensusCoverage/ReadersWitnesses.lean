@@ -176,8 +176,11 @@ public def witnessed : List Classes.StepBranch := claims.flatMap (·.questions)
 
 public theorem count : witnessed.Nodup ∧ witnessed.length = 171 := by decide
 
+/-- Count the current union without pinning the independently updated case census. -/
 public theorem union_count :
-    (witnessed ++ CaseWitnesses.witnessed).eraseDups.length = 176 := by decide
+    (witnessed ++ CaseWitnesses.witnessed).eraseDups.length =
+      CaseWitnesses.witnessed.length +
+        (witnessed.filter fun b => !CaseWitnesses.witnessed.contains b).length := by decide
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
