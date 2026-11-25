@@ -70,11 +70,12 @@ open DeepSchedules in
 private def certificates : List Certificate :=
   [certify .commit_backed_max_eq_or_inl (selected duplicateAck [] validAck 5) (by decide +kernel),
    observed installLater 12 .leader_floor_led_inr,
-   observed divergent 8 .new_in_elected_backing_inl]
+   observed divergent 8 .new_in_elected_backing_inl,
+   observed divergent 11 .accept_persist_inSender_neg]
 
 public def witnessed : List Classes.StepBranch := certificates.map Subtype.val
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 3 := by decide +kernel
+public theorem count : witnessed.Nodup ∧ witnessed.length = 4 := by decide +kernel
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
