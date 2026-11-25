@@ -34,15 +34,15 @@ private def items : Event → List AppendEntryInput
   | .internal (.append xs) => xs
   | _ => []
 
-private theorem seedOf {x : XView} (ok : x.Matches c) (changed : x.base.changed = true)
+private def seedOf {x : XView} (ok : x.Matches c) (changed : x.base.changed = true)
     (ev : x.event = .internal (.append (items x.event)))
     (guards : x.base.pre.role = .primary ∧ ¬ x.base.pre.isRetiredCommitted x.base.actor ∧ items x.event ≠ []) :
-    Nonempty (Seed c) := by
+    Seed c := by
   have summary := ReceiveCasesB.changedSummary ok changed
-  exact ⟨⟨x.base.actor, x.base.pre, items x.event,
+  exact ⟨x.base.actor, x.base.pre, items x.event,
     ⟨x.event, ⟨t, c.tr, summary, (X.tr_actor_eq ok).symm, (X.tr_pre_eq ok).symm,
       (X.tr_event_eq ok).symm⟩, _, ev, ev, rfl⟩,
-    ⟨x.event, ⟨t, c.tr, summary, (X.tr_event_eq ok).symm⟩, _, ev, ev, _, rfl⟩, guards⟩⟩
+    ⟨x.event, ⟨t, c.tr, summary, (X.tr_event_eq ok).symm⟩, _, ev, ev, _, rfl⟩, guards⟩
 
 private def plain := EntryContent.transaction 1 {}
 private def configured := EntryContent.transaction 1 {configuration := some {0,1,2,3}}
@@ -113,7 +113,7 @@ public theorem occurs {b : Classes.StepBranch} (mem : b ∈ questions) :
     ∃ s : Step, label s (.step b) = true := by
   let a := ReceiveCasesB.asSample batch 0 (by decide +kernel) (by decide +kernel)
   letI : Config.InitialConfiguration := ⟨a.s.cfg⟩
-  obtain ⟨seed⟩ := seedOf (c := a.s.context) (x := a.x) a.ok
+  let seed := seedOf (c := a.s.context) (x := a.x) a.ok
     (by decide +kernel) (by decide +kernel) (by decide +kernel)
   exact ⟨a.s, (label_true a.s _).mpr ((sig_iff a.s.context _).mpr (casesOf mem seed))⟩
 
