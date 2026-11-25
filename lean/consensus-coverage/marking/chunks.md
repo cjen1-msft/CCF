@@ -34,7 +34,6 @@ with unmarked splits (number of splits as compiled):
 - `campaign_summary` (line 3823): 16
 - `quiet_summary` (line 3885): 1
 
-
 Set up once (creates your worktree and branch; the checker makes your own build directory
 `/root/.cache/ccf-consensus-coverage/ws-<hash>/` from the worktree path on its first run):
 
@@ -88,7 +87,6 @@ with unmarked splits (number of splits as compiled):
 - `led_single` (line 5020): 1
 - `initial_canon` (line 5027): 1
 
-
 Set up once (creates your worktree and branch; the checker makes your own build directory
 `/root/.cache/ccf-consensus-coverage/ws-<hash>/` from the worktree path on its first run):
 
@@ -140,7 +138,6 @@ with unmarked splits (number of splits as compiled):
 - `Ctx.elected_after` (line 5744): 1
 - `Ctx.electStep` (line 5754): 3
 
-
 Set up once (creates your worktree and branch; the checker makes your own build directory
 `/root/.cache/ccf-consensus-coverage/ws-<hash>/` from the worktree path on its first run):
 
@@ -190,7 +187,6 @@ with unmarked splits (number of splits as compiled):
 - `suffix_of_cons_suffix` (line 6458): 1
 - `seen_split` (line 6466): 2
 
-
 Set up once (creates your worktree and branch; the checker makes your own build directory
 `/root/.cache/ccf-consensus-coverage/ws-<hash>/` from the worktree path on its first run):
 
@@ -231,7 +227,6 @@ with unmarked splits (number of splits as compiled):
 - `Ctx.old_led_actor` (line 6886): 1
 - `Ctx.canon_mono` (line 6894): 5
 - `Ctx.anchor` (line 6942): 4
-
 
 Set up once (creates your worktree and branch; the checker makes your own build directory
 `/root/.cache/ccf-consensus-coverage/ws-<hash>/` from the worktree path on its first run):
@@ -280,7 +275,6 @@ with unmarked splits (number of splits as compiled):
 - `Ctx.message_terms` (line 7716): 2
 - `CommittedLogs.committed_logs_prefix_of_le` (line 7899): 1
 - `CommittedLogs.committed_logs_prefix` (line 7923): 1
-
 
 Set up once (creates your worktree and branch; the checker makes your own build directory
 `/root/.cache/ccf-consensus-coverage/ws-<hash>/` from the worktree path on its first run):
@@ -341,7 +335,6 @@ with unmarked splits (number of splits as compiled):
 - `foldl_select_max` (line 2861): 4
 - `foldl_select_max_pos` (line 2883): 1
 
-
 Set up once (creates your worktree and branch; the checker makes your own build directory
 `/root/.cache/ccf-consensus-coverage/ws-<hash>/` from the worktree path on its first run):
 
@@ -374,7 +367,6 @@ with unmarked splits (number of splits as compiled):
 - `Keeps.bind'` (line 842): 1
 - `Keeps.ite'` (line 866): 1
 - `Keeps.foldlM'` (line 874): 1
-
 
 Set up once (creates your worktree and branch; the checker makes your own build directory
 `/root/.cache/ccf-consensus-coverage/ws-<hash>/` from the worktree path on its first run):

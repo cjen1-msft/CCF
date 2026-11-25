@@ -232,7 +232,7 @@ and stepping down from the same initial state have the same projected row but
 different full observations. Five endpoint-only keys are reachable, and this
 collision splits one of those keys, so any full table has at least six entries.
 The nine history-resolved rows are not themselves a lower bound of nine distinct
-*sets* of profiles.
+_sets_ of profiles.
 
 **Exhaustiveness ledger: ten labels in three closed families; every other
 action is in a named open family.** [`Families.classify`](../consensus-coverage/ConsensusCoverage/Families.lean)
@@ -468,7 +468,7 @@ nomination adds nothing. Counting all nominations with unchanged nodes as the
 same step would miss this distinction.
 
 [Unchanged node records preserve all sixteen state answers](../consensus-coverage/ConsensusCoverage/BackingStutter.lean):
-they cannot establish the *first* committed key. Any new key on such a step
+they cannot establish the _first_ committed key. Any new key on such a step
 must use older backing. There can be no gap in a chain of delayed commits:
 if an action adds no key, [the next node-preserving action cannot add one either](../consensus-coverage/ConsensusCoverage/ConsecutiveStutter.lean).
 
@@ -515,7 +515,7 @@ labels with a positive step answer.
 A delivery can also have an all-false label while **removing** an envelope:
 in [an initialized heartbeat exchange](../consensus-coverage/ConsensusCoverage/DropWitness.lean),
 the primary consumes the only pending zero-index acknowledgment and neither
-node changes. The proof needs every *remaining* envelope to have been present
+node changes. The proof needs every _remaining_ envelope to have been present
 before, not every old envelope to remain. In the signed nomination capture,
 receiving the proposal at the term-zero node is another such delivery (`11 -> 11`).
 
