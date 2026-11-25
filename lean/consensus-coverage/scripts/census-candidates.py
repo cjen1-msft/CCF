@@ -46,6 +46,10 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--columns", nargs="+", required=True, type=Path,
                    help="newline-separated total columns (generated plus baseline)")
+    p.add_argument("--prior-columns", nargs="+", type=Path,
+                   help="total columns of a prior reader snapshot, for explicitly marked models")
+    p.add_argument("--prior-model", action="append", default=[],
+                   help="completed model read with --prior-columns instead of --columns")
     p.add_argument("--dag", type=Path, required=True, help="reader generator's direct reach DAG TSV")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--differential", type=Path, required=True)
@@ -57,11 +61,18 @@ def main():
     a = p.parse_args()
     if len({m.name for m in a.models}) != len(a.models):
         raise ValueError("model names must be unique")
-    exact = {s.rsplit(".", 1)[-1] for f in a.columns for s in f.read_text().splitlines() if s}
+    def columns(files):
+        return {s.rsplit(".", 1)[-1] for f in files for s in f.read_text().splitlines() if s}
+    exact = columns(a.columns)
+    prior_exact = columns(a.prior_columns or [])
     reaches = dict(s.split("\t", 1) for s in a.dag.read_text().splitlines())
     models = {p.name: completed(p) for p in a.models}
+    if (set(a.prior_model) - models.keys() or bool(a.prior_model) != bool(prior_exact)
+            or not prior_exact <= exact):
+        raise ValueError("prior models must be named inputs with an explicit subset of total columns")
     for name, (steps, rows) in models.items():
-        if not exact <= rows.keys() or any(rows[q][2] for q in exact):
+        required = prior_exact if name in a.prior_model else exact
+        if not exact <= rows.keys() or any(rows[q][2] for q in required):
             raise ValueError(f"{name}: total-reader coverage not satisfied (wrong snapshot or partial census)")
         stats = Counter("yes" if y else "unknown" if u else "no" for y, _, u in rows.values())
         print(name, steps, f"true={stats['yes']} false={stats['no']} unknown={stats['unknown']}")
@@ -81,7 +92,7 @@ def main():
     differential = []
     for q in sorted(exact):
         positive = [n for n, (_, rows) in models.items() if rows[q][0]]
-        if not positive:
+        if not positive and all(rows[q][2] == 0 for _, rows in models.values()):
             arm = "step_" + q
             direct = sorted(filter(None, reaches[arm].split(",")), key=lambda r: int(r.split("_")[-1]))
             # Group by identical direct shared predicates, not an inferred reason for impossibility.
@@ -89,7 +100,7 @@ def main():
                                sum(rows[q][1] for _, rows in models.values()),
                                f"ConsensusCoverage.SolvedWitnesses.{arm} s.frame s.after s.context",
                                ",".join(witnessed[q])))
-        if baseline not in positive and (positive or witnessed[q]):
+        if baseline not in positive and not models[baseline][1][q][2] and (positive or witnessed[q]):
             differential.append((q, baseline, ",".join(positive), ",".join(witnessed[q])))
     for path, header, rows in [
         (a.out, ("direct_reaches", "question", "completed_models", "false_model_edge_incidences", "formula",
@@ -115,7 +126,7 @@ def main():
                     k = diff[0]
                     before, after = models[left][1], models[right][1]
                     for q in sorted(exact):
-                        if not before[q][0] and after[q][0]:
+                        if not before[q][0] and not before[q][2] and after[q][0]:
                             writer.writerow((k, lc[k], rc[k], left, right, q, before[q][1], after[q][0]))
     print(f"{len(candidates)} bounded negatives in {len({r[0] for r in candidates})} direct-reach groups;"
           f" {sum(bool(r[-1]) for r in candidates)} witnessed outside completed models;"
