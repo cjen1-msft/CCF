@@ -55,6 +55,7 @@ private def inputs (name : Name) : Array String :=
   | `ConsensusCoverage.LeaderEffect.probes => #["queue"]
   | `ConsensusCoverage.ReadersPolar.Pools.states => #["history_input", "node_table", "queue"]
   | `ConsensusCoverage.ReadersPolar.Pools.records => #["history_input", "historical_nodes", "node_table"]
+  | `ConsensusCoverage.ReadersPolar.Pools.appendInputs => #["action"]
   | `ConsensusCoverage.ReadersPolar.Pools.sets
   | `ConsensusCoverage.ReadersPolar.Pools.ids => #["configuration", "history_input", "historical_nodes",
     "node_table", "commits"]

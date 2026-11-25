@@ -73,7 +73,10 @@ private def combine (l r : Option Compiled) : MetaM (Option Compiled) := do
 private def poolFor (pools α : Expr) : MetaM (Option Expr) := do
   if α.isConstOf ``Safety.Observation then
     return some (mkApp (mkConst ``ReadersPolar.observations) pools)
+  if α.isConstOf ``EntryContent then
+    return some (mkApp (mkConst ``ReadersPolar.entryContents) pools)
   let attr := match α.getAppFn.constName? with
+    | some ``AppendEntryInput => some ``Pools.appendInputs
     | some ``Model.State => some ``Pools.states
     | some ``NodeID => some ``Pools.ids
     | some ``NodeState => some ``Pools.records
