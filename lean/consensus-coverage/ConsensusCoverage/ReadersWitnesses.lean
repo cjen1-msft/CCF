@@ -57,7 +57,7 @@ private def claim3 : Claim :=
 private def claim4 : Claim :=
   ⟨3, 2, [
     .act_kind_election, .message_terms_h_requestPreVoteRequest,
-    .new_message_h_requestPreVoteRequest
+    .new_message_h_requestPreVoteRequest, .summary_kind_election
   ], by decide +kernel⟩
 private def claim5 : Claim :=
   ⟨3, 3, [
@@ -197,7 +197,7 @@ private def caseClaims : List (Claim ReadersCorpus.caseStepAt) :=
 public def witnessed : List Classes.StepBranch :=
   (claims.flatMap (·.questions) ++ caseClaims.flatMap (·.questions)) ++ [.summary_message_requestVoteResponse]
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 180 := by decide
+public theorem count : witnessed.Nodup ∧ witnessed.length = 181 := by decide
 
 /-- Count the current union without pinning the independently updated case census. -/
 public theorem union_count :
