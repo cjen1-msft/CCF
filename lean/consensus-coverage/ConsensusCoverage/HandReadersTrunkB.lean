@@ -8,6 +8,7 @@ import all ConsensusCoverage.HandReadersTrunkBCampaign
 import all ConsensusCoverage.HandReadersTrunkBCandidate
 import all ConsensusCoverage.HandReadersTrunkBCandidateSends
 import all ConsensusCoverage.HandReadersTrunkBElect
+import all ConsensusCoverage.HandReadersTrunkBLoop
 import all ConsensusCoverage.HandReadersTrunkBPrimary
 import all ConsensusCoverage.HandReadersTrunkBStart
 
@@ -39,6 +40,12 @@ private def lookup : (b : Classes.StepBranch) → Option (HandReadersA.Exact b)
   | .campaign_summary_started_inl => some (CampaignRows.exactReader .nominate)
   | .campaign_summary_started_inr_inl => some (CampaignRows.exactReader .ping)
   | .campaign_summary_started_inr_inr => some (CampaignRows.exactReader .ballot)
+  | .forIn__items_nil => some (Loops.exactReader .nil)
+  | .forIn__items_cons => some (Loops.exactReader .cons)
+  | .forIn__step_done => some (Loops.exactReader .done_)
+  | .forIn__step_yield => some (Loops.exactReader .yield_)
+  | .forIn__mem_append_inl => some (Loops.exactReader .head)
+  | .forIn__mem_append_inr => some (Loops.exactReader .tail)
   | _ => none
 
 public def covered : List Classes.StepBranch :=
@@ -58,6 +65,6 @@ public theorem read_total (s : Step) {b} (h : b ∈ covered) :
   simpa only [read,Option.isSome_map] using (List.mem_filter.mp h).2
 
 set_option maxRecDepth 8192 in
-public theorem count : covered.Nodup ∧ covered.length = 23 := by decide +kernel
+public theorem count : covered.Nodup ∧ covered.length = 29 := by decide +kernel
 
 end ConsensusCoverage.HandReadersTrunkB
