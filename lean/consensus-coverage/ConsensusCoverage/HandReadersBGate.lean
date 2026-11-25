@@ -23,11 +23,21 @@ open ActionProfile GuardedDomain SolvedWitnesses EvidenceSupport
 
 set_option maxRecDepth 8192
 
+public def activeWith (cfg : FullProfile.Configuration) (before : State) (act : Action)
+    (after : State) (past : List State) (accept : View → Bool) : Bool :=
+  (ofAction cfg before after past act).any fun v =>
+    accept v && (v.changed || !(after.network.all before.network.contains) ||
+      !CommitKeys.noNew (cfg.min?.getD 0) after (before :: past))
+
 public def active (cfg : FullProfile.Configuration) (before : State) (act : Action)
     (after : State) (past : List State) : Bool :=
-  (ofAction cfg before after past act).any fun v =>
-    v.changed || !(after.network.all before.network.contains) ||
-      !CommitKeys.noNew (cfg.min?.getD 0) after (before :: past)
+  activeWith cfg before act after past fun _ => true
+
+theorem activeWith_eq (cfg : FullProfile.Configuration) (before : State) (act : Action)
+    (after : State) (past : List State) (p : View → Bool) :
+    activeWith cfg before act after past p =
+      ((ofAction cfg before after past act).any p && active cfg before act after past) := by
+  cases h : ofAction cfg before after past act <;> simp [activeWith, active, h]
 
 section
 variable [Config.InitialConfiguration] {f : Frame} {t : State} {c : Ctx f t}
@@ -49,7 +59,7 @@ theorem live (s : Step) :
     rw [← s.current_eq]
     simp only [List.all_eq_true,List.contains_iff_mem]
     rfl
-  rw [active,made,Option.any_some,Bool.or_eq_true,Bool.or_eq_true,Bool.not_eq_true',
+  rw [active,activeWith,made,Option.any_some,Bool.true_and,Bool.or_eq_true,Bool.or_eq_true,Bool.not_eq_true',
     Bool.not_eq_true',← Bool.not_eq_true,← Bool.not_eq_true,queue,CommitKeys.step_noNew]
   constructor
   · rintro ((node | packet) | key)
