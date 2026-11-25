@@ -21,12 +21,13 @@ import all ConsensusCoverage.ReadersCorpus
 import all ConsensusCoverage.JointWitnesses
 import all ConsensusCoverage.FrontierWitnesses
 import all ConsensusCoverage.SolvedWitnesses
+import all ConsensusCoverage.StateCoverage
 import all Consensus.Proofs.SafetyInvariant
 meta import ConsensusCoverage.ReachPath
 
 namespace ConsensusCoverage.ClauseSmallB.LedCur
 
-open Consensus Consensus.Proofs Safety SolvedWitnesses
+open Consensus Consensus.Model.Node Consensus.Proofs Safety SolvedWitnesses
 open ClauseQuestions ClauseExactTables ActionProfile
 
 set_option maxHeartbeats 0
@@ -294,6 +295,60 @@ private theorem new_diagonal (s : Step) (yes : bit s .led_cur_led_after_inr = tr
         (r.zeroBefore, r.backedBefore) = (r.zeroAfter, r.backedAfter) := by decide +kernel
     exact finite _ (FrontierRows.complete s.run s.ran) new
 
+private theorem first_backing_same (s : Step) (edge : endpoints s = (z, p)) :
+    bit s .led_cur_lt_or_eq_of_le_inr = true := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  let c := s.context
+  have unbacked : (endpoints s).1.2 = false := congrArg (·.1.2) edge
+  have noZero : (endpoints s).2.1 = false := congrArg (·.2.1) edge
+  have noKey (k : Nat) (prefix_ : List Entry) : ¬ Committed s.frame k prefix_ := by
+    intro key
+    have yes := (StateCoverage.read_iff s.before s.past c.inv).2.mpr
+      ((StateCoverage.backed_iff _ c.inv).mpr ⟨List.ne_nil_of_mem c.pre_now, k, prefix_, key⟩)
+    exact Bool.noConfusion (unbacked.symm.trans yes)
+  have zero : c.pre.commitIndex = 0 := by
+    have backed := (c.inv.commit_backed _ _ c.pre_now).1
+    obtain ⟨_, h | ⟨k, l, key, _⟩⟩ := backed
+    · exact h
+    · exact (noKey k l key).elim
+  have positive : 0 < c.post.commitIndex := by
+    refine Nat.pos_of_ne_zero fun zero' => ?_
+    have isZero := (StateCoverage.read_iff s.after (s.before :: s.past) c.inv_step).1.mpr
+      ⟨c.actor, c.post, c.post_now, zero'⟩
+    exact Bool.noConfusion (noZero.symm.trans isZero)
+  have fresh : Fresh c := by
+    intro old
+    have eq := congrArg NodeState.commitIndex (c.now_pre old)
+    omega
+  have stays : c.pre.role = .primary ∧ c.post.currentTerm = c.pre.currentTerm := by
+    cases Summary.kind c.sum with
+    | same _ commit => omega
+    | append _ _ role _ advance => exact ⟨role, advance.term⟩
+    | ack _ _ _ role _ _ advance => exact ⟨role, advance.term⟩
+    | accept src req ev accepted =>
+      exfalso
+      have size := Safety.maxCommittableIndexUpTo_le c.post.log
+        (min req.primaryCommit (req.prevLogIndex + req.entries.length))
+      have bound := Nat.min_le_left req.primaryCommit (req.prevLogIndex + req.entries.length)
+      have commit := accepted.2.2.2.2.2.2
+      obtain ⟨_, evidence, _⟩ := c.accept_shape ev accepted
+      obtain empty | ⟨k, l, key, _⟩ := evidence.backed
+      · omega
+      · exact noKey k l key
+    | elect wins =>
+      exfalso
+      have yes := (new_iff c).mpr (c.wins_elect wins)
+      have bit := ((label_true s (.step .led_cur_led_after_inr)).trans (sig_iff c _)).mpr yes
+      have diag := new_diagonal s bit
+      rw [edge] at diag
+      exact Bool.noConfusion (congrArg Prod.fst diag)
+    | install _ ev pos signed _ _ _ _ _ =>
+      obtain ⟨_, _, _, k, l, key, _⟩ := c.snap_available ev pos signed
+      exact (noKey k l key).elim
+  have lead := c.inv.leader_led _ _ c.pre_now stays.1
+  exact ((label_true s (.step .led_cur_lt_or_eq_of_le_inr)).trans (sig_iff c _)).mpr
+    ((same_iff c).mpr ⟨(current_iff c).mpr ⟨fresh, lead⟩, stays.2.symm⟩)
+
 private def valid (earlier rises same elected bootstrap previous finds : Bool) : Bool :=
   !(rises && same) && !(elected && same) &&
     (!(earlier || rises || same) || (bootstrap || previous)) &&
@@ -327,7 +382,8 @@ private def fiber (e : Endpoints) : List RestrictedProfile :=
   booleans.flatMap fun previous =>
   booleans.flatMap fun finds =>
   if valid earlier rises same elected bootstrap previous finds &&
-    ((!elected && finds) || decide (e.1 = e.2)) then
+    ((!elected && finds) || decide (e.1 = e.2)) &&
+    (!decide (e = (z,p)) || same) then
     [row e (pack earlier rises same elected bootstrap previous finds)]
   else []
 
@@ -336,7 +392,7 @@ public def upperRows : List RestrictedProfile := endpointRows.flatMap fiber
 public def upperPatterns : List (List Bool) := patternsOf upperRows
 
 public theorem upper_counts : upperPatterns.Nodup ∧ upperPatterns.length = 33 ∧
-    upperRows.Nodup ∧ upperRows.length = 150 := by decide +kernel
+    upperRows.Nodup ∧ upperRows.length = 138 := by decide +kernel
 
 public theorem complete (s : Step) : nonTrunkLabel .led_cur s ∈ upperRows := by
   change row (endpoints s) (nonTrunkLabel .led_cur s).bits ∈ upperRows
@@ -358,7 +414,11 @@ public theorem complete (s : Step) : nonTrunkLabel .led_cur s ∈ upperRows := b
   refine List.mem_flatMap.mpr ⟨_, bool_mem (bit s .led_after_led_inl), ?_⟩
   refine List.mem_flatMap.mpr ⟨_, bool_mem (bit s .led_after_elected_after_inl), ?_⟩
   refine List.mem_flatMap.mpr ⟨_, bool_mem (bit s .find_of_mem_here_pos), ?_⟩
-  rw [valid_all, diag]
+  have first : (!decide (endpoints s = (z,p)) || bit s .led_cur_lt_or_eq_of_le_inr) = true := by
+    by_cases h : endpoints s = (z,p)
+    · simp [h, first_backing_same s h]
+    · simp [h]
+  rw [valid_all, diag, first]
   exact List.mem_cons_self
 
 public theorem patterns_complete (s : Step) :
@@ -393,21 +453,30 @@ private def picks : List Pick :=
     (row (p, p) (bits "0000000000100000"), 25, 8),
     (row (p, p) (bits "1000001100110111"), 168, 5),
     (row (b, b) (bits "1000001100110111"), 214, 9),
-    (row (b, b) (bits "1101010000111011"), 214, 10)]
+    (row (b, b) (bits "1101010000111011"), 214, 10),
+    (row (b, p) (bits "1101010000111011"), 214, 14),
+    (row (p, p) (bits "0000000000011000"), 214, 15)]
 
-private def extraStep (i depth node : Nat) : Option Step := do
+private def extraStep (i depth : Nat) (cmd : FrontierRows.Command) : Option Step := do
   let input ← ReadersCorpus.schedules[i]?
-  let run := {input.run with schedule := input.run.schedule.take depth ++
-    [.input node (.append [{content := .signature}])]}
-  let ss ← JointWitnesses.recordedAt run input.valid input.choices
+  let run := {input.run with schedule := input.run.schedule.take depth ++ [cmd]}
+  let ss ← JointWitnesses.recordedAt run input.valid (input.choices.filter (fun p => p.1 < depth))
   return (← ss.getLast?).val
 
 private def extraRows : List RestrictedProfile :=
   [row (z, z) (bits "1111010000111011"), row (p, p) (bits "1101010000011011"),
-    row (p, p) (bits "1101010000111011")]
+    row (p, p) (bits "1101010000111011"), row (z, z) (bits "1110000000100011"),
+    row (b, b) (bits "1110001100110111"), row (b, b) (bits "1111010000111011"),
+    row (p, p) (bits "1110000000100011")]
 
-private def extraSteps : List Step :=
-  [(3, 7, 0), (4, 13, 1), (168, 6, 1)].filterMap fun (i, depth, node) => extraStep i depth node
+private def extraSteps : List Step := [
+  extraStep 3 7 (.input 0 (.append [{content := .signature}])),
+  extraStep 4 13 (.input 1 (.append [{content := .signature}])),
+  extraStep 168 6 (.input 1 (.append [{content := .signature}])),
+  extraStep 3 5 (.input 0 (.timeout .election)),
+  extraStep 24 10 (.deliver 1 0),
+  extraStep 24 11 (.input 0 (.append [{content := .signature}])),
+  extraStep 4 12 (.input 0 (.timeout .election))].filterMap id
 
 public def rows : List RestrictedProfile := picks.map Prod.fst ++ extraRows
 
@@ -419,7 +488,7 @@ public theorem covered_or_unresolved (s : Step) :
     nonTrunkLabel .led_cur s ∈ rows ∨ nonTrunkLabel .led_cur s ∈ unresolvedRows :=
   witnessed_or_unresolved (complete s)
 
-public theorem counts : rows.Nodup ∧ rows.length = 31 ∧ patterns.Nodup ∧ patterns.length = 12 := by
+public theorem counts : rows.Nodup ∧ rows.length = 37 ∧ patterns.Nodup ∧ patterns.length = 13 := by
   decide +kernel
 
 private theorem picked : picks.all (checkPick .led_cur) = true := by
