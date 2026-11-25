@@ -61,11 +61,11 @@ public theorem unsettled_iff (b : Classes.StepBranch) :
     exact Array.getElem_mem _
   simp [unsettled, all]
 
-public theorem witnessed_count : witnessed.Nodup ∧ witnessed.length = 211 := by decide +kernel
+public theorem witnessed_count : witnessed.Nodup ∧ witnessed.length = 236 := by decide +kernel
 
-public theorem refuted_count : refuted.Nodup ∧ refuted.length = 12 := by decide +kernel
+public theorem refuted_count : refuted.Nodup ∧ refuted.length = 21 := by decide +kernel
 
-public theorem unsettled_count : unsettled.Nodup ∧ unsettled.length = 293 := by decide +kernel
+public theorem unsettled_count : unsettled.Nodup ∧ unsettled.length = 259 := by decide +kernel
 
 /-- Every total generated or legacy reader is accounted for in a proved
 class. One-sided readers may still give evidence about an unsettled case. -/
