@@ -10,6 +10,7 @@ public import ConsensusCoverage.HandReadersTrunkB
 public import ConsensusCoverage.HandReadersElection
 public import ConsensusCoverage.HandReadersOther
 public import ConsensusCoverage.HandReadersTrunkC
+public import ConsensusCoverage.HandReadersElectionB
 public import ConsensusCoverage.ActionProfile
 
 namespace ConsensusCoverage.ReadersHand
@@ -59,7 +60,7 @@ public def covered : List Classes.StepBranch :=
   HandReadersA.covered ++ HandReadersB.covered ++
     HandReadersTrunkA.covered ++ HandReadersTrunkB.covered ++
     HandReadersElection.covered ++ HandReadersOther.covered ++
-    HandReadersTrunkC.covered
+    HandReadersTrunkC.covered ++ HandReadersElectionB.covered
 
 public def read? (cfg : FullProfile.Configuration) (before : Model.State) (act : Model.Action)
     (after : Model.State) (past : List Model.State) (b : Classes.StepBranch) : Option Bool :=
@@ -68,12 +69,14 @@ public def read? (cfg : FullProfile.Configuration) (before : Model.State) (act :
       (orElseReader
         (orElseReader
           (orElseReader
-            (orElseReader HandReadersA.read HandReadersB.read)
-            HandReadersTrunkA.read)
-          HandReadersTrunkB.read)
-        HandReadersElection.read)
-      HandReadersOther.read)
-    HandReadersTrunkC.read
+            (orElseReader
+              (orElseReader HandReadersA.read HandReadersB.read)
+              HandReadersTrunkA.read)
+            HandReadersTrunkB.read)
+          HandReadersElection.read)
+        HandReadersOther.read)
+      HandReadersTrunkC.read)
+    HandReadersElectionB.read
     cfg before act after past b
 
 public theorem read?_correct (s : Step) {b : Classes.StepBranch} {v : Bool}
@@ -84,12 +87,14 @@ public theorem read?_correct (s : Step) {b : Classes.StepBranch} {v : Bool}
       (orElse_correct
         (orElse_correct
           (orElse_correct
-            (orElse_correct HandReadersA.read_correct HandReadersB.read_correct)
-            HandReadersTrunkA.read_correct)
-          HandReadersTrunkB.read_correct)
-        HandReadersElection.read_correct)
-      HandReadersOther.read_correct)
-    HandReadersTrunkC.read_correct s h
+            (orElse_correct
+              (orElse_correct HandReadersA.read_correct HandReadersB.read_correct)
+              HandReadersTrunkA.read_correct)
+            HandReadersTrunkB.read_correct)
+          HandReadersElection.read_correct)
+        HandReadersOther.read_correct)
+      HandReadersTrunkC.read_correct)
+    HandReadersElectionB.read_correct s h
 
 private theorem read?_total (s : Step) {b : Classes.StepBranch} (mem : b ∈ covered) :
     (read? s.cfg s.before s.act s.after s.past b).isSome = true :=
@@ -98,12 +103,14 @@ private theorem read?_total (s : Step) {b : Classes.StepBranch} (mem : b ∈ cov
       (orElse_total
         (orElse_total
           (orElse_total
-            (orElse_total HandReadersA.read_total HandReadersB.read_total)
-            HandReadersTrunkA.read_total)
-          HandReadersTrunkB.read_total)
-        HandReadersElection.read_total)
-      HandReadersOther.read_total)
-    HandReadersTrunkC.read_total s mem
+            (orElse_total
+              (orElse_total HandReadersA.read_total HandReadersB.read_total)
+              HandReadersTrunkA.read_total)
+            HandReadersTrunkB.read_total)
+          HandReadersElection.read_total)
+        HandReadersOther.read_total)
+      HandReadersTrunkC.read_total)
+    HandReadersElectionB.read_total s mem
 
 public theorem read?_at (s : Step) {b : Classes.StepBranch} (mem : b ∈ covered) :
     read? s.cfg s.before s.act s.after s.past b = some (label s (.step b)) := by

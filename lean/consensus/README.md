@@ -329,7 +329,7 @@ Classifying each case separately does not give the labels: a label is a
 whole vector of answers, and which combinations occur is a separate
 question. The bounds on that follow.
 
-**Full recorded-action denominator: at least 250; at least 247 on multi-node deployments.**
+**Full recorded-action denominator: at least 412; at least 247 on multi-node deployments.**
 The [recorded-action specification](../consensus-coverage/ConsensusCoverage/ActionProfile.lean)
 assigns an initialized step exactly one 548-answer vector. All 516 step
 questions use [the same, unique context for the recorded action](../consensus-coverage/ConsensusCoverage/ActionContext.lean).
@@ -592,7 +592,7 @@ for the questions whose generation has been verified; most of the 328 do
 not have one yet. The exact readers are used by the bounded census above
 but not yet by `answers`.
 
-**263 more questions have an exact reader written by hand.** For the
+**279 more questions have an exact reader written by hand.** For the
 questions the compiler cannot handle, the reader was written from what the
 case means and proved equal to the question's answer on every initialized
 step: [`HandReadersA`](../consensus-coverage/ConsensusCoverage/HandReadersA.lean)
@@ -601,17 +601,37 @@ step: [`HandReadersA`](../consensus-coverage/ConsensusCoverage/HandReadersA.lean
 (35), [`HandReadersTrunkB`](../consensus-coverage/ConsensusCoverage/HandReadersTrunkB.lean)
 (31), [`HandReadersElection`](../consensus-coverage/ConsensusCoverage/HandReadersElection.lean)
 (38), [`HandReadersOther`](../consensus-coverage/ConsensusCoverage/HandReadersOther.lean)
-(30), and [`HandReadersTrunkC`](../consensus-coverage/ConsensusCoverage/HandReadersTrunkC.lean)
-(15), each with `read_correct` and `read_total`. A typical one: the case
+(30), [`HandReadersTrunkC`](../consensus-coverage/ConsensusCoverage/HandReadersTrunkC.lean)
+(15), and [`HandReadersElectionB`](../consensus-coverage/ConsensusCoverage/HandReadersElectionB.lean)
+(16), each with `read_correct` and `read_total`. A typical one: the case
 `commit_backed_eq_zero_or_pos_inl` holds exactly when the actor becomes
 primary, was not already primary in that term, and had commit index zero
 before the step. The 29 impossible cases are read as constant false.
 [`ReadersTotal.read`](../consensus-coverage/ConsensusCoverage/ReadersTotal.lean)
 combines these sources with structural equivalences and the compiled
 match-index, accepted-log, and ranking readers. `read_correct` and `read_total`
-certify every returned answer and totality on the 480 covered questions. All 40
-unconditional replay readers are included; 36 of the 516 questions remain
-unread.
+certify every returned answer and totality on the 496 covered questions. All 40
+unconditional replay readers are included; only 20 of the 516 questions remain
+unread, all in the shared local-transition summary trunk.
+
+**Per-clause label tables.** The safety invariant `Inv` is a conjunction of 30
+clauses proved one field at a time by `Ctx.inv_step`.
+[`ClauseQuestions`](../consensus-coverage/ConsensusCoverage/ClauseQuestions.lean)
+computes each clause's exact question list from the proof-term closure of its
+field in `Ctx.inv_step` (union = all 516 step questions).
+[`ClauseExactTables`](../consensus-coverage/ConsensusCoverage/ClauseExactTables.lean)
+proves the exact 6-row table of realized `(pre, post)` endpoint transitions
+(closing `owners` and `observed`), and [`ClauseDistinct`](../consensus-coverage/ConsensusCoverage/ClauseDistinct.lean)
+proves the full exact 9-row table for `distinct`. For `match_ack` outside the
+shared trunk, [`ClauseMatchAckBounds`](../consensus-coverage/ConsensusCoverage/ClauseMatchAckBounds.lean)
+witnesses 20 complete rows against a 22-row upper bound. On the 2,184-step
+certified corpus at 435 readable coordinates, [`ClauseGlobalCorpus`](../consensus-coverage/ConsensusCoverage/ClauseGlobalCorpus.lean)
+certifies at least 412 distinct full labels globally; [`ClauseCommonBound`](../consensus-coverage/ConsensusCoverage/ClauseCommonBound.lean)
+certifies at least 106 labels for each of 26 clauses and
+[`ClauseFrontierBound`](../consensus-coverage/ConsensusCoverage/ClauseFrontierBound.lean)
+at least 80 for `frontier` (the largest observed single clause on the corpus is
+`completeness` at 236, and 301 steps cover every observed per-clause label
+across all 30 clauses).
 
 [`case-meanings.tsv`](../consensus-coverage/case-meanings.tsv) describes,
 for each of the 311 reachable questions that had no baseline reader, what
@@ -620,7 +640,7 @@ hand-written readers; rows marked `conjecture` give a conjectured meaning
 and the obstacle to proving it, most often that the case sits inside a
 lemma used at many places in the proof. Later rounds added compiled
 match-index, accepted-log, and ranking readers (12) and further hand-written
-readers (149), so 161 of its conjecture rows now have an exact reader. The
+readers (165), so 177 of its conjecture rows now have an exact reader. The
 current list of cases without an exact reader is `ReadersTotal.unread`.
 
 The rooted- and sorted-log proofs agree on the acting node: both enter their
