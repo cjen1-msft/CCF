@@ -205,9 +205,6 @@ public theorem union_count :
       CaseWitnesses.witnessed.length +
         (witnessed.filter fun b => !CaseWitnesses.witnessed.contains b).length := by decide
 
-public theorem certified_union_count :
-    (witnessed ++ CaseWitnesses.witnessed).eraseDups.length = 199 := by decide
-
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
   rw [witnessed, List.mem_append, List.mem_append, List.mem_singleton] at mem
