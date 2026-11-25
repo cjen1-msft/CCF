@@ -10,6 +10,7 @@ import all ConsensusCoverage.DeepElectionCases
 import all ConsensusCoverage.DeepLeaderCases
 import all ConsensusCoverage.DeepEffectCases
 import all ConsensusCoverage.DeepInputCases
+import all ConsensusCoverage.DeepGrantCases
 import all ConsensusCoverage.ReadersCorpus
 import all ConsensusCoverage.EventSupport
 import all ConsensusCoverage.JointWitnesses
@@ -53,6 +54,11 @@ private def checkedAt (b : Classes.StepBranch) (chosen : Option Step) (test : St
 private def inputAt (k : DeepInputCases.InputCase) (chosen : Option Step)
     (passed : chosen.any (DeepInputCases.check · k) = true) : Certificate :=
   checkedAt k.column chosen _ passed (DeepInputCases.correct · k)
+
+private def grantAt (k : DeepGrantCases.GrantCase) (chosen : Option Step) (voter candidate : Nat)
+    (passed : chosen.any (DeepGrantCases.check · k voter candidate 3 ⟨3, 2, 2⟩) = true) :
+    Certificate :=
+  checkedAt k.column chosen _ passed (DeepGrantCases.correct · k voter candidate 3 ⟨3, 2, 2⟩)
 
 private def transfer (from_ to_ : Classes.StepBranch) (known : from_ ∈ ReadersWitnesses.witnessed)
     (enter : ∀ s : Step, @SolvedWitnesses.sig ⟨s.cfg⟩ s.frame s.after s.context from_ →
@@ -148,11 +154,17 @@ private def certificates : List Certificate :=
    inputAt .electionTimeout (ReadersCorpus.stepAt 3 2) (by decide +kernel),
    inputAt .emptyBackup (ReadersCorpus.stepAt 19 0) (by decide +kernel),
    inputAt .signedBackup (selected installLater.run installLater.choices
-     (by unfold Run.valid; decide) 12) (by decide +kernel)]
+     (by unfold Run.valid; decide) 12) (by decide +kernel),
+   grantAt .recorded (selected divergent.run divergent.choices (by unfold Run.valid; decide) 7)
+     2 1 (by decide +kernel),
+   grantAt .selfVote (selected divergent.run divergent.choices (by unfold Run.valid; decide) 6)
+     1 1 (by decide +kernel),
+   grantAt .peerVote (selected divergent.run divergent.choices (by unfold Run.valid; decide) 7)
+     2 1 (by decide +kernel)]
 
 public def witnessed : List Classes.StepBranch := certificates.map Subtype.val
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 24 := by decide +kernel
+public theorem count : witnessed.Nodup ∧ witnessed.length = 27 := by decide +kernel
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
