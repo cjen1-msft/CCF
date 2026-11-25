@@ -8,6 +8,7 @@ import all ConsensusCoverage.HandReadersTrunkABatch
 import all ConsensusCoverage.HandReadersTrunkAPackets
 import all ConsensusCoverage.HandReadersTrunkAConflict
 import all ConsensusCoverage.HandReadersTrunkARest
+import all ConsensusCoverage.HandReadersTrunkARoles
 import all ConsensusCoverage.HandReadersTrunkALoop
 import all ConsensusCoverage.HandReadersTrunkAPrefix
 import all ConsensusCoverage.HandReadersTrunkASignature
@@ -33,6 +34,10 @@ private def lookup : (b : Classes.StepBranch) → Option (Exact b)
   | .aeReply_conflict_some => some (Request.conflictReader true)
   | .aeReply_summary_rest_inl => some (Request.restReader false)
   | .aeReply_summary_rest_inr => some (Request.restReader true)
+  | .aeReply_role_inl => some (Request.roleReader .retain)
+  | .aeReply_role_inr => some (Request.roleReader .retired)
+  | .aeReply_wRole_inl => some (Request.roleReader .unchanged)
+  | .aeReply_wRole_inr => some (Request.roleReader .follower)
   | .fromLeader_loop_entries_nil => some Loop.nilCase
   | .fromLeader_loop_entries_cons => some Loop.cons
   | .fromLeader_loop_signature_pos => some Loop.signature
@@ -77,6 +82,6 @@ public theorem read_total (s : Step) {b} (mem : b ∈ covered) :
   simpa only [read, Option.isSome_map] using (List.mem_filter.mp mem).2
 
 set_option maxRecDepth 8192 in
-public theorem count : covered.Nodup ∧ covered.length = 31 := by decide +kernel
+public theorem count : covered.Nodup ∧ covered.length = 35 := by decide +kernel
 
 end ConsensusCoverage.HandReadersTrunkA
