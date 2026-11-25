@@ -13,6 +13,7 @@ import all ConsensusCoverage.ReadersPolarGenerated
 import all ConsensusCoverage.ReadersPolar
 import all ConsensusCoverage.ReplayAnswers
 import all ConsensusCoverage.CaseWitnesses
+import ConsensusCoverage.ReadersWitnessesSplit
 
 namespace ConsensusCoverage.ReadersWitnesses
 
@@ -163,18 +164,23 @@ private def claim30 : Claim :=
   ], by decide +kernel⟩
 private def claim31 : Claim :=
   ⟨131, 5, [.receive_message_requestPreVoteRequest], by decide +kernel⟩
+private def claim32 : Claim :=
+  ⟨0, 0, [.appendEntry_configuration_none], by decide +kernel⟩
+private def claim33 : Claim :=
+  ⟨20, 0, [.appendEntry_configuration_some], by decide +kernel⟩
 
 private def claims : List Claim := [
   claim0, claim1, claim2, claim3, claim4, claim5, claim6, claim7, claim8, claim9, claim10,
   claim11, claim12, claim13, claim14, claim15, claim16, claim17, claim18, claim19, claim20,
   claim21, claim22, claim23, claim24, claim25, claim26, claim27, claim28, claim29, claim30,
-  claim31
+  claim31, claim32, claim33
 ]
 
 /-- Cases witnessed by an executable reader on a replayed corpus step. -/
-public def witnessed : List Classes.StepBranch := claims.flatMap (·.questions)
+public def witnessed : List Classes.StepBranch :=
+  claims.flatMap (·.questions) ++ [.summary_message_requestVoteResponse]
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 171 := by decide
+public theorem count : witnessed.Nodup ∧ witnessed.length = 174 := by decide
 
 /-- Count the current union without pinning the independently updated case census. -/
 public theorem union_count :
@@ -184,7 +190,10 @@ public theorem union_count :
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
-  obtain ⟨c, _, found⟩ := List.mem_flatMap.mp mem
-  exact c.occurs found
+  rw [witnessed, List.mem_append, List.mem_singleton] at mem
+  rcases mem with direct | rfl
+  · obtain ⟨c, _, found⟩ := List.mem_flatMap.mp direct
+    exact c.occurs found
+  · exact ReadersWitnessesSplit.voteResponse
 
 end ConsensusCoverage.ReadersWitnesses

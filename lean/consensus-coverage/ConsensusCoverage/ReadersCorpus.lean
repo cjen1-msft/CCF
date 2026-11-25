@@ -82,4 +82,8 @@ public def steps (schedule : Nat) : Option (List Step) :=
 public def stepAt (schedule offset : Nat) : Option Step :=
   schedules[schedule]?.bind (·.at offset)
 
+/-- Case certificates keep their own indices when earlier families grow. -/
+public def caseStepAt (schedule offset : Nat) : Option Step :=
+  cases[schedule]?.bind (·.at offset)
+
 end ConsensusCoverage.ReadersCorpus
