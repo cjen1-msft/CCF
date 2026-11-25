@@ -96,7 +96,20 @@ local elab "width_schedules%" : term => do
 private def width : List Schedule := width_schedules%
 
 /-- Every schedule used by the witness modules, in certificate order. -/
-private def schedules : List Schedule := joint ++ explored ++ bounded ++ cases ++ width
+private def threeTerms : Run :=
+  ⟨{0, 1, 2}, [0, 1, 2], [
+    .input 0 (.append [{content := .signature, flushes := [(1, 2), (2, 2)]}]),
+    .deliver 0 1, .deliver 0 2, .deliver 1 0, .input 0 .nominateSuccessor,
+    .input 0 (.sendEntries 2 2), .deliver 0 2, .deliver 0 1, .deliver 1 2, .deliver 2 1,
+    .input 1 (.append [{content := .signature, flushes := [(2, 3)]}]),
+    .deliver 1 2, .deliver 1 2, .deliver 2 1, .deliver 2 1,
+    .input 1 (.sendEntries 2 3), .deliver 1 2, .input 1 .nominateSuccessor, .deliver 1 2
+  ]⟩
+
+private def scenarios : List Schedule :=
+  [⟨threeTerms, [], by unfold Run.valid; decide⟩]
+
+private def schedules : List Schedule := joint ++ explored ++ bounded ++ cases ++ width ++ scenarios
 
 public def scheduleCount : Nat := schedules.length
 
@@ -115,5 +128,9 @@ public def caseStepAt (schedule offset : Nat) : Option Step :=
 /-- Wider-label certificates keep their own indices when earlier families grow. -/
 public def widthStepAt (schedule offset : Nat) : Option Step :=
   width[schedule]?.bind (·.at offset)
+
+/-- Additional initialized scenarios admitted by the readers' witness checks. -/
+public def scenarioStepAt (schedule offset : Nat) : Option Step :=
+  scenarios[schedule]?.bind (·.at offset)
 
 end ConsensusCoverage.ReadersCorpus

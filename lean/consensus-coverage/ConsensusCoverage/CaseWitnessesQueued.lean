@@ -4,6 +4,8 @@ module
 -- Licensed under the Apache 2.0 License.
 
 public import ConsensusCoverage.ActionProfile
+public import ConsensusCoverage.CensusQueueReaderCases
+import all ConsensusCoverage.CensusQueueReaderCases
 import all ConsensusCoverage.CensusQueueElection
 import all ConsensusCoverage.CensusQueueStep
 import all ConsensusCoverage.FrontierWitnesses
@@ -27,15 +29,18 @@ private def step1 : Step := select1.get (by decide +kernel)
 private theorem yes_commit_backed_eq_zero_or_pos_inr : label step1 (.step .commit_backed_eq_zero_or_pos_inr) = true := by queue_win step1
 
 public def witnessed : List Classes.StepBranch :=
-  [.commit_backed_eq_zero_or_pos_inl, .commit_backed_eq_zero_or_pos_inr]
+  [.commit_backed_eq_zero_or_pos_inl, .commit_backed_eq_zero_or_pos_inr] ++ CensusQueueReaderCases.witnessed
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
-  simp only [witnessed, List.mem_cons, List.not_mem_nil, or_false] at mem
-  rcases mem with rfl | rfl
-  · exact ⟨step0, yes_commit_backed_eq_zero_or_pos_inl⟩
-  · exact ⟨step1, yes_commit_backed_eq_zero_or_pos_inr⟩
+  rw [witnessed, List.mem_append] at mem
+  rcases mem with win | read
+  · simp only [List.mem_cons, List.not_mem_nil, or_false] at win
+    rcases win with rfl | rfl
+    · exact ⟨step0, yes_commit_backed_eq_zero_or_pos_inl⟩
+    · exact ⟨step1, yes_commit_backed_eq_zero_or_pos_inr⟩
+  · exact CensusQueueReaderCases.occurs read
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 2 := by decide +kernel
+public theorem count : witnessed.Nodup ∧ witnessed.length = 6 := by decide +kernel
 
 end ConsensusCoverage.CaseWitnessesQueued

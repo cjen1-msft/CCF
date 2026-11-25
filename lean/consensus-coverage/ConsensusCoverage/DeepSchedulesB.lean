@@ -40,6 +40,9 @@ public def campaign : Replay := ⟨CaseWitnesses.bounded19, [(4, 1)], CaseWitnes
 public def preVote : Replay := ⟨CaseWitnesses.bounded17, [], CaseWitnesses.bounded17Valid⟩
 public def copyCommit : Replay := ⟨CaseWitnesses.bounded16, [], CaseWitnesses.bounded16Valid⟩
 public def soloCampaign : Replay := ⟨CaseWitnesses.bounded21, [], CaseWitnesses.bounded21Valid⟩
+public def electedAppend : Replay :=
+  ⟨{soloCampaign.run with schedule := soloCampaign.run.schedule ++ [.input 1 (.append [{content := .signature}])]},
+    [], soloCampaign.valid⟩
 public def doomed : Replay := script! DeepSchedules.doomed
 public def divergent : Replay := script! DeepSchedules.divergent
 public def retire : Replay := script! DeepSchedules.retireOnAppend

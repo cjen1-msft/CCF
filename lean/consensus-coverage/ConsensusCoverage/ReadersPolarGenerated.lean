@@ -8,6 +8,7 @@ public import ConsensusCoverage.ReadersPolarCompiler
 public import ConsensusCoverage.ReadersPolarBacking
 public import ConsensusCoverage.ReadersPolarSummary
 public import ConsensusCoverage.ReadersPolarObserve
+public import ConsensusCoverage.ReadersPolarFrontier
 import all ConsensusCoverage.SolvedWitnesses
 meta import ConsensusCoverage.ReadersPolarShards
 
@@ -21,4 +22,4 @@ set_option Elab.async false
 -- including budget-exhausted roots, are omitted rather than retried here.
 join_reader_shards ConsensusCoverage.ReadersPolarCompiler from
   [ConsensusCoverage.ReadersPolarBacking, ConsensusCoverage.ReadersPolarSummary,
-   ConsensusCoverage.ReadersPolarObserve]
+   ConsensusCoverage.ReadersPolarObserve, ConsensusCoverage.ReadersPolarFrontier]

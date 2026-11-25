@@ -17,7 +17,8 @@ set_option Elab.async false
 
 compile_required_reader_shard ConsensusCoverage.ReadersPolarSummary budget 400000
   + [step_summary_event_internal, step_summary_input_append, step_summary_input_sendEntries,
-    step_summary_input_timeout, step_summary_kind_checkQuorum, step_summary_input_nominateSuccessor,
+    step_summary_input_timeout, step_summary_kind_checkQuorum, step_summary_kind_election,
+    step_summary_input_nominateSuccessor,
     step_summary_input_initAsBackup, step_summary_event_receive, step_summary_message_appendEntriesRequest,
     step_summary_message_appendEntriesResponse, step_summary_message_requestVoteRequest,
     step_summary_message_requestVoteResponse, step_summary_message_requestPreVoteRequest,

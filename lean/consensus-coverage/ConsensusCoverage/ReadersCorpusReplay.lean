@@ -73,14 +73,16 @@ private def observe (rows : List Sample) (b : Classes.StepBranch) (positivesOnly
   -- Excluded action kinds cannot be positive, but a partial reader may still
   -- return unknown on them. Only omit those steps from positive searches.
   let rows := if positivesOnly then rows.filter (fun s => decide (s.tag ∈ allowed)) else rows
-  let candidates := rows.map fun s => (s, ReplayAnswers.answer s.baseline.get (.step b))
-  let baselineYes := candidates.any (·.2 == some true)
-  let candidates := if positivesOnly then candidates.filter (·.2 != some false) else candidates
-  let eligible := candidates.length
-  let candidates := limit.elim candidates candidates.take
-  let mut result : Obs := { eligible }
-  for (s, baseline) in candidates do
+  let baselineAt (s : Sample) := ReplayAnswers.answer s.baseline.get (.step b)
+  let mut baselineYes := !positivesOnly && rows.any (fun s => baselineAt s == some true)
+  let mut result : Obs := { eligible := rows.length }
+  for s in limit.elim rows rows.take do
     result := { result with tried := result.tried + 1, duplicates := result.duplicates + (s.copies - 1) }
+    let baseline := baselineAt s
+    baselineYes := baselineYes || baseline == some true
+    if positivesOnly && baseline == some false then
+      result := { result with negativesInferred := result.negativesInferred + 1 }
+      continue
     let answer ← if exact && baseline.isSome then do
         result := { result with exactInferred := result.exactInferred + 1 }
         pure baseline

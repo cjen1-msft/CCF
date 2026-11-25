@@ -8,7 +8,10 @@ import all ConsensusCoverage.CensusQueueElection
 import all ConsensusCoverage.CensusQueueBool
 public meta import ConsensusCoverage.CensusQueueBool
 import all ConsensusCoverage.ReadersGenerated
+import all ConsensusCoverage.ReadersPolarGenerated
 import all ConsensusCoverage.ReadersPolarObserve
+import all ConsensusCoverage.ReadersPolarQueue
+import all ConsensusCoverage.ReadersPolarReceiveQueue
 import all ConsensusCoverage.DeepInputCases
 import all ConsensusCoverage.DeepGrantCases
 import all ConsensusCoverage.DeepActorCases
@@ -67,12 +70,17 @@ private def seed (st : Term) (source : String) : TacticM Unit := do
     let r := mkIdent exactName
     return ← evalTactic (← `(tactic| exact (@$(r):ident ⟨Step.cfg $st⟩ _ _ (CensusQueueStep.context $st) _
       (CensusQueueStep.reflected $st)).mp (by queue_bool)))
-  for ns in [`ReadersPolarObserve, `ReadersPolarBacking, `ReadersPolarSummary, `ReadersPolarFrontier] do
+  for ns in [`ReadersPolarQueue, `ReadersPolarReceiveQueue, `ReadersPolarObserve, `ReadersPolarBacking,
+      `ReadersPolarSummary, `ReadersPolarFrontier] do
     let sound := Name.mkStr (`ConsensusCoverage ++ ns ++ `R) ("yes_" ++ source ++ "_sound")
     if (← getEnv).contains sound then
       let r := mkIdent sound
+      -- The dedicated queue roots are small closed tests. Enumerating all
+      -- their existential proof terms is more expensive than checking them.
+      let close ← if ns == `ReadersPolarQueue || ns == `ReadersPolarReceiveQueue then
+        `(tactic| decide +kernel) else `(tactic| queue_bool)
       return ← evalTactic (← `(tactic| exact @$(r):ident ⟨Step.cfg $st⟩ _ _ (CensusQueueStep.context $st) _
-        (CensusQueueStep.reflected $st) (CensusQueueStep.pools $st) (by queue_bool)))
+        (CensusQueueStep.reflected $st) (CensusQueueStep.pools $st) (by $close:tactic)))
   throwError "no checked positive source for {source}"
 
 elab "queue_hint " st:term : tactic => withMainContext do

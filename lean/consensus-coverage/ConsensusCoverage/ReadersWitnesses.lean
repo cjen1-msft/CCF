@@ -13,9 +13,12 @@ import all ConsensusCoverage.ReadersPolarGenerated
 import all ConsensusCoverage.ReadersPolarBacking
 import all ConsensusCoverage.ReadersPolarSummary
 import all ConsensusCoverage.ReadersPolarObserve
+import all ConsensusCoverage.ReadersPolarFrontier
 import all ConsensusCoverage.ReadersPolar
 import all ConsensusCoverage.ReplayAnswers
 import all ConsensusCoverage.CaseWitnesses
+import all ConsensusCoverage.ReadersWitnessesCases
+import ConsensusCoverage.ReadersWitnessesChains
 import ConsensusCoverage.ReadersWitnessesSplit
 
 namespace ConsensusCoverage.ReadersWitnesses
@@ -23,6 +26,7 @@ namespace ConsensusCoverage.ReadersWitnesses
 open ActionProfile ReadersWitnessProof
 
 set_option maxHeartbeats 0
+set_option Elab.async false
 set_option pp.maxSteps 1500
 set_option maxRecDepth 8192
 
@@ -44,11 +48,12 @@ private def claim0 : Claim :=
     .rooted_now_after_inl, .rooted_post_log_inr_inl, .seen_after_now_after_inl,
     .seen_after_seen_inl, .seen_after_seen_inr, .sorted_now_after_inl, .sorted_post_log_inr_inl,
     .summary_input_append, .terms_mem_append_inl, .terms_mem_append_inr, .terms_now_after_inl,
-    .terms_post_log_inr_inl
+    .terms_post_log_inr_inl, .transfer_backed_inl, .weaken_backed_inl
   ], by decide +kernel⟩
 private def claim1 : Claim :=
   ⟨0, 1, [
-    .persist_persist_inl, .persist_pre_kind_append, .persist_seen_after_inl
+    .commitChains_step_led_inl, .persist_persist_inl, .persist_pre_kind_append, .persist_seen_after_inl,
+    .transfer_backed_inr
   ], by decide +kernel⟩
 private def claim2 : Claim :=
   ⟨1, 0, [.rooted_now_after_inr, .sorted_now_after_inr], by decide +kernel⟩
@@ -57,7 +62,7 @@ private def claim3 : Claim :=
 private def claim4 : Claim :=
   ⟨3, 2, [
     .act_kind_election, .message_terms_h_requestPreVoteRequest,
-    .new_message_h_requestPreVoteRequest
+    .new_message_h_requestPreVoteRequest, .summary_kind_election
   ], by decide +kernel⟩
 private def claim5 : Claim :=
   ⟨3, 3, [
@@ -107,7 +112,8 @@ private def claim12 : Claim :=
     .accept_backed_max_eq_or_inl, .accept_backed_max_eq_or_inr, .accept_backed_shape_inr,
     .accept_shape_eq_zero_or_pos_inl, .accept_shape_shape_neg,
     .appendEntriesRequest_summary_observe_bumping_inr, .commitFrontier_invariant_event_receive,
-    .commit_backed_kind_accept, .new_message_h_appendEntriesResponse, .post_log_kind_accept,
+    .commit_backed_kind_accept, .handleAppendEntriesRequest_stepDown_neg,
+    .handleAppendEntriesRequest_conflict_none, .new_message_h_appendEntriesResponse, .post_log_kind_accept,
     .post_two_active_inr_inr_inl, .receive_message_appendEntriesRequest, .summary_event_receive,
     .summary_message_appendEntriesRequest
   ], by decide +kernel⟩
@@ -162,7 +168,8 @@ private def claim29 : Claim :=
   ⟨130, 6, [.canon_mono_now_after_inr, .completeness_committed_inr], by decide +kernel⟩
 private def claim30 : Claim :=
   ⟨131, 3, [
-    .campaign_backed_pre_split_inl, .candidate_kind_inl, .candidate_now_after_inl,
+    .campaign_backed_pre_split_inl, .campaign_three_campaign_inl, .candidate_kind_inl, .candidate_now_after_inl,
+    .grantFactsBefore_grant_inr, .grantFactsBefore_supported_inl,
     .message_terms_h_requestVoteRequest, .new_message_h_requestVoteRequest,
     .receive_message_proposeRequestVoteRequest, .summary_message_proposeRequestVoteRequest
   ], by decide +kernel⟩
@@ -188,16 +195,13 @@ private def claims : List Claim := [
   claim31, claim32, claim33, claim34, claim35, claim36, claim37
 ]
 
-private def caseClaims : List (Claim ReadersCorpus.caseStepAt) :=
-  [⟨20, 4, [
-    .observeTerm_log_message_appendEntriesResponse, .observeTerm_commitIndex_message_appendEntriesResponse
-  ], by decide +kernel⟩]
-
 /-- Cases witnessed by an executable reader on a replayed corpus step. -/
 public def witnessed : List Classes.StepBranch :=
-  (claims.flatMap (·.questions) ++ caseClaims.flatMap (·.questions)) ++ [.summary_message_requestVoteResponse]
+  (claims.flatMap (·.questions) ++ ReadersWitnessesCases.claims.flatMap (·.questions) ++
+    [.commitChains_step_led_inr] ++ ReadersWitnessesCases.backing.questions) ++
+  [.summary_message_requestVoteResponse]
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 180 := by decide
+public theorem count : witnessed.Nodup ∧ witnessed.length = 201 := by decide
 
 /-- Count the current union without pinning the independently updated case census. -/
 public theorem union_count :
@@ -207,12 +211,14 @@ public theorem union_count :
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
-  rw [witnessed, List.mem_append, List.mem_append, List.mem_singleton] at mem
-  rcases mem with (direct | cases) | rfl
+  simp only [witnessed, List.mem_append, List.mem_singleton] at mem
+  rcases mem with (((direct | cases) | rfl) | backing) | rfl
   · obtain ⟨c, _, found⟩ := List.mem_flatMap.mp direct
     exact c.occurs found
   · obtain ⟨c, _, found⟩ := List.mem_flatMap.mp cases
     exact c.occurs found
+  · exact ReadersWitnessesChains.occurs
+  · exact ReadersWitnessesCases.backing.occurs backing
   · exact ReadersWitnessesSplit.voteResponse
 
 end ConsensusCoverage.ReadersWitnesses
