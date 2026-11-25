@@ -12,6 +12,7 @@ import all ConsensusCoverage.HandReadersOtherFrontier
 import all ConsensusCoverage.HandReadersOtherPromotion
 import all ConsensusCoverage.HandReadersOtherPrefix
 import all ConsensusCoverage.HandReadersOtherShorten
+import all ConsensusCoverage.HandReadersOtherTransfer
 import all ConsensusCoverage.HandReadersOtherVote
 import all ConsensusCoverage.HandReadersOtherWeaken
 
@@ -41,6 +42,8 @@ private def lookup : (b : Classes.StepBranch) → Option (Exact b)
   | .prefix_small_inr => some Prefix.exactReader
   | .shorten_backed_inl => some (Shorten.exactReader true)
   | .shorten_backed_inr => some (Shorten.exactReader false)
+  | .transfer_backed_inl => some (Transfer.exactReader true)
+  | .transfer_backed_inr => some (Transfer.exactReader false)
   | .promotedLog_committed_pos => some (Promotion.exactReader true)
   | .promotedLog_committed_neg => some (Promotion.exactReader false)
   | .vals_upToDate_lt_or_eq_of_le_inr => some Vote.exactReader
@@ -65,6 +68,6 @@ public theorem read_total (s : Step) {b} (h : b ∈ covered) :
   simpa only [read, Option.isSome_map] using (List.mem_filter.mp h).2
 
 set_option maxRecDepth 8192 in
-public theorem count : covered.Nodup ∧ covered.length = 26 := by decide +kernel
+public theorem count : covered.Nodup ∧ covered.length = 28 := by decide +kernel
 
 end ConsensusCoverage.HandReadersOther
