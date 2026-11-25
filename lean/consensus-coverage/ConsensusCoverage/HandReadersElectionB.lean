@@ -8,6 +8,7 @@ import all ConsensusCoverage.HandReadersElectionBKeys
 import all ConsensusCoverage.HandReadersElectionBFind
 import all ConsensusCoverage.HandReadersElectionBChoice
 import all ConsensusCoverage.HandReadersElectionBLed
+import all ConsensusCoverage.HandReadersElectionBTerm
 
 namespace ConsensusCoverage.HandReadersElectionB
 
@@ -23,6 +24,7 @@ private def lookup : (b : Classes.StepBranch) → Option (Exact b)
   | .led_after_led_inl => some LedRows.bootstrap
   | .led_after_led_inr => some LedRows.elected
   | .led_after_elected_after_inl => some LedRows.previous
+  | .termAt_le_of_mem_found_some => some Term.exactReader
   | _ => none
 
 public def covered : List Classes.StepBranch :=
@@ -42,6 +44,6 @@ public theorem read_total (s : Step) {b} (mem : b ∈ covered) :
   simpa only [read,Option.isSome_map] using (List.mem_filter.mp mem).2
 
 set_option maxRecDepth 8192 in
-public theorem count : covered.Nodup ∧ covered.length = 9 := by decide +kernel
+public theorem count : covered.Nodup ∧ covered.length = 10 := by decide +kernel
 
 end ConsensusCoverage.HandReadersElectionB
