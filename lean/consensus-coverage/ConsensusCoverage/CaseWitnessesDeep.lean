@@ -9,6 +9,8 @@ import all ConsensusCoverage.DeepSchedules
 import all ConsensusCoverage.DeepElectionCases
 import all ConsensusCoverage.DeepLeaderCases
 import all ConsensusCoverage.DeepEffectCases
+import all ConsensusCoverage.DeepInputCases
+import all ConsensusCoverage.ReadersCorpus
 import all ConsensusCoverage.EventSupport
 import all ConsensusCoverage.JointWitnesses
 import all ConsensusCoverage.ActionProfile
@@ -39,6 +41,18 @@ private noncomputable def ordered (s : Step) (b : Classes.StepBranch) : Option B
     @ReadersCompiler.readView ⟨s.cfg⟩ x b
 
 private abbrev Certificate := {b : Classes.StepBranch // ∃ s : Step, label s (.step b) = true}
+
+private def checkedAt (b : Classes.StepBranch) (chosen : Option Step) (test : Step → Bool)
+    (passed : chosen.any test = true) (sound : ∀ s, test s = true → label s (.step b) = true) :
+    Certificate := by
+  refine ⟨b, ?_⟩
+  cases chosen with
+  | none => cases passed
+  | some s => exact ⟨s, sound s passed⟩
+
+private def inputAt (k : DeepInputCases.InputCase) (chosen : Option Step)
+    (passed : chosen.any (DeepInputCases.check · k) = true) : Certificate :=
+  checkedAt k.column chosen _ passed (DeepInputCases.correct · k)
 
 private def transfer (from_ to_ : Classes.StepBranch) (known : from_ ∈ ReadersWitnesses.witnessed)
     (enter : ∀ s : Step, @SolvedWitnesses.sig ⟨s.cfg⟩ s.frame s.after s.context from_ →
@@ -130,11 +144,15 @@ private def certificates : List Certificate :=
    election divergent 8 .wins_elect_committed_neg false (fun s a b _ h =>
      @DeepLeaderCases.electedZero ⟨s.cfg⟩ _ _ s.context a b (of_decide_eq_false h)),
    transfer .foldlM__items_nil .foldlM__items_cons (by decide +kernel)
-     (fun s => @DeepEffectCases.flushCons ⟨s.cfg⟩ _ _ s.context)]
+     (fun s => @DeepEffectCases.flushCons ⟨s.cfg⟩ _ _ s.context),
+   inputAt .electionTimeout (ReadersCorpus.stepAt 3 2) (by decide +kernel),
+   inputAt .emptyBackup (ReadersCorpus.stepAt 19 0) (by decide +kernel),
+   inputAt .signedBackup (selected installLater.run installLater.choices
+     (by unfold Run.valid; decide) 12) (by decide +kernel)]
 
 public def witnessed : List Classes.StepBranch := certificates.map Subtype.val
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 21 := by decide +kernel
+public theorem count : witnessed.Nodup ∧ witnessed.length = 24 := by decide +kernel
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
