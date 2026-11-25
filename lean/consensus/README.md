@@ -277,18 +277,42 @@ witnessed](../consensus-coverage/ConsensusCoverage/AckWitnesses.lean), but
 208 answers per action remain undecided on those two fixture actions, so the
 family is still open.
 
-**Per-question reachability: 44 cases witnessed, 4 proved impossible, 468
-not classified by these certificates.** Each step question is one case of one case split in the
-safety proof. [`CaseWitnesses.occurs`](../consensus-coverage/ConsensusCoverage/CaseWitnesses.lean)
-proves 44 of the 516 are true on some initialized step, from two schedules
-replayed in the kernel. [`CaseUnreachable.label_false`](../consensus-coverage/ConsensusCoverage/CaseUnreachable.lean)
-proves four are false on every initialized step: one about a retained
-envelope and three about a nomination changing the actor's record, which it
-never does. The explorer's `--cases` mode distinguishes questions witnessed
-true, questions always false in that search, and questions still unknown
-on some explored step. Only a separate proof establishes unreachability.
+**Per-question reachability: 211 cases witnessed, 12 proved impossible, 293
+unsettled.** Each step question is one case of one case split in the safety
+proof. [`CensusPartition`](../consensus-coverage/ConsensusCoverage/CensusPartition.lean)
+proves that three lists partition the 516 questions: every question in
+`witnessed` is true on some initialized step (`occurs`), every question in
+`refuted` is false on every initialized step (`impossible`), no question is
+in both (`disjoint`), and `unsettled` is the rest. The counts are theorems.
 
-**Full recorded-action denominator: at least 223; at least 220 on multi-node deployments.**
+The witnesses are schedules replayed in the kernel, from three sources:
+[`CaseWitnesses`](../consensus-coverage/ConsensusCoverage/CaseWitnesses.lean)
+(192 questions; schedules found by the bounded search below and read with
+the exact readers),
+[`ReadersWitnesses`](../consensus-coverage/ConsensusCoverage/ReadersWitnesses.lean)
+(180; one-sided tests run over the certified schedules) and
+[`CaseWitnessesDeep`](../consensus-coverage/ConsensusCoverage/CaseWitnessesDeep.lean)
+(12; longer schedules written by hand). The impossible cases are in
+[`CaseUnreachable`](../consensus-coverage/ConsensusCoverage/CaseUnreachable.lean)
+(10) and [`CensusBallots`](../consensus-coverage/ConsensusCoverage/CensusBallots.lean)
+(2).
+
+A bounded search never makes a case impossible. The search found 18
+exactly readable questions that were false on every step of every model it
+completed. Each was then settled separately: six are impossible, twelve are
+reachable on schedules longer than the search covered (a competing
+candidate, an election completing after a later one, a primary retiring
+during a local append). The impossibility proofs use two new invariants of
+initialized runs: [a vote request is never addressed to its sender](../consensus-coverage/ConsensusCoverage/VoteRequestRoute.lean),
+and [where a retired role can come from](../consensus-coverage/ConsensusCoverage/RetiredRoleOrigin.lean).
+
+None of the 293 unsettled questions has an exact reader.
+[`unsettled.tsv`](../consensus-coverage/unsettled.tsv) lists them with the
+event kinds that can enter each case and the entry points of its formula;
+[`census-unsettled.lean`](../consensus-coverage/scripts/census-unsettled.lean)
+regenerates it from the partition.
+
+**Full recorded-action denominator: at least 250; at least 247 on multi-node deployments.**
 The [recorded-action specification](../consensus-coverage/ConsensusCoverage/ActionProfile.lean)
 assigns an initialized step exactly one 548-answer vector. All 516 step
 questions use [the same, unique context for the recorded action](../consensus-coverage/ConsensusCoverage/ActionContext.lean).
@@ -373,23 +397,31 @@ models were stopped after about ten minutes with states still unexplored.
 With at most one message in flight the count also stops growing along the
 log bound at four entries (115) and along the term bound at five.
 
-Across all runs there were 220 multi-node combinations; [their witnesses](../consensus-coverage/ConsensusCoverage/BoundedWitnesses.lean)
-raise the kernel-checked bound to 223 and 220. Everything else in this
+Across all runs, including models with reconfiguration, retirement and a
+joining node, [236 combinations have a witness](../consensus-coverage/ConsensusCoverage/BoundedWitnesses.lean)
+replayed in the kernel, 233 of them on multi-node deployments. A wider key
+adds the answers of the exact readers to those 64; [`CensusWidth`](../consensus-coverage/ConsensusCoverage/CensusWidth.lean)
+certifies 250 distinct wider keys, 247 on multi-node deployments, and each
+difference is a difference in a full label. Everything else in this
 section is a measurement, not a theorem. That equal merge keys imply equal
 labels is checked empirically (no disagreement in 1,288,506 pairs of
-histories with at most three messages in flight) but not proved. The key
-compares 64 answers, not the full label of 548. A bounded model is a
+histories with at most three messages in flight) but not proved. Neither
+key is the full label of 548 answers. A bounded model is a
 fragment of the protocol: a fixpoint says nothing about longer logs, higher
 terms, more nodes or reconfiguration.
 
 The same search counts, for each of the 516 step questions, the steps on
-which the reader answers yes, no or unknown.
-[`ScaleCensus`](../consensus-coverage/ConsensusCoverage/ScaleCensus.lean)
-proves that outside the 40 always-known answers the reader depends only on
-a small finite context, so the census is exact over all steps of a searched
-model rather than a sample. Over the complete two-voter model it finds 43
-questions answered yes somewhere, 10 answered no on every step and 463
-unknown on some step and never yes; it adds no witnessed case to the 44.
+which the readers answer yes, no or unknown. It uses the 188 exact readers
+described below, specialized to the search's finite ghost. The `Census*`
+modules prove pieces of that specialization against the real history
+(observations, vote grants, elections, leader logs and committed keys are
+tracked exactly along initialized runs); the whole specialization, and the
+merging of states, are not proved, so these counts are measurements. Over
+the complete two-voter model 147 questions are true on some step, 49 are
+false on every step and 320 are unknown on some step. In 23 completed
+models (two and three nodes, with reconfiguration, retirement and a joining
+node) 167 questions are true somewhere. The combinations of the wider key
+number 144 in the complete two-voter model, against 103 for the 64 answers.
 
 ```sh
 lake -d "$WS/consensus-coverage" env lean --run "$PWD/lean/consensus-coverage/scripts/explore.lean" \
@@ -518,17 +550,26 @@ and [three questions about a previously unseen committed `(term, prefix)`](../co
 Invalid captures produce no rows. Do not count distinct strings containing `?`
 as full transition coverage.
 
-**184 of the 516 step questions now have a generated exact reader.**
+**186 of the 516 step questions have a generated exact reader.**
 [`Readers`](../consensus-coverage/ConsensusCoverage/Readers.lean) compiles a
 question's formula into an executable test together with its proof. On every
 initialized recorded step the test returns the question's answer
 (`read?_at`), and any answer it returns is correct (`read?_correct`). Of the
-184, [146 are not among the 40 above](../consensus-coverage/ConsensusCoverage/ReadersCensus.lean),
-so 186 step questions are readable in all and 330 are not yet. The generator
+186, [148 are not among the 40 above](../consensus-coverage/ConsensusCoverage/ReadersCensus.lean),
+so 188 step questions are readable in all and 328 are not yet. The generator
 works from the formulas, not from question names, so it reruns when the
-questions change. The readers are not yet used by `answers` or the searches:
-126 of them read the whole history rather than the search's finite ghost,
-and 40 take more than 10 ms on some action of the replication capture.
+questions change.
+
+For a question with no exact reader, a one-sided test can still recognize
+it. A "yes" test may search any finite list of candidates for the witnesses
+of an existential: if it finds some, the case holds, and nothing needs to
+be proved about the list. A "no" test still needs a finite guard. `read?`
+returns an answer when either test fires and "unknown" otherwise, and
+`read?_correct` covers both. These tests are generated in shards
+([`ReadersPolarShards`](../consensus-coverage/ConsensusCoverage/ReadersPolarShards.lean))
+for the questions whose generation has been verified; most of the 328 do
+not have one yet. The exact readers are used by the bounded census above
+but not yet by `answers`.
 
 The rooted- and sorted-log proofs agree on the acting node: both enter their
 actor case exactly when its record changes **or** a new committed key appears.

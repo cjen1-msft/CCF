@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) Microsoft Corporation. All rights reserved.
+# Licensed under the Apache 2.0 License.
 """Copy split markings between twin theorems of Direct.lean and SafetyInvariant.lean.
 
 Usage (from the worktree root):
