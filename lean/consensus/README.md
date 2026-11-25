@@ -626,10 +626,33 @@ field in `Ctx.inv_step` (union = all 516 step questions).
 [`ClauseExactTables`](../consensus-coverage/ConsensusCoverage/ClauseExactTables.lean)
 proves the exact 6-row table of realized `(pre, post)` endpoint transitions
 (closing `owners` and `observed`), and [`ClauseDistinct`](../consensus-coverage/ConsensusCoverage/ClauseDistinct.lean)
-proves the full exact 9-row table for `distinct`. For `match_ack` outside the
-shared trunk, [`ClauseMatchAckBounds`](../consensus-coverage/ConsensusCoverage/ClauseMatchAckBounds.lean)
-witnesses 20 complete rows against a 22-row upper bound. On the 2,184-step
-certified corpus at 435 readable coordinates, [`ClauseGlobalCorpus`](../consensus-coverage/ConsensusCoverage/ClauseGlobalCorpus.lean)
+proves the full exact 9-row table for `distinct`. Outside the 164-question
+shared local-transition summary trunk (`ClauseMatchAck.trunk`), three more
+clauses have exact non-trunk tables:
+[`ballots`](../consensus-coverage/ConsensusCoverage/ClauseSmallABallots.lean)
+(6 questions: 2 patterns, 9 endpoint rows),
+[`match_ack`](../consensus-coverage/ConsensusCoverage/ClauseSmallAMatchAckExact.lean)
+(7 questions: 5 patterns, 20 endpoint rows), and
+[`term_mono`](../consensus-coverage/ConsensusCoverage/ClauseSmallATermMonoExact.lean)
+(11 questions: 3 patterns, 11 endpoint rows). Eleven more clauses have
+certified non-trunk lower and upper brackets:
+[`active`](../consensus-coverage/ConsensusCoverage/ClauseSmallAActiveDelayed.lean)
+(9-39 patterns, 28-160 rows),
+[`led_cur`](../consensus-coverage/ConsensusCoverage/ClauseSmallBLedCur.lean)
+(13-33 patterns, 37-138 rows),
+[`message_terms`](../consensus-coverage/ConsensusCoverage/ClauseSmallBMessageTerms.lean)
+(21-160 patterns, 57-840 rows),
+[`leader_led`](../consensus-coverage/ConsensusCoverage/ClauseSmallBLeaderLed.lean)
+(13-232 patterns, 20-1,200 rows),
+[`grantFacts`](../consensus-coverage/ConsensusCoverage/ClauseSmallBGrantFacts.lean)
+(16-1,344 patterns, 22-6,048 rows),
+[`frontier`](../consensus-coverage/ConsensusCoverage/ClauseFrontierExactTightBounds.lean)
+(40-3,024 patterns, 91-17,622 rows), and the
+[log-invariant cluster](../consensus-coverage/ConsensusCoverage/ClauseLogClusterWitnesses.lean)
+(`sorted`/`terms`/`anchor` at least 20 patterns and 36 rows, `rooted` at least
+21 and 37, `copyLogs` at least 23 and 37, with exact 9-pattern 5-bit actor
+projections for `sorted` and `rooted`). On the 2,184-step certified corpus at
+435 readable coordinates, [`ClauseGlobalCorpus`](../consensus-coverage/ConsensusCoverage/ClauseGlobalCorpus.lean)
 certifies at least 412 distinct full labels globally; [`ClauseCommonBound`](../consensus-coverage/ConsensusCoverage/ClauseCommonBound.lean)
 certifies at least 106 labels for each of 26 clauses and
 [`ClauseFrontierBound`](../consensus-coverage/ConsensusCoverage/ClauseFrontierBound.lean)
