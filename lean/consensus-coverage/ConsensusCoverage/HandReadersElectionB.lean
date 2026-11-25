@@ -6,6 +6,7 @@ module
 public import ConsensusCoverage.HandReadersABase
 import all ConsensusCoverage.HandReadersElectionBKeys
 import all ConsensusCoverage.HandReadersElectionBFind
+import all ConsensusCoverage.HandReadersElectionBChoice
 
 namespace ConsensusCoverage.HandReadersElectionB
 
@@ -16,6 +17,8 @@ private def lookup : (b : Classes.StepBranch) → Option (Exact b)
   | .replaceNode_keys_here_neg => some Keys.negative
   | .find_of_mem_here_pos => some Find.positive
   | .find_of_mem_here_neg => some Find.negative
+  | .activeConfigurations_overlap_chosen_bound_inl => some (Choice.exactReader true)
+  | .activeConfigurations_overlap_chosen_bound_inr => some (Choice.exactReader false)
   | _ => none
 
 public def covered : List Classes.StepBranch :=
@@ -35,6 +38,6 @@ public theorem read_total (s : Step) {b} (mem : b ∈ covered) :
   simpa only [read,Option.isSome_map] using (List.mem_filter.mp mem).2
 
 set_option maxRecDepth 8192 in
-public theorem count : covered.Nodup ∧ covered.length = 4 := by decide +kernel
+public theorem count : covered.Nodup ∧ covered.length = 6 := by decide +kernel
 
 end ConsensusCoverage.HandReadersElectionB
