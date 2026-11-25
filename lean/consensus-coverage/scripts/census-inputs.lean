@@ -5,6 +5,7 @@ module
 
 import all ConsensusCoverage.ReadersGenerated
 import all ConsensusCoverage.ReadersAtoms
+import all ConsensusCoverage.ReadersRequestCuts
 import all ConsensusCoverage.GuardedDomain
 meta import Lean
 
@@ -18,6 +19,7 @@ open ConsensusCoverage
 set_option maxHeartbeats 0
 
 private meta def boundary (h : Expr) : String := Id.run do
+  if h.isAppOfArity ``ReadersShapes.requestHistory 1 then return "post"
   unless h.isAppOfArity ``List.cons 3 do return "unrecognized"
   if (h.getArg! 1).isAppOf ``GuardedDomain.View.before then return "pre"
   if (h.getArg! 1).isAppOf ``GuardedDomain.View.after then return "post"
@@ -26,6 +28,10 @@ private meta def boundary (h : Expr) : String := Id.run do
 private meta def historyAtom (e : Expr) : Option String := do
   let n ← e.getAppFn.constName?
   let args := e.getAppArgs
+  if n == ``List.flatMap && args.size == 4 && args[3]!.isAppOfArity ``ReadersAtoms.histNodes 1 then
+    let .lam _ _ body _ := args[2]! | none
+    guard (body.isAppOfArity ``Option.toList 2 && body.appArg!.isAppOfArity ``Consensus.Model.Node.NodeState.votedFor 1)
+    return s!"{boundary args[3]!.appArg!}.domain.votedFor"
   if n == ``List.map && args.size == 4 && args[3]!.isAppOfArity ``ReadersAtoms.histNodes 1 then
     let fn := args[2]!
     let field := if fn.isAppOfArity ``Prod.fst 2 then "id" else Id.run do
@@ -38,7 +44,8 @@ private meta def historyAtom (e : Expr) : Option String := do
       (``ReadersAtoms.electedExact, 5, 4, "elections"), (``GuardedDomain.canonAt, 4, 3, "canonical"),
       (``ReadersAtoms.grantedIn, 5, 0, "grants"), (``GuardedDomain.observations, 2, 0, "observations"),
       (``GuardedDomain.ledTerms, 3, 1, "leaderTerms"), (``ReadersAtoms.voteStamps, 1, 0, "votes"),
-      (``ReadersAtoms.historicalPrefixes, 1, 0, "prefixes")] do
+      (``ReadersAtoms.historicalPrefixes, 1, 0, "prefixes"),
+      (``ReadersShapes.replayRequests, 1, 0, "requestCuts")] do
     if n == name && args.size == arity then return s!"{boundary args[i]!}.{atom}"
   if n == ``ReadersAtoms.XView.committedBefore && args.size == 1 then return "pre.commits"
   if n == ``ReadersAtoms.XView.committedAfter && args.size == 1 then return "post.commits"

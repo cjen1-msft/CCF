@@ -4,12 +4,13 @@ module
 -- Licensed under the Apache 2.0 License.
 
 public import ConsensusCoverage.ExplorerGhost
-public import ConsensusCoverage.Readers
+import ConsensusCoverage.CensusRequests
+public import ConsensusCoverage.ReadersGenerated
 import all ConsensusCoverage.ExplorerGhost
-import all ConsensusCoverage.Readers
 import all ConsensusCoverage.ReadersGenerated
 import all ConsensusCoverage.ReadersCompiler
 import all ConsensusCoverage.ReadersAtoms
+import all ConsensusCoverage.ReadersRequestCuts
 import all ConsensusCoverage.GuardedDomain
 meta import Lean
 
@@ -90,6 +91,8 @@ private def terms (s : Slice) := ExplorerGhost.Ghost.terms s.ghost
 private def votes (s : Slice) := s.ghost.votes
 private def prefixes (s : Slice) :=
   ([] :: s.ghost.seen.flatMap (fun (_, _, l) => ReadersAtoms.prefixes l)).eraseDups
+private def requests (s : Slice) := CensusRequests.requests s.ghost.seen
+private def candidates (s : Slice) := CensusRequests.candidates s.ghost.votes
 
 meta section
 
@@ -101,9 +104,10 @@ private def clone (n : Name) := scope ++ Name.mkSimple n.getString!
 
 private def relevant (n : Name) :=
   (`ConsensusCoverage.ReadersCompiler.R).isPrefixOf n ||
-    n == ``ReadersCompiler.readView || n == ``Readers.read?
+    n == ``ReadersCompiler.readView
 
 private def slice? (g hist : Expr) : Option Expr := do
+  if hist.isAppOfArity ``ReadersShapes.requestHistory 1 then return mkApp (mkConst ``Input.next) g
   guard (hist.isAppOfArity ``List.cons 3)
   let pre := hist.getArg! 1
   let tail := hist.getArg! 2
@@ -131,6 +135,12 @@ private def replaceAtom (g e : Expr) : Option Expr := do
   let atHist (pos : Nat) := slice? g a[pos]!
   if n == ``List.map && a.size == 4 && a[3]!.isAppOfArity ``histNodes 1 then
     return mkApp (mkConst (← domain? a[2]!)) (← slice? g a[3]!.appArg!)
+  if n == ``List.flatMap && a.size == 4 && a[3]!.isAppOfArity ``histNodes 1 then
+    let .lam _ _ body _ := a[2]! | none
+    guard (body.isAppOfArity ``Option.toList 2 && body.appArg!.isAppOfArity ``NodeState.votedFor 1)
+    let pair := body.appArg!.appArg!
+    guard (pair.isAppOfArity ``Prod.snd 3 && pair.appArg! == .bvar 0)
+    return mkApp (mkConst ``candidates) (← slice? g a[3]!.appArg!)
   if n == ``electionExact && a.size == 7 then
     guard (a[0]!.isAppOf ``GuardedDomain.View.after && a[1]!.isAppOf ``GuardedDomain.View.before &&
       a[2]!.isAppOf ``GuardedDomain.View.past)
@@ -147,7 +157,8 @@ private def replaceAtom (g e : Expr) : Option Expr := do
     return mkApp3 (mkConst ``terms) (← atHist 1) a[0]! a[2]!
   guard (a.size == 1)
   let target ← if n == ``voteStamps then some ``votes
-    else if n == ``historicalPrefixes then some ``prefixes else none
+    else if n == ``historicalPrefixes then some ``prefixes
+    else if n == ``ReadersShapes.replayRequests then some ``requests else none
   return mkApp (mkConst target) (← atHist 0)
 
 private partial def compile (n : Name) : MetaM Unit := do
@@ -178,15 +189,17 @@ private partial def compile (n : Name) : MetaM Unit := do
 
 end
 
-local elab "compile_census" : command => Lean.Elab.Command.liftTermElabM (compile ``Readers.read?)
+local elab "compile_census" : command => Lean.Elab.Command.liftTermElabM (compile ``ReadersCompiler.readView)
 compile_census
 
+/-- Finite frames do not retain the ordered states and envelopes used by the
+one-sided witness pools. Only specialize the exact dispatcher here. -/
 public def answers (cfg : FullProfile.Configuration) (g h : Ghost) (before after : Model.State)
     (act : Model.Action) : Option (Classes.StepBranch → Option Bool) := do
   let v ← GuardedDomain.ofAction cfg before after [] act
   let event := eventOf act
   let x : XView := ⟨v, event, outputsOf v.actor v.pre event, g.committed, h.committed⟩
   let s : Input := ⟨slice g, slice h, ExplorerGhost.elections h before after⟩
-  return Exec.read? s ⟨cfg, some x⟩
+  return @Exec.readView s ⟨cfg⟩ x
 
 end ConsensusCoverage.CensusGhost

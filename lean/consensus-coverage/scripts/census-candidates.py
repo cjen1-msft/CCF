@@ -10,6 +10,16 @@ from collections import Counter
 from pathlib import Path
 
 
+def settings(prefix):
+    text = Path(str(prefix) + ".log").read_text()
+    config = re.search(r"voters=(\[[^]]*\]) nodes=(\[[^]]*\]) log=(\d+) term=(\d+) "
+                       r"copies=(\d+) network=(none|some \d+) palette=(\w+)", text)
+    if not config:
+        raise ValueError(f"{prefix}: no bounded configuration")
+    return dict(zip(("voters", "nodes", "log", "term", "copies", "network", "palette"),
+                    config.groups(), strict=True))
+
+
 def completed(prefix):
     text = Path(str(prefix) + ".log").read_text()
     fix = re.search(r"^frames: (\d+); expanded: (\d+); frontier: 0; fixpoint: true$", text, re.M)
@@ -36,20 +46,41 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--columns", nargs="+", required=True, type=Path,
                    help="newline-separated total columns (generated plus baseline)")
+    p.add_argument("--prior-columns", nargs="+", type=Path,
+                   help="total columns of a prior reader snapshot, for explicitly marked models")
+    p.add_argument("--prior-model", action="append", default=[],
+                   help="completed model read with --prior-columns instead of --columns")
     p.add_argument("--dag", type=Path, required=True, help="reader generator's direct reach DAG TSV")
+    p.add_argument("--formulas", type=Path, help="normalized bodies from census-formulas.lean")
+    p.add_argument("--reach-out", type=Path, help="write the direct reach predicates used by the candidates")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--differential", type=Path, required=True)
+    p.add_argument("--contrasts", type=Path,
+                   help="total questions changing from absent to present between one-setting controls")
     p.add_argument("--positive-witnesses", action="append", type=Path, default=[],
                    help="positive-only evidence (a .cases.tsv), never included in fixpoint denominators")
     p.add_argument("models", nargs="+", type=Path, help="prefix of .cases.tsv and .log; baseline first")
     a = p.parse_args()
     if len({m.name for m in a.models}) != len(a.models):
         raise ValueError("model names must be unique")
-    exact = {s.rsplit(".", 1)[-1] for f in a.columns for s in f.read_text().splitlines() if s}
+    def columns(files):
+        return {s.rsplit(".", 1)[-1] for f in files for s in f.read_text().splitlines() if s}
+    exact = columns(a.columns)
+    prior_exact = columns(a.prior_columns or [])
     reaches = dict(s.split("\t", 1) for s in a.dag.read_text().splitlines())
+    bodies = {}
+    if a.formulas:
+        with a.formulas.open() as f:
+            bodies = {r["name"]: r["normalized_body"] for r in csv.DictReader(f, delimiter="\t")}
+    if a.reach_out and not bodies:
+        p.error("--reach-out requires --formulas")
     models = {p.name: completed(p) for p in a.models}
+    if (set(a.prior_model) - models.keys() or bool(a.prior_model) != bool(prior_exact)
+            or not prior_exact <= exact):
+        raise ValueError("prior models must be named inputs with an explicit subset of total columns")
     for name, (steps, rows) in models.items():
-        if not exact <= rows.keys() or any(rows[q][2] for q in exact):
+        required = prior_exact if name in a.prior_model else exact
+        if not exact <= rows.keys() or any(rows[q][2] for q in required):
             raise ValueError(f"{name}: total-reader coverage not satisfied (wrong snapshot or partial census)")
         stats = Counter("yes" if y else "unknown" if u else "no" for y, _, u in rows.values())
         print(name, steps, f"true={stats['yes']} false={stats['no']} unknown={stats['unknown']}")
@@ -69,19 +100,19 @@ def main():
     differential = []
     for q in sorted(exact):
         positive = [n for n, (_, rows) in models.items() if rows[q][0]]
-        if not positive:
+        if not positive and all(rows[q][2] == 0 for _, rows in models.values()):
             arm = "step_" + q
             direct = sorted(filter(None, reaches[arm].split(",")), key=lambda r: int(r.split("_")[-1]))
             # Group by identical direct shared predicates, not an inferred reason for impossibility.
             candidates.append((",".join(direct), q, ",".join(models),
                                sum(rows[q][1] for _, rows in models.values()),
                                f"ConsensusCoverage.SolvedWitnesses.{arm} s.frame s.after s.context",
-                               ",".join(witnessed[q])))
-        if baseline not in positive and (positive or witnessed[q]):
+                               ",".join(witnessed[q]), *((bodies[arm],) if a.formulas else ())))
+        if baseline not in positive and not models[baseline][1][q][2] and (positive or witnessed[q]):
             differential.append((q, baseline, ",".join(positive), ",".join(witnessed[q])))
     for path, header, rows in [
         (a.out, ("direct_reaches", "question", "completed_models", "false_model_edge_incidences", "formula",
-                 "witnessed_outside_models"),
+                 "witnessed_outside_models", *(("normalized_body",) if a.formulas else ())),
          sorted(candidates)),
         (a.differential, ("question", "absent_in_baseline", "true_in_models", "positive_witness_tables"), differential)
     ]:
@@ -89,8 +120,30 @@ def main():
             writer = csv.writer(f, delimiter="\t", lineterminator="\n")
             writer.writerow(header)
             writer.writerows(rows)
+    if a.reach_out:
+        direct = {n for row in candidates for n in row[0].split(",") if n}
+        with a.reach_out.open("w") as f:
+            writer = csv.writer(f, delimiter="\t", lineterminator="\n")
+            writer.writerow(("direct_reach", "normalized_body"))
+            writer.writerows((n, bodies[n]) for n in sorted(direct, key=lambda n: int(n.split("_")[-1])))
+    if a.contrasts:
+        configs = {m.name: settings(m) for m in a.models}
+        with a.contrasts.open("w") as f:
+            writer = csv.writer(f, delimiter="\t", lineterminator="\n")
+            writer.writerow(("changed_setting", "from", "to", "absent_in", "present_in", "question",
+                             "false_edges_before", "true_edges_after"))
+            for left, lc in configs.items():
+                for right, rc in configs.items():
+                    diff = [k for k in lc if lc[k] != rc[k]]
+                    if len(diff) != 1:
+                        continue
+                    k = diff[0]
+                    before, after = models[left][1], models[right][1]
+                    for q in sorted(exact):
+                        if not before[q][0] and not before[q][2] and after[q][0]:
+                            writer.writerow((k, lc[k], rc[k], left, right, q, before[q][1], after[q][0]))
     print(f"{len(candidates)} bounded negatives in {len({r[0] for r in candidates})} direct-reach groups;"
-          f" {sum(bool(r[-1]) for r in candidates)} witnessed outside completed models;"
+          f" {sum(bool(r[5]) for r in candidates)} witnessed outside completed models;"
           f" {len(differential)} positive outside baseline only; {len(exact)} total coordinates.")
 
 
