@@ -38,12 +38,13 @@ private def kinds : List Slot :=
   [.quorum, .nominate, .install, .receive, .request, .ack, .vote, .ballot, .preVote, .preBallot, .propose].map Slot.summary ++
   [.appendOld, .voteNew, .voteOld, .ballotNew, .ballotOld, .preNew, .preOld, .preBallotNew,
     .preBallotOld, .ackPrimary, .ackOther, .ackNew, .ackOld, .bump, .stable,
-    .appendTag, .voteTag, .ballotTag, .preTag, .preBallotTag, .grant, .deny, .inserted, .previous].map Slot.observed
+    .appendTag, .voteTag, .ballotTag, .preTag, .preBallotTag, .grant, .deny, .inserted, .previous,
+    .ackSame, .ackOtherPeer, .ackOldMax, .ackReportedMax].map Slot.observed
 
 public def covered : List Classes.StepBranch := kinds.map column
 
 public theorem covered_nodup : covered.Nodup := by decide
-public theorem count : covered.length = 35 := by decide
+public theorem count : covered.length = 39 := by decide
 
 public def read (cfg : FullProfile.Configuration) (before : State) (act : Action)
     (after : State) (past : List State) (b : Classes.StepBranch) : Option Bool :=

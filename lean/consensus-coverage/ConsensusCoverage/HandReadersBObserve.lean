@@ -26,6 +26,7 @@ public inductive Kind where
   | ackPrimary | ackOther | ackNew | ackOld | bump | stable
   | appendTag | voteTag | ballotTag | preTag | preBallotTag
   | grant | deny | inserted | previous
+  | ackSame | ackOtherPeer | ackOldMax | ackReportedMax
   deriving DecidableEq
 
 public def column : Kind → Classes.StepBranch
@@ -53,6 +54,10 @@ public def column : Kind → Classes.StepBranch
   | .deny => .voteRequest_summary_granted_neg
   | .inserted => .voteResponse_summary_mem_insert_inl
   | .previous => .voteResponse_summary_mem_insert_inr
+  | .ackSame => .appendEntriesResponse_summary_same_pos
+  | .ackOtherPeer => .appendEntriesResponse_summary_same_neg
+  | .ackOldMax => .appendEntriesResponse_summary_max_eq_or_inl
+  | .ackReportedMax => .appendEntriesResponse_summary_max_eq_or_inr
 
 private def accepts (k : Kind) (self : NodeID) (st : NodeState) : Event → Bool
   | .internal _ => false
@@ -79,18 +84,21 @@ private def accepts (k : Kind) (self : NodeID) (st : NodeState) : Event → Bool
     | .requestPreVoteResponse _ => match k with
       | .preBallotOld | .stable => peer && !newTerm | .preBallotNew | .bump => peer && newTerm
       | .preBallotTag => peer | _ => false
-    | .appendEntriesResponse _ =>
+    | .appendEntriesResponse q =>
       let primary := st.role == .primary
+      let ok := peer && primary && q.success && q.term == st.currentTerm
       match k with
       | .ackPrimary => peer && primary | .ackOther => peer && !primary
       | .ackNew => peer && primary && newTerm | .ackOld => peer && primary && !newTerm
+      | .ackSame | .ackOtherPeer => ok
+      | .ackOldMax => ok && decide (q.lastLogIndex ≤ st.matchIndex src)
+      | .ackReportedMax => ok && decide (st.matchIndex src ≤ q.lastLogIndex)
       | _ => false
     | .proposeRequestVoteRequest _ => false
 
 public def answer (cfg : FullProfile.Configuration) (before : State) (act : Action)
     (after : State) (past : List State) (k : Kind) : Bool :=
-  (ofAction cfg before after past act).any (fun v => accepts k v.actor v.pre (ReadersAtoms.eventOf act)) &&
-    active cfg before act after past
+  activeWith cfg before act after past (fun v => accepts k v.actor v.pre (ReadersAtoms.eventOf act))
 
 open Lean Meta Elab Command
 
@@ -140,11 +148,64 @@ private theorem unchanged (st : NodeState) (m : Node.Message) (le : m.term ≤ s
 
 private meta def correctName (n : Name) := (`ConsensusCoverage.HandReadersBObserve.Local).str n.getString!
 
+private def matchBound (k : Kind) (before : NodeState) (src : NodeID) (q : AppendEntriesResponse) : Prop :=
+  match k with
+  | .ackOldMax => q.lastLogIndex ≤ before.matchIndex src
+  | .ackReportedMax => before.matchIndex src ≤ q.lastLogIndex
+  | _ => True
+
+private def allowedAck (k : Kind) (n : NodeID) (before : NodeState) (e : Event) : Prop :=
+  ∃ src q, e = .receive src (.appendEntriesResponse q) ∧ src ∈ eligiblePeers before n ∧
+    before.role = .primary ∧ q.success = true ∧ q.term = before.currentTerm ∧ matchBound k before src q
+
+private theorem ackState (self src : NodeID) (st : NodeState) (q : AppendEntriesResponse)
+    (leader : st.role = .primary) (term : q.term = st.currentTerm) :
+    let mid := {st with matchIndex := CCF.Function.update st.matchIndex src (max (st.matchIndex src) q.lastLogIndex)}
+    ((st.role = .primary → q.term ≤ st.currentTerm) ∧ observeTerm st (.appendEntriesResponse q) = st) ∧
+    (¬(st.role != .primary) = true) ∧ Advance self mid mid ∧
+    (∀ e ∈ ([] : List Model.Envelope), e.source = self ∧ e.payload = .proposeRequestVoteRequest mid.currentTerm) ∧
+    (∀ a : NodeState, a.role = st.role → a.currentTerm = st.currentTerm → a.log = st.log →
+      a.commitIndex = st.commitIndex → a.votedFor = st.votedFor → a.votesGranted = st.votesGranted →
+      a.matchIndex = st.matchIndex → Summary self st (.receive src (.appendEntriesResponse q)) a []) ∧
+    mid.role ≠ .candidate := by
+  have kept := (observe_response st q).resolve_left (fun h => (Nat.not_lt_of_ge (Nat.le_of_eq term)) h.2.1)
+  exact ⟨kept, by simp [leader], .inl rfl, by simp, fun _ a b c d e f g =>
+    quiet_summary a b c d e f g no_bumping_sends (by simp), by simp [leader]⟩
+
+private meta def isAck (k : Name) := ["ackSame","ackOtherPeer","ackOldMax","ackReportedMax"].contains k.getString!
+
+set_option maxHeartbeats 1200000 in
 run_cmd
   for (k,n) in ←liftTermElabM names do
+    let ack := isAck k
     let k := mkIdent k
     let tail := mkIdent (pureName n)
     let law := mkIdent (correctName n)
+    if ack then
+      elabCommand (←`(set_option linter.unusedSimpArgs false in
+        theorem $law (n : NodeID) (st : NodeState) (e : Event) :
+            $tail n st e ↔ accepts $k n st e = true := by
+          refine Iff.trans (b := allowedAck $k n st e) ?_ ?_
+          · delta $tail
+            constructor
+            · rintro ⟨a,b,src,q,caller,passed,_,_,_,leader,success,term,_,_,_,_,_,_,_,_,rest⟩
+              obtain ⟨v,⟨ha,hb,hv⟩,m,ev,_,hm⟩ := caller
+              subst a; subst b; subst v; subst m
+              refine ⟨src,q,ev,by simpa using passed,by simpa using leader,success,term,?_⟩
+              first | exact True.intro | (have eq := rest.2.2.2.2.2.1; simp only [matchBound]; omega)
+            · rintro ⟨src,q,he,peer,leader,success,term,bound⟩
+              subst e
+              obtain ⟨kept,notOther,adv,empty,quiet,nc⟩ := ackState n src st q leader term
+              have passed : ¬(True ∧ ¬src ∈ eligiblePeers st n) := fun h => h.2 peer
+              refine ⟨n,st,src,q,⟨_,⟨rfl,rfl,rfl⟩,_,rfl,rfl,rfl⟩,passed,kept,kept.1,kept.2,
+                notOther,success,term,_,[],⟨adv,empty⟩,adv,empty,leader,leader,rfl,?_⟩
+              first | exact ⟨quiet,nc⟩ | exact ⟨src+1,Nat.succ_ne_self _,quiet,nc⟩
+                    | exact ⟨passed,quiet,⟨adv,empty⟩,adv,empty,Nat.max_eq_left bound,quiet,nc⟩
+                    | exact ⟨passed,quiet,⟨adv,empty⟩,adv,empty,Nat.max_eq_right bound,quiet,nc⟩
+          · cases e with
+            | internal => simp [allowedAck,accepts]
+            | receive src m => cases m <;> simp [allowedAck,accepts,matchBound,and_assoc]))
+      continue
     elabCommand (←`(set_option linter.unusedSimpArgs false in
       theorem $law (n : NodeID) (st : NodeState) (e : Event) :
           $tail n st e ↔ accepts $k n st e = true := by
@@ -177,7 +238,7 @@ private theorem recorded (s : Step) (k : Kind)
     change ReadersAtoms.eventOf (ActionContext.encode s.context.tr.actor s.context.tr.event) = s.context.tr.event
     cases s.context.tr.event <;> rfl
   apply Bool.eq_iff_iff.mpr
-  rw [label_true,holds,sig_iff,h,answer,made,Option.any_some,Bool.and_eq_true,live,pre,actor,event,and_comm]
+  rw [label_true,holds,sig_iff,h,answer,activeWith_eq,made,Option.any_some,Bool.and_eq_true,live,pre,actor,event,and_comm]
 
 run_cmd
   let mut proofs := #[]

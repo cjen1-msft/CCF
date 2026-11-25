@@ -4,6 +4,7 @@ module
 -- Licensed under the Apache 2.0 License.
 
 import all ConsensusCoverage.HandReadersABase
+import all ConsensusCoverage.CensusQueueElection
 import all ConsensusCoverage.DeepLeaderCases
 import all ConsensusCoverage.ReadersShapes
 import all ConsensusCoverage.ReachPath
@@ -74,5 +75,43 @@ def exactReader (pos : Bool) : Exact (column pos) where
     letI : Config.InitialConfiguration := ⟨s.cfg⟩
     rw [reader,actorRead_at]
     exact Bool.eq_iff_iff.mpr ((label_true s _).trans ((sig_iff _ _).trans (iff_test s.context pos)))
+
+def backingColumn (pos : Bool) : Classes.StepBranch :=
+  if pos then .commit_backed_eq_zero_or_pos_inr else .commit_backed_eq_zero_or_pos_inl
+
+def backingReader (pos : Bool) : Exact (backingColumn pos) where
+  eval := reader pos
+  eq_label s := by
+    letI : Config.InitialConfiguration := ⟨s.cfg⟩
+    let c := s.context
+    obtain ⟨x,_,ok⟩ := ReadersAtoms.ofXAction_matches s
+    apply Bool.eq_iff_iff.mpr
+    rw [label_true,holds,sig_iff,reader,actorRead_at,test,decide_eq_true_eq]
+    change sig c (backingColumn pos) ↔ c.post.role = .primary ∧
+      ¬(c.pre.role = .primary ∧ c.post.currentTerm = c.pre.currentTerm) ∧ decide (0 < c.pre.commitIndex) = pos
+    constructor
+    · intro h
+      cases pos
+      all_goals
+        rcases h with h | h | h | h | h | h | h | h
+        all_goals
+          obtain ⟨_,_,_,win,tail⟩ := h
+          obtain ⟨primary,fresh⟩ := (ReadersShapes.wins_recorded c).mp win
+          refine ⟨primary,fresh,?_⟩
+          first | rw [decide_eq_false_iff_not,Nat.not_lt] | rw [decide_eq_true_eq]
+          repeat' first | exact tail | exact tail.1 | (have zero : c.pre.commitIndex = 0 := tail.1; omega)
+                        | obtain ⟨_,tail⟩ := tail
+    · rintro ⟨primary,fresh,cut⟩
+      have won := (ReadersShapes.wins_recorded c).mpr ⟨primary,fresh⟩
+      have changed : x.base.changed = true := by
+        rw [←Bool.not_eq_false,← GuardedDomain.View.old_post ok.1]
+        intro old
+        have eq := c.now_pre old
+        exact fresh ⟨eq ▸ primary,congrArg NodeState.currentTerm eq⟩
+      cases pos
+      · apply CensusQueueElection.zero c ok changed won
+        rw [decide_eq_false_iff_not] at cut
+        omega
+      · exact CensusQueueElection.positive c ok changed won (of_decide_eq_true cut)
 
 end ConsensusCoverage.HandReadersA.Win

@@ -6,12 +6,22 @@ module
 public import ConsensusCoverage.HandReadersABase
 import all ConsensusCoverage.HandReadersAAppend
 import all ConsensusCoverage.HandReadersABatch
+import all ConsensusCoverage.HandReadersACampaign
+import all ConsensusCoverage.HandReadersAChain
+import all ConsensusCoverage.HandReadersACommitTerm
+import all ConsensusCoverage.HandReadersAElection
+import all ConsensusCoverage.HandReadersAFacts
 import all ConsensusCoverage.HandReadersAHandler
+import all ConsensusCoverage.HandReadersAHistorySplit
 import all ConsensusCoverage.HandReadersALeader
 import all ConsensusCoverage.HandReadersAObserve
+import all ConsensusCoverage.HandReadersAOtherPeer
+import all ConsensusCoverage.HandReadersAPreBacking
+import all ConsensusCoverage.HandReadersAPrimary
 import all ConsensusCoverage.HandReadersAReplyRole
 import all ConsensusCoverage.HandReadersASeen
 import all ConsensusCoverage.HandReadersASummary
+import all ConsensusCoverage.HandReadersAVoter
 import all ConsensusCoverage.HandReadersAWin
 import all ConsensusCoverage.HandReadersBSummary
 
@@ -23,13 +33,42 @@ private def summary (k : HandReadersBSummary.Kind) : Exact (HandReadersBSummary.
   ⟨(HandReadersBSummary.answer · · · · · k),(HandReadersBSummary.exact_answer · k)⟩
 
 private def lookup : (b : Classes.StepBranch) → Option (Exact b)
+  | .commit_backed_fromSource_neg => some OtherPeer.exactReader
   | .leader_logs_commit_pos => some (Leader.exactReader true)
   | .leader_logs_commit_neg => some (Leader.exactReader false)
   | .wins_elect_committed_pos => some (Win.exactReader true)
   | .wins_elect_committed_neg => some (Win.exactReader false)
+  | .commit_backed_eq_zero_or_pos_inl => some (Win.backingReader false)
+  | .commit_backed_eq_zero_or_pos_inr => some (Win.backingReader true)
+  | .primaryState_log_prefix_commit_pos => some (Primary.exactReader true)
+  | .primaryState_log_prefix_commit_neg => some (Primary.exactReader false)
+  | .facts_advance_inl_2 => some Primary.exactIdentity
+  | .advance_chain_fresh => some (Chain.exactReader true)
+  | .advance_chain_backed => some (Chain.exactReader false)
+  | .commitChains_step_led_inl => some (CommitTerm.exactReader true)
+  | .commitChains_step_led_inr => some (CommitTerm.exactReader false)
+  | .pre_split_pre_backed_inl => some (PreBacking.exactReader .zero)
+  | .pre_split_pre_backed_inr => some (PreBacking.exactReader .covered)
+  | .pre_split_backing_inl => some (PreBacking.exactReader .prior)
+  | .pre_split_backing_inr => some Facts.exactReader
+  | .backing_split_cert_fresh => some (HistorySplit.exactReader .fresh)
+  | .backing_split_cert_backed => some (HistorySplit.exactReader .backed)
+  | .backing_split_low_pos => some (HistorySplit.exactReader .low)
+  | .backing_split_low_neg => some (HistorySplit.exactReader .high)
+  | .backing_split_baseLe_pos => some (HistorySplit.exactReader .short)
+  | .backing_split_baseLe_neg => some (HistorySplit.exactReader .long)
+  | .campaign_three_campaign_inl => some (CampaignRows.exactReader false true)
+  | .campaign_three_campaign_inr => some (CampaignRows.exactReader false false)
+  | .campaign_votes_campaign_inl => some (CampaignRows.exactReader true true)
+  | .campaign_votes_campaign_inr => some (CampaignRows.exactReader true false)
+  | .campaign_votes_more_inl => some (Voter.exactReader true)
+  | .campaign_votes_more_inr => some (Voter.exactReader false)
   | .seen_after_seen_inl => some (SeenRows.exactReader .old)
   | .seen_after_seen_inr => some (SeenRows.exactReader .post)
   | .seen_after_now_after_inl => some (SeenRows.exactReader .actor)
+  | .led_after_elected_after_inr => some Election.exactReader
+  | .elect_backed_termCase_inl => some (Election.termExact true)
+  | .elect_backed_termCase_inr => some (Election.termExact false)
   | .initAsBackup_summary_eq_zero_or_pos_inl => some (SummaryRows.exactReader .empty)
   | .initAsBackup_summary_eq_zero_or_pos_inr => some (SummaryRows.exactReader .signed)
   | .appendEntriesRequest_summary_observe_bumping_inl => some (SummaryRows.exactReader .bump)
@@ -45,6 +84,7 @@ private def lookup : (b : Classes.StepBranch) → Option (Exact b)
   | .foldlM__items_cons => some (Append.exactReader .cons)
   | .appendBatch_summary_mem_append_inl => some (Batch.exactReader false)
   | .appendBatch_summary_mem_append_inr => some (Batch.exactReader true)
+  | .appendBatch_summary_role_inl => some Batch.retained
   | .handleAppendEntriesRequest_stepDown_pos => some (Handler.exactReader .down)
   | .handleAppendEntriesRequest_stepDown_neg => some (Handler.exactReader .stay)
   | .handleAppendEntriesRequest_conflict_none => some (Handler.exactReader .clear)
@@ -87,6 +127,6 @@ public theorem read_total (s : Step) {b} (h : b ∈ covered) :
   simpa only [read, Option.isSome_map] using (List.mem_filter.mp h).2
 
 set_option maxRecDepth 8192 in
-public theorem count : covered.Nodup ∧ covered.length = 45 := by decide +kernel
+public theorem count : covered.Nodup ∧ covered.length = 75 := by decide +kernel
 
 end ConsensusCoverage.HandReadersA
