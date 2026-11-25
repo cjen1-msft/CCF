@@ -4,6 +4,7 @@ module
 -- Licensed under the Apache 2.0 License.
 
 public import ConsensusCoverage.HandReadersABase
+public import ConsensusCoverage.HandReadersElectionTables
 import all ConsensusCoverage.HandReadersElectionAgreement
 import all ConsensusCoverage.HandReadersElectionCarried
 import all ConsensusCoverage.HandReadersElectionChosen
