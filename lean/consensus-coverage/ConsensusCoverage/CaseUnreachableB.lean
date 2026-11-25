@@ -5,6 +5,7 @@ module
 
 public import ConsensusCoverage.ActionProfile
 public import ConsensusCoverage.StableGrantImpossibleB
+public import ConsensusCoverage.PromotionImpossibleB
 import all ConsensusCoverage.CaseUnreachable
 import all ConsensusCoverage.SolvedWitnesses
 import all Consensus.Proofs.SafetyInvariant
@@ -100,17 +101,18 @@ public theorem ack_retired (s : Step) :
 
 public def refuted : List Classes.StepBranch :=
   [.appendEntriesResponse_summary_role_inl, .appendEntriesResponse_summary_role_inr,
-   .voteRequest_summary_granted_inl, .voteRequest_summary_granted_inr]
+   .voteRequest_summary_granted_inl, .voteRequest_summary_granted_inr, .campaign_summary_role_inr]
 
-public theorem count : refuted.Nodup ∧ refuted.length = 4 := by decide +kernel
+public theorem count : refuted.Nodup ∧ refuted.length = 5 := by decide +kernel
 
 public theorem label_false {b : Classes.StepBranch} (mem : b ∈ refuted) :
     ∀ s : Step, label s (.step b) = false := by
   simp only [refuted, List.mem_cons, List.not_mem_nil, or_false] at mem
-  rcases mem with rfl | rfl | rfl | rfl
+  rcases mem with rfl | rfl | rfl | rfl | rfl
   · exact ack_primary
   · exact ack_retired
   · exact StableGrantImpossibleB.none
   · exact StableGrantImpossibleB.previous
+  · exact PromotionImpossibleB.campaign_role
 
 end ConsensusCoverage.CaseUnreachableB
