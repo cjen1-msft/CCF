@@ -226,7 +226,8 @@ private def individual : List Classes.StepBranch :=
     .led_cur_role_inr, .led_cur_now_after_inr, .persist_now_after_inr, .seen_after_now_after_inr,
     .facts_advance_inr_2, .facts_role_inl, .facts_role_inr,
     .certificates_agree_le_total_inl, .certificates_agree_le_total_inr,
-    .vals_upToDate_lt_or_eq_of_le_inl, .termAt_le_of_mem_found_none]
+    .vals_upToDate_lt_or_eq_of_le_inl, .termAt_le_of_mem_found_none,
+    .termAt_mono_eq_zero_or_pos_inl]
 
 private theorem old_seen_other [Config.InitialConfiguration] {f : Frame} {t : State}
     (c : Ctx f t) {n o} (other : n ≠ c.actor) (h : Seen (f.advance t) n o) : Seen f n o := by
@@ -342,7 +343,7 @@ public theorem self_vote_strict_rank_false (s : Step) :
 public def refuted : List Classes.StepBranch :=
   FullProfile.stepBranches.toList.filter fun b => noSupport b || decide (b ∈ individual)
 
-public theorem count : refuted.Nodup ∧ refuted.length = 20 := by decide +kernel
+public theorem count : refuted.Nodup ∧ refuted.length = 21 := by decide +kernel
 
 public theorem label_false {b : Classes.StepBranch} (mem : b ∈ refuted) :
     ∀ s : Step, label s (.step b) = false := by
@@ -354,7 +355,7 @@ public theorem label_false {b : Classes.StepBranch} (mem : b ∈ refuted) :
   · have mem := of_decide_eq_true direct
     simp only [individual, List.mem_cons, List.not_mem_nil, or_false] at mem
     rcases mem with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
-      | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+      | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
     · exact retained_false s
     · exact act_nomination_false s
     · exact nomination_some_false s
@@ -373,5 +374,6 @@ public theorem label_false {b : Classes.StepBranch} (mem : b ∈ refuted) :
       | exact certificate_order_false s _ (by decide)
       | exact self_vote_strict_rank_false s
       | exact CampaignLookup.lookup_false s
+      | exact CampaignLookup.mono_false s
 
 end ConsensusCoverage.CaseUnreachable
