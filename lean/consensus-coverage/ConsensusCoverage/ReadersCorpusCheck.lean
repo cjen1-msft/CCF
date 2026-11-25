@@ -57,30 +57,28 @@ private structure Obs where
   firstYes : Option (Nat × Nat) := none
   hasUnknown : Bool := false
   elapsed : List Nat := []
+  eligible : Nat := 0
+  tried : Nat := 0
   exactInferred : Nat := 0
   negativesInferred : Nat := 0
   duplicates : Nat := 0
 
 private def observe (rows : List Sample) (b : Classes.StepBranch) (positivesOnly : Bool)
-    (limit : Option Nat) :
+    (limit : Option Nat) (read : Readers.Evidence → Classes.StepBranch → Option Bool) :
     IO (Obs × Bool) := do
   let exact := Readers.covered.contains b
   let allowed := EventSupport.allowed b
   -- Excluded action kinds cannot be positive, but a partial reader may still
   -- return unknown on them. Only omit those steps from positive searches.
   let rows := if positivesOnly then rows.filter (fun s => decide (s.tag ∈ allowed)) else rows
-  let (knownYes, remaining) :=
-    (rows.map fun s => (s, ReplayAnswers.answer s.baseline.get (.step b))).partition (·.2 == some true)
-  if let (s, _) :: _ := knownYes then
-    -- Both readers are sound, and the exact one is total.
-    if exact then return ({ firstYes := some (s.schedule, s.offset), exactInferred := 1 }, true)
-  let remaining :=
-    if positivesOnly then remaining.filter (fun (_, answer) => answer != some false) else remaining
-  let candidates := knownYes ++ remaining
+  let candidates := rows.map fun s => (s, ReplayAnswers.answer s.baseline.get (.step b))
+  let baselineYes := candidates.any (·.2 == some true)
+  let candidates := if positivesOnly then candidates.filter (·.2 != some false) else candidates
+  let eligible := candidates.length
   let candidates := limit.elim candidates candidates.take
-  let mut result : Obs := {}
+  let mut result : Obs := { eligible }
   for (s, baseline) in candidates do
-    result := { result with duplicates := result.duplicates + (s.copies - 1) }
+    result := { result with tried := result.tried + 1, duplicates := result.duplicates + (s.copies - 1) }
     let answer ← if exact && baseline.isSome then do
         result := { result with exactInferred := result.exactInferred + 1 }
         pure baseline
@@ -91,7 +89,7 @@ private def observe (rows : List Sample) (b : Classes.StepBranch) (positivesOnly
       else do
         let evidence := s.evidence.get
         let start ← IO.monoNanosNow
-        let found := Readers.read? evidence b
+        let found := read evidence b
         let elapsed := (← IO.monoNanosNow) - start
         if let some v := found then
           if let some old := baseline then
@@ -103,9 +101,9 @@ private def observe (rows : List Sample) (b : Classes.StepBranch) (positivesOnly
     if answer == some true then
       result := { result with firstYes := some (s.schedule, s.offset) }
       break
-  return (result, !knownYes.isEmpty)
+  return (result, baselineYes)
 
-public def main (args : List String) : IO Unit := do
+public def run (read : Readers.Evidence → Classes.StepBranch → Option Bool) (args : List String) : IO Unit := do
   if args == ["--case-witnessed"] then
     for b in CaseWitnesses.witnessed do IO.println (repr b)
     return
@@ -118,7 +116,7 @@ public def main (args : List String) : IO Unit := do
   let steps := sample.foldl (fun n s => n + s.copies) 0
   IO.eprintln s!"{ReadersCorpus.scheduleCount} initialized schedules; {steps} steps; shard {shard}/{shards}"
   IO.eprintln s!"{sample.length} distinct initialized action prefixes"
-  IO.println "question\tclass\tschedule\toffset\tbaseline_yes\texact_inferred\tnegatives_inferred\tduplicates\tcalls\tmin_ns\tmedian_ns\tmax_ns"
+  IO.println "question\tclass\tschedule\toffset\tbaseline_yes\texact_inferred\tnegatives_inferred\tduplicates\tcalls\tmin_ns\tmedian_ns\tmax_ns\teligible_prefixes\ttried_prefixes"
   (← IO.getStdout).flush
   let trace := (← IO.getEnv "CCF_READERS_TRACE").isSome
   let search ← (← IO.getEnv "CCF_READERS_SEARCH_PREFIXES").mapM fun value =>
@@ -131,22 +129,22 @@ public def main (args : List String) : IO Unit := do
     let name := toString (repr b)
     if !selected.isEmpty && !selected.contains ((name.splitOn ".").getLast!) then continue
     if trace then IO.eprintln s!"reading {name}"
-    let (observed, baseline) ← observe sample b positivesOnly search
-    -- Positive searches do not distinguish a negative from a missing answer.
-    if positivesOnly && observed.firstYes.isNone then
-      let scope := if search.isSome then "bounded positive search" else "all eligible prefixes"
-      IO.eprintln s!"unmeasured {name}: no hit in {scope}"
-      continue
+    let (observed, baseline) ← observe sample b positivesOnly search read
     let (status, schedule, offset) := match observed.firstYes with
       | some (s, i) => ("yes", toString s, toString i)
-      | none => (if observed.hasUnknown then "unknown" else "no", "-", "-")
+      | none =>
+        if positivesOnly then
+          (if observed.tried == observed.eligible then "no_hit" else "prefix_limit", "-", "-")
+        else (if observed.hasUnknown then "unknown" else "no", "-", "-")
     let ns := observed.elapsed.mergeSort
     let stat (x : Option Nat) := x.map toString |>.getD "-"
     let row := [name, status, schedule, offset, toString baseline,
       toString observed.exactInferred, toString observed.negativesInferred, toString observed.duplicates,
       toString ns.length, stat ns.head?,
-      stat (ns[ns.length / 2]?), stat ns.getLast?]
+      stat (ns[ns.length / 2]?), stat ns.getLast?, toString observed.eligible, toString observed.tried]
     IO.println (String.intercalate "\t" row)
     (← IO.getStdout).flush
+
+public def main (args : List String) : IO Unit := run Readers.read? args
 
 end
