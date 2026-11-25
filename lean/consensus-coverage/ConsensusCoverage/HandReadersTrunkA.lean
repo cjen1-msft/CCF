@@ -10,6 +10,8 @@ import all ConsensusCoverage.HandReadersTrunkAConflict
 import all ConsensusCoverage.HandReadersTrunkARest
 import all ConsensusCoverage.HandReadersTrunkALoop
 import all ConsensusCoverage.HandReadersTrunkAPrefix
+import all ConsensusCoverage.HandReadersTrunkASignature
+import all ConsensusCoverage.HandReadersTrunkALimit
 import all ConsensusCoverage.HandReadersTrunkAAdvance
 
 namespace ConsensusCoverage.HandReadersTrunkA
@@ -39,6 +41,22 @@ private def lookup : (b : Classes.StepBranch) → Option (Exact b)
   | .fromLeader_loop_roleCase_inr => some Loop.noneRole
   | .maxCommittableIndex_le_of_prefix_zero_pos => some Loop.zeroPrefix
   | .maxCommittableIndex_le_of_prefix_zero_neg => some Loop.signedPrefix
+  | .maxCommittableIndexPositiveIsSignature_values_nil => some (Loop.exactBounded _ 1
+      (fun c => Loop.Equiv.step_maxCommittableIndexPositiveIsSignature_values_nil _ _ c))
+  | .maxCommittableIndexPositiveIsSignature_values_cons => some (Loop.exactBounded _ 1
+      (fun c => Loop.Equiv.step_maxCommittableIndexPositiveIsSignature_values_cons _ _ c))
+  | .maxCommittableIndexPositiveIsSignature_headValid_pos => some (Loop.exactBounded _ 1
+      (fun c => Loop.Equiv.step_maxCommittableIndexPositiveIsSignature_headValid_pos _ _ c))
+  | .maxCommittableIndexPositiveIsSignature_headValid_neg => some (Loop.exactBounded _ 1
+      (fun c => Loop.Equiv.step_maxCommittableIndexPositiveIsSignature_headValid_neg _ _ c))
+  | .maxCommittableIndexPositiveIsSignature_bestValid_inl => some (Loop.exactBounded _ 1
+      (fun c => Loop.Equiv.step_maxCommittableIndexPositiveIsSignature_bestValid_inl _ _ c))
+  | .maxCommittableIndexPositiveIsSignature_bestValid_inr => some (Loop.exactBounded _ 1
+      (fun c => Loop.Equiv.step_maxCommittableIndexPositiveIsSignature_bestValid_inr _ _ c))
+  | .maxCommittableIndexPositiveIsSignature_bestLeHead_pos => some (Loop.exactBounded _ 1
+      (fun c => Loop.Equiv.step_maxCommittableIndexPositiveIsSignature_bestLeHead_pos _ _ c))
+  | .maxCommittableIndexPositiveIsSignature_bestLeHead_neg => some (Loop.exactBounded _ 2
+      (fun c => Loop.Equiv.step_maxCommittableIndexPositiveIsSignature_bestLeHead_neg _ _ c))
   | .commit_le_advance_inl => some Batch.commitIdentity
   | _ => none
 
@@ -59,6 +77,6 @@ public theorem read_total (s : Step) {b} (mem : b ∈ covered) :
   simpa only [read, Option.isSome_map] using (List.mem_filter.mp mem).2
 
 set_option maxRecDepth 8192 in
-public theorem count : covered.Nodup ∧ covered.length = 23 := by decide +kernel
+public theorem count : covered.Nodup ∧ covered.length = 31 := by decide +kernel
 
 end ConsensusCoverage.HandReadersTrunkA
