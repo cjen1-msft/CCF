@@ -30,6 +30,8 @@ private def lookup : (b : Classes.StepBranch) → Option (Exact b)
   | .leader_logs_commit_neg => some (Leader.exactReader false)
   | .wins_elect_committed_pos => some (Win.exactReader true)
   | .wins_elect_committed_neg => some (Win.exactReader false)
+  | .commit_backed_eq_zero_or_pos_inl => some (Win.backingReader false)
+  | .commit_backed_eq_zero_or_pos_inr => some (Win.backingReader true)
   | .campaign_three_campaign_inl => some (CampaignRows.exactReader false true)
   | .campaign_three_campaign_inr => some (CampaignRows.exactReader false false)
   | .campaign_votes_campaign_inl => some (CampaignRows.exactReader true true)
@@ -98,6 +100,6 @@ public theorem read_total (s : Step) {b} (h : b ∈ covered) :
   simpa only [read, Option.isSome_map] using (List.mem_filter.mp h).2
 
 set_option maxRecDepth 8192 in
-public theorem count : covered.Nodup ∧ covered.length = 53 := by decide +kernel
+public theorem count : covered.Nodup ∧ covered.length = 55 := by decide +kernel
 
 end ConsensusCoverage.HandReadersA
