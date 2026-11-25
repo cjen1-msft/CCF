@@ -61,6 +61,8 @@ abbrev FromCampaign (l r : List Entry) (b d : Nat) :=
 
 abbrev Enabled (l r : List Entry) (b d : Nat) := FromCore c l r b d ∨ FromCampaign c l r b d
 abbrev Evidence (p : Test) := ∃ l r b d, Enabled c l r b d ∧ p l r b d
+abbrev Pivot (l r : List Entry) (b d j : Nat) :=
+  (FromCore c l r b d ∧ l.take j = r.take j ∧ b ≤ j ∧ d ≤ j) ∨ (FromCampaign c l r b d ∧ j = d)
 
 omit [Config.InitialConfiguration] in
 theorem reader_iff (s : Step) (p : Test) :
@@ -91,7 +93,7 @@ local macro "along " h:term : tactic => `(tactic| {
                 | change Exists _ at spine; obtain ⟨_,spine⟩ := spine })
 
 set_option maxHeartbeats 2000000 in
-theorem necessary {l r b d j} (h : Sites c l r b d j) : Enabled c l r b d := by
+theorem pivot_of_site {l r b d j} (h : Sites c l r b d j) : Pivot c l r b d j := by
   rcases h with h | h | h | h | h | h | h | h | h | h | h
   all_goals repeat' (change _ ∨ _ at h; rcases h with h | h)
   all_goals
@@ -103,7 +105,7 @@ theorem necessary {l r b d j} (h : Sites c l r b d j) : Enabled c l r b d := by
           have sites : CoreSites.Sites c g n k b i later d bound j l r := by
             repeat' first | exact site | exact Or.inl site | apply Or.inr
           obtain ⟨pair,eq⟩ := CoreSites.necessary c sites
-          exact .inl ⟨k,i,pair,Nat.lt_of_not_ge gap,eq⟩
+          exact .inl ⟨⟨k,i,pair,Nat.lt_of_not_ge gap,eq⟩,by along rest,by along rest,by along rest⟩
         | obtain ⟨term,caller,_,_,w,_,⟨e,p,m,_,sub⟩,tail⟩ := src
           have source : PreBacking.Gate c ∧ term = c.post.currentTerm := by
             first | exact PreBacking.local_site c caller
@@ -112,7 +114,7 @@ theorem necessary {l r b d j} (h : Sites c l r b d j) : Enabled c l r b d := by
           obtain rfl : r = c.pre.log := by along tail
           obtain rfl : d = c.pre.commitIndex := by along tail
           have q : hasQuorum (activeConfigurations c.pre.log c.pre.commitIndex) ys := by along tail
-          refine .inr ⟨gate,⟨e,p,m,sub⟩,rfl,rfl,⟨ys,q⟩,?_⟩
+          refine .inr ⟨⟨gate,⟨e,p,m,sub⟩,rfl,rfl,⟨ys,q⟩,?_⟩,by along tail⟩
           repeat' first
             | exact ⟨_,i,tail.1,tail.2.1⟩
             | change _ ∧ _ at tail; obtain ⟨_,tail⟩ := tail
@@ -122,8 +124,10 @@ theorem necessary {l r b d j} (h : Sites c l r b d j) : Enabled c l r b d := by
       repeat' (change _ ∨ _ at parent; rcases parent with parent | parent)
       all_goals exact (Tip.not_old_leader c parent.2.2.2.2.1 parent.2.2.2.2.2.1).elim
 
-structure Seed (l r : List Entry) (b d : Nat) where
-  pivot : Nat
+theorem necessary {l r b d j} (h : Sites c l r b d j) : Enabled c l r b d :=
+  (pivot_of_site c h).imp And.left And.left
+
+structure Seed (l r : List Entry) (b d pivot : Nat) where
   site : (reach% step_rooted_overlap_eq_zero_or_pos_inl[0]) f t c l r b d pivot ∨
     (reach% step_rooted_overlap_eq_zero_or_pos_inl[3]) f t c l r b d pivot ∨
     (reach% step_rooted_overlap_eq_zero_or_pos_inl[5]) f t c l r b d pivot
@@ -134,26 +138,25 @@ structure Seed (l r : List Entry) (b d : Nat) where
   same : l.take pivot = r.take pivot
   leftLe : b ≤ pivot
   rightLe : d ≤ pivot
-  least : pivot = max b d
 
-theorem sufficient {l r b d} (enabled : Enabled c l r b d) : Nonempty (Seed c l r b d) := by
-  rcases enabled with ⟨k,i,pair,gap,eq⟩ | ⟨gate,⟨e,p,m,sub⟩,rfl,rfl,⟨ys,q'⟩,k,i,facts,gt,le,pref⟩
-  · obtain ⟨⟨g,n,later,bound,site,facts,camp,lt,clean,chains,window,_⟩⟩ := CoreSites.ready c pair eq
+theorem seedAt {l r b d j} (enabled : Pivot c l r b d j) : Nonempty (Seed c l r b d j) := by
+  rcases enabled with ⟨⟨k,i,pair,gap,_⟩,eq,bl,dl⟩ | ⟨⟨gate,⟨e,p,m,sub⟩,rfl,rfl,⟨ys,q'⟩,k,i,facts,gt,le,pref⟩,rfl⟩
+  · obtain ⟨⟨g,n,later,bound,site,facts,camp,lt,clean,chains,window,_⟩⟩ := CoreSites.readyAt c pair eq bl dl
     obtain ⟨xs,q,acks⟩ := facts.acks
     obtain ⟨ys,q',votes⟩ := camp.voters
-    have before : (reach% step_rooted_overlap_eq_zero_or_pos_inl[5,0]) f t c l r b d (max b d) i xs ys := by
+    have before : (reach% step_rooted_overlap_eq_zero_or_pos_inl[5,0]) f t c l r b d j i xs ys := by
       rcases site with site | site
       · right; right; left
         exact ⟨_,_,_,_,_,site,⟨q,acks⟩,q,acks,⟨q',votes⟩,q',votes,Nat.not_le_of_gt gap,facts,camp,
-          eq,Nat.le_max_left _ _,Nat.le_max_right _ _,clean,chains,lt,window⟩
+          eq,bl,dl,clean,chains,lt,window⟩
       · right; right; right
         exact ⟨_,_,_,_,_,site,⟨q,acks⟩,q,acks,⟨q',votes⟩,q',votes,Nat.not_le_of_gt gap,facts,camp,
-          eq,Nat.le_max_left _ _,Nat.le_max_right _ _,clean,chains,lt,window⟩
+          eq,bl,dl,clean,chains,lt,window⟩
     have pos := signature_pos facts.signature
     have ne := List.length_pos_iff.mp (Nat.lt_of_lt_of_le pos facts.indexLe)
-    exact ⟨⟨_,.inr (.inr (.inl ⟨i,xs,ys,before,facts.rooted,camp.rooted,eq,Nat.le_max_left _ _,Nat.le_max_right _ _,
+    exact ⟨⟨.inr (.inr (.inl ⟨i,xs,ys,before,facts.rooted,camp.rooted,eq,bl,dl,
       facts.baseLe,Nat.le_of_lt gap,q,q',ne,pos⟩)),facts.rooted,camp.rooted,ne,hasQuorum_nonempty q',
-      eq,Nat.le_max_left _ _,Nat.le_max_right _ _,rfl⟩⟩
+      eq,bl,dl⟩⟩
   · have ⟨xs,q,acks⟩ := facts.acks
     have ⟨old,active⟩ := c.inv.commit_backed _ _ c.pre_now
     have pack := And.intro m (And.intro (Nat.le_refl e) sub)
@@ -168,7 +171,7 @@ theorem sufficient {l r b d} (enabled : Enabled c l r b d) : Nonempty (Seed c l 
     have pos := signature_pos facts.signature
     have ne := List.length_pos_iff.mp (Nat.lt_of_lt_of_le pos facts.indexLe)
     have right := c.inv.rooted _ _ c.pre_now
-    refine ⟨⟨_,?_,facts.rooted,right,ne,hasQuorum_nonempty q',same.symm,le,Nat.le_refl _,(Nat.max_eq_right le).symm⟩⟩
+    refine ⟨⟨?_,facts.rooted,right,ne,hasQuorum_nonempty q',same.symm,le,Nat.le_refl _⟩⟩
     obtain origin | origin := PreBacking.sources c gate
     case' inl => left
     case' inr => right; left
@@ -177,6 +180,15 @@ theorem sufficient {l r b d} (enabled : Enabled c l r b d) : Nonempty (Seed c l 
       exact ⟨_,origin,old,active,e,.inr ⟨e,p,pack⟩,⟨e,p,pack⟩,e,⟨p,pack⟩,p,pack,m,pack.2,pack.2.1,sub,
         ⟨l,k,b,i,hi⟩,⟨k,b,i,hi⟩,k,⟨b,i,hi⟩,⟨i,hi⟩,hi,facts,hi.2,gt,hi.2.2,le,pref,q',⟨q,acks⟩,q,acks,
         gate.1,m,.inr ⟨l,k,b,i,hi⟩,len,ln,ge,eq,rfl,rfl,rfl⟩
+
+theorem leastPivot {l r b d} (h : Enabled c l r b d) : Pivot c l r b d (max b d) := by
+  rcases h with ⟨k,i,pair,gap,eq⟩ | camp
+  · exact .inl ⟨⟨k,i,pair,gap,eq⟩,eq,Nat.le_max_left _ _,Nat.le_max_right _ _⟩
+  · obtain ⟨_,_,_,_,_,_,_,_,_,le,_⟩ := id camp
+    exact .inr ⟨camp,Nat.max_eq_right le⟩
+
+theorem sufficient {l r b d} (h : Enabled c l r b d) : Nonempty (Seed c l r b d (max b d)) :=
+  seedAt c (leastPivot c h)
 end
 
 end ConsensusCoverage.HandReadersElection.Overlap

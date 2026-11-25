@@ -74,9 +74,9 @@ local macro "along " h:term : tactic => `(tactic| {
                 | change _ ∧ _ at spine; obtain ⟨_,spine⟩ := spine
                 | change Exists _ at spine; obtain ⟨_,spine⟩ := spine })
 
-theorem source {cs z} (h : Sites c cs z) :
-    ∃ l r b d k, Enabled c l r b d ∧ z = max b d ∧ cs = configurationHistory (r.take k) ∧
-      (r.take k).take 1 = [Config.GENESIS] := by
+theorem sourceAt {cs z} (h : Sites c cs z) :
+    ∃ l r b d j, Pivot c l r b d j ∧ z = max b d ∧ cs = configurationHistory (r.take (max j 1)) ∧
+      (r.take (max j 1)).take 1 = [Config.GENESIS] := by
   rcases h with h | h | h | h | h | h | h | h | h | h | h
   all_goals repeat' (change _ ∨ _ at h; rcases h with h | h)
   all_goals
@@ -86,43 +86,48 @@ theorem source {cs z} (h : Sites c cs z) :
     have head : (r.take (max pivot 1)).take 1 = [Config.GENESIS] := by along tail
     have order : other ≤ z := by along rest
     first
-    | refine ⟨l,r,other,z,_,Overlap.necessary c (j := pivot) ?_,(Nat.max_eq_right order).symm,eq,head⟩
+    | refine ⟨l,r,other,z,pivot,Overlap.pivot_of_site c ?_,(Nat.max_eq_right order).symm,eq,head⟩
       solve | repeat' first | exact site | exact Or.inl site | apply Or.inr
-    | refine ⟨l,r,z,other,_,Overlap.necessary c (j := pivot) ?_,(Nat.max_eq_left order).symm,eq,head⟩
+    | refine ⟨l,r,z,other,pivot,Overlap.pivot_of_site c ?_,(Nat.max_eq_left order).symm,eq,head⟩
       repeat' first | exact site | exact Or.inl site | apply Or.inr
 
 theorem necessary {cs z} (site : Sites c cs z) (pos : Bool) (guard : decide (0 < (filt cs z).length) = pos) :
     Evidence c (test pos) := by
-  obtain ⟨l,r,b,d,k,enabled,rfl,rfl,head⟩ := source c site
-  refine ⟨l,r,b,d,enabled,beq_iff_eq.mpr ?_⟩
+  obtain ⟨l,r,b,d,_,pivot,rfl,rfl,head⟩ := sourceAt c site
+  refine ⟨l,r,b,d,pivot.imp And.left And.left,beq_iff_eq.mpr ?_⟩
   simpa only [propext (count_iff head _)] using guard
+
+theorem originAt {l r b d} (u : Zip.Cut c l r b d) :
+    Origin c (configurationHistory (r.take u.k)) (max b d) := by
+  obtain ⟨k,src,eq,bl,dl,head⟩ := u
+  let cs := configurationHistory (r.take k)
+  have ne := configurationHistory_ne_nil head Config.GENESIS_configured
+  have positive := List.length_pos_iff.mpr ne
+  have last := Nat.sub_one_lt (Nat.ne_of_gt positive)
+  obtain ⟨ls,hl⟩ := configurationHistory_split l k
+  obtain ⟨rs,hr⟩ := configurationHistory_split r k
+  rcases src with src | src | src
+  case' inl => left
+  case' inr.inl => right; left
+  case' inr.inr => right; right
+  all_goals
+    obtain ord | ord := Nat.le_total b d
+    case' inl => rw [Nat.max_eq_right ord]; left; refine ⟨l,r,b,k,src,?_⟩
+    case' inr => rw [Nat.max_eq_left ord]; right; refine ⟨l,r,d,k,src,?_⟩
+    all_goals exact ⟨ls,hl,hl.1,hl.2,rs,hr,hr.1,hr.2,ord,eq,bl,dl,ne,configurationHistory_sorted _,
+      positive,OverlapInductionB.countFilter,OverlapInductionB.inDrop,length_filter_le _ _,length_filter_le _ _,
+      last,length_filter_index_mono cs ord,Nat.lt_of_le_of_lt (Nat.sub_le_sub_right (length_filter_le _ _) 1) last,rfl⟩
 
 theorem sufficient {pos} (h : Evidence c (test pos)) :
     ∃ cs z, Origin c cs z ∧ cs.Pairwise (fun a b => a.index < b.index) ∧ 0 < cs.length ∧
       decide (0 < (filt cs z).length) = pos ∧ (pos = true → 0 < z) := by
   obtain ⟨l,r,b,d,enabled,yes⟩ := h
-  obtain ⟨⟨k,src,eq,bl,dl,head⟩⟩ := Zip.cut c enabled
-  let cs := configurationHistory (r.take k)
-  have ne := configurationHistory_ne_nil head Config.GENESIS_configured
-  have positive := List.length_pos_iff.mpr ne
-  have last := Nat.sub_one_lt (Nat.ne_of_gt positive)
+  obtain ⟨u⟩ := Zip.cut c enabled
   have guard := beq_iff_eq.mp yes
   change decide (0 < max b d) = pos at guard
-  refine ⟨cs,max b d,?_,configurationHistory_sorted _,positive,?_,fun hp => of_decide_eq_true (guard.trans hp)⟩
-  · obtain ⟨ls,hl⟩ := configurationHistory_split l k
-    obtain ⟨rs,hr⟩ := configurationHistory_split r k
-    rcases src with src | src | src
-    case' inl => left
-    case' inr.inl => right; left
-    case' inr.inr => right; right
-    all_goals
-      obtain ord | ord := Nat.le_total b d
-      case' inl => rw [Nat.max_eq_right ord]; left; refine ⟨l,r,b,k,src,?_⟩
-      case' inr => rw [Nat.max_eq_left ord]; right; refine ⟨l,r,d,k,src,?_⟩
-      all_goals exact ⟨ls,hl,hl.1,hl.2,rs,hr,hr.1,hr.2,ord,eq,bl,dl,ne,configurationHistory_sorted _,
-        positive,OverlapInductionB.countFilter,OverlapInductionB.inDrop,length_filter_le _ _,length_filter_le _ _,
-        last,length_filter_index_mono cs ord,Nat.lt_of_le_of_lt (Nat.sub_le_sub_right (length_filter_le _ _) 1) last,rfl⟩
-  · simpa only [cs,propext (count_iff head _)] using guard
+  exact ⟨_,_,originAt c u,configurationHistory_sorted _,
+    List.length_pos_iff.mpr (configurationHistory_ne_nil u.head Config.GENESIS_configured),
+    by simpa only [propext (count_iff u.head _)] using guard,fun hp => of_decide_eq_true (guard.trans hp)⟩
 end
 
 end ConsensusCoverage.HandReadersElection.Counted

@@ -62,13 +62,13 @@ theorem necessary {g n k b i later d bound j l log} (site : Sites c g n k b i la
       | obtain ⟨_,_,facts,_,_,_,_,_,old,lt,_,eq,_⟩ := rest
         exact ⟨.inl ⟨elect,rfl,rfl,facts,old,lt⟩,beq_iff_eq.mp (Carried.shorten eq.1 eq.2.1 eq.2.2)⟩
 
-structure Ready (l : List Entry) (k b i : Nat) (log : List Entry) (d : Nat) where
+structure Ready (l : List Entry) (k b i : Nat) (log : List Entry) (d j : Nat) where
   ghost : LogFacts.Ghost
   node : NodeID
   later : Nat
   bound : Nat
-  site : (reach% step_core_covered_pos[0]) f t c ghost node k b i later d bound (max b d) l log ∨
-    (reach% step_core_covered_pos[8]) f t c ghost node k b i later d bound (max b d) l log
+  site : (reach% step_core_covered_pos[0]) f t c ghost node k b i later d bound j l log ∨
+    (reach% step_core_covered_pos[8]) f t c ghost node k b i later d bound j l log
   facts : CommitFacts ghost l k b i
   campaign : CampaignFacts ghost (f.advance t).votes ghost.canon node later log d bound
   earlier : k < later
@@ -77,9 +77,9 @@ structure Ready (l : List Entry) (k b i : Nat) (log : List Entry) (d : Nat) wher
   window : later - 1 ≤ bound
   sub : l.take i <+: log
 
-theorem ready {l k b i log d} (pair : Pairs.Pair c l k b i log d) (eq : l.take (max b d) = log.take (max b d)) :
-    Nonempty (Ready c l k b i log d) := by
-  have wit := And.intro eq (And.intro (Nat.le_max_left b d) (Nat.le_max_right b d))
+theorem readyAt {l k b i log d j} (pair : Pairs.Pair c l k b i log d) (eq : l.take j = log.take j)
+    (bl : b ≤ j) (dl : d ≤ j) : Nonempty (Ready c l k b i log d j) := by
+  have wit := And.intro eq (And.intro bl dl)
   rcases pair with ⟨elect,rfl,rfl,facts,old,lt⟩ | ⟨n,st,node,later,ticket,rfl,win,lt⟩
   · have root := DeepCarriedCases.source c old lt elect
     have camp := root.2.2.2.2
@@ -108,6 +108,10 @@ theorem ready {l k b i log d} (pair : Pairs.Pair c l k b i log d) (eq : l.take (
     exact ⟨n,st,parent,(fun m _ v l d w lt => c.completeness _ _ v m l d key w lt),win,lt,⟨_,wit⟩,wit,
       eq,wit.2,wit.2.1,wit.2.2,step,back,facts.floor,facts,take_signature facts.signature,win,camp,
       clean,low,high,rfl,rfl,rfl⟩
+
+theorem ready {l k b i log d} (pair : Pairs.Pair c l k b i log d) (eq : l.take (max b d) = log.take (max b d)) :
+    Nonempty (Ready c l k b i log d (max b d)) :=
+  readyAt c pair eq (Nat.le_max_left _ _) (Nat.le_max_right _ _)
 end
 
 end ConsensusCoverage.HandReadersElection.CoreSites

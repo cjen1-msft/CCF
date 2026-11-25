@@ -6,9 +6,11 @@ module
 public import ConsensusCoverage.HandReadersABase
 import all ConsensusCoverage.HandReadersElectionAgreement
 import all ConsensusCoverage.HandReadersElectionCarried
+import all ConsensusCoverage.HandReadersElectionChosen
 import all ConsensusCoverage.HandReadersElectionCore
 import all ConsensusCoverage.HandReadersElectionFilter
 import all ConsensusCoverage.HandReadersElectionGrant
+import all ConsensusCoverage.HandReadersElectionLater
 import all ConsensusCoverage.HandReadersElectionRank
 import all ConsensusCoverage.HandReadersElectionTip
 import all ConsensusCoverage.HandReadersElectionZip
@@ -43,6 +45,10 @@ private def lookup : (b : Classes.StepBranch) → Option (Exact b)
   | .zipIdx_sorted_log_cons => some (Zip.exactReader true)
   | .getElem_le_of_lt_length_filter_i_inl => some (Filter.exactReader true)
   | .getElem_le_of_lt_length_filter_i_inr => some (Filter.exactReader false)
+  | .chosen_bound_counted_pos => some (Chosen.exactReader .counted)
+  | .chosen_bound_counted_neg => some (Chosen.exactReader .none)
+  | .chosen_bound_mem_cons_inl => some (Chosen.exactReader .head)
+  | .chosen_bound_mem_cons_inr => some Later.exactReader
   | _ => none
 
 public def covered : List Classes.StepBranch :=
@@ -62,6 +68,6 @@ public theorem read_total (s : Step) {b} (h : b ∈ covered) :
   simpa only [read, Option.isSome_map] using (List.mem_filter.mp h).2
 
 set_option maxRecDepth 8192 in
-public theorem count : covered.Nodup ∧ covered.length = 25 := by decide +kernel
+public theorem count : covered.Nodup ∧ covered.length = 29 := by decide +kernel
 
 end ConsensusCoverage.HandReadersElection

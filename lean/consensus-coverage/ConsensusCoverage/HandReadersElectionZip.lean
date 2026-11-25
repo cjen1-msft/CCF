@@ -32,22 +32,26 @@ structure Cut (l r : List Entry) (b d : Nat) where
   right : d ≤ k
   head : (r.take k).take 1 = [Config.GENESIS]
 
-theorem cut {l r b d} (enabled : Enabled c l r b d) : Nonempty (Cut c l r b d) := by
-  obtain ⟨s⟩ := Overlap.sufficient c enabled
+theorem cutAt {l r b d pivot} (s : Seed c l r b d pivot) : ∃ u : Cut c l r b d, u.k = max pivot 1 := by
   have lh := s.left.head s.leftNE
   have rh := s.right.head s.rightNE
-  have eq : l.take (max s.pivot 1) = r.take (max s.pivot 1) := by
-    rcases Nat.eq_zero_or_pos s.pivot with zero | pos
+  have eq : l.take (max pivot 1) = r.take (max pivot 1) := by
+    rcases Nat.eq_zero_or_pos pivot with zero | pos
     · simp only [zero,Nat.zero_max,lh,rh]
     · simpa only [Nat.max_eq_left pos] using s.same
-  have head : (r.take (max s.pivot 1)).take 1 = [Config.GENESIS] := by
+  have head : (r.take (max pivot 1)).take 1 = [Config.GENESIS] := by
     rw [List.take_take,Nat.min_eq_left (Nat.le_max_right _ _),rh]
-  refine ⟨⟨_,?_,eq,Nat.le_trans s.leftLe (Nat.le_max_left _ _),Nat.le_trans s.rightLe (Nat.le_max_left _ _),head⟩⟩
+  refine ⟨⟨_,?_,eq,Nat.le_trans s.leftLe (Nat.le_max_left _ _),Nat.le_trans s.rightLe (Nat.le_max_left _ _),head⟩,rfl⟩
   rcases s.site with site | site | site
   case' inl => left
   case' inr.inl => right; left
   case' inr.inr => right; right
-  all_goals exact ⟨s.pivot,site,s.left,s.right,s.leftNE,s.rightNE,s.same,s.leftLe,s.rightLe,lh,rh,eq,head,rfl⟩
+  all_goals exact ⟨pivot,site,s.left,s.right,s.leftNE,s.rightNE,s.same,s.leftLe,s.rightLe,lh,rh,eq,head,rfl⟩
+
+theorem cut {l r b d} (enabled : Enabled c l r b d) : Nonempty (Cut c l r b d) := by
+  obtain ⟨s⟩ := Overlap.sufficient c enabled
+  obtain ⟨u,_⟩ := cutAt c s
+  exact ⟨u⟩
 
 private theorem necessary (cons : Bool) (yes : sig c (column cons)) : Evidence c (fun _ _ _ _ => true) := by
   cases cons
