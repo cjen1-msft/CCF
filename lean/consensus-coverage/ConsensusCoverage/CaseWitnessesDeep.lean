@@ -78,11 +78,12 @@ private def certificates : List Certificate :=
    observed lateCopy 14 .rankedElections_elected_inl,
    observed lateCopy 14 .old_complete_elected_after_inl,
    observed (threeTerms false) 18 .new_in_elected_lt_trichotomy_inl,
-   observed (threeTerms true) 20 .new_in_elected_lt_trichotomy_inr_inr]
+   observed (threeTerms true) 20 .new_in_elected_lt_trichotomy_inr_inr,
+   observed retireOnAppend 10 .post_log_role_inr]
 
 public def witnessed : List Classes.StepBranch := certificates.map Subtype.val
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 11 := by decide +kernel
+public theorem count : witnessed.Nodup ∧ witnessed.length = 12 := by decide +kernel
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
