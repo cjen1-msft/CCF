@@ -592,7 +592,7 @@ for the questions whose generation has been verified; most of the 328 do
 not have one yet. The exact readers are used by the bounded census above
 but not yet by `answers`.
 
-**279 more questions have an exact reader written by hand.** For the
+**296 more questions have an exact reader written by hand.** For the
 questions the compiler cannot handle, the reader was written from what the
 case means and proved equal to the question's answer on every initialized
 step: [`HandReadersA`](../consensus-coverage/ConsensusCoverage/HandReadersA.lean)
@@ -602,17 +602,21 @@ step: [`HandReadersA`](../consensus-coverage/ConsensusCoverage/HandReadersA.lean
 (31), [`HandReadersElection`](../consensus-coverage/ConsensusCoverage/HandReadersElection.lean)
 (38), [`HandReadersOther`](../consensus-coverage/ConsensusCoverage/HandReadersOther.lean)
 (30), [`HandReadersTrunkC`](../consensus-coverage/ConsensusCoverage/HandReadersTrunkC.lean)
-(15), and [`HandReadersElectionB`](../consensus-coverage/ConsensusCoverage/HandReadersElectionB.lean)
-(16), each with `read_correct` and `read_total`. A typical one: the case
+(15), [`HandReadersElectionB`](../consensus-coverage/ConsensusCoverage/HandReadersElectionB.lean)
+(16), and [`HandReadersTrunkD`](../consensus-coverage/ConsensusCoverage/HandReadersTrunkD.lean)
+(17), each with `read_correct` and `read_total`. A typical one: the case
 `commit_backed_eq_zero_or_pos_inl` holds exactly when the actor becomes
 primary, was not already primary in that term, and had commit index zero
 before the step. The 29 impossible cases are read as constant false.
 [`ReadersTotal.read`](../consensus-coverage/ConsensusCoverage/ReadersTotal.lean)
 combines these sources with structural equivalences and the compiled
 match-index, accepted-log, and ranking readers. `read_correct` and `read_total`
-certify every returned answer and totality on the 496 covered questions. All 40
-unconditional replay readers are included; only 20 of the 516 questions remain
-unread, all in the shared local-transition summary trunk.
+certify every returned answer and totality on the 513 covered questions. All 40
+unconditional replay readers are included; only 3 of the 516 questions remain
+unread (`termAt_take_zero_neg` and the equivalent pair
+`isSignature_eq_true_content_transaction` /
+`isSignature_eq_true_content_signature`), all in the shared local-transition
+summary trunk.
 
 **Per-clause label tables.** The safety invariant `Inv` is a conjunction of 30
 clauses proved one field at a time by `Ctx.inv_step`.
@@ -640,7 +644,7 @@ hand-written readers; rows marked `conjecture` give a conjectured meaning
 and the obstacle to proving it, most often that the case sits inside a
 lemma used at many places in the proof. Later rounds added compiled
 match-index, accepted-log, and ranking readers (12) and further hand-written
-readers (165), so 177 of its conjecture rows now have an exact reader. The
+readers (182), so 194 of its conjecture rows now have an exact reader. The
 current list of cases without an exact reader is `ReadersTotal.unread`.
 
 The rooted- and sorted-log proofs agree on the acting node: both enter their
