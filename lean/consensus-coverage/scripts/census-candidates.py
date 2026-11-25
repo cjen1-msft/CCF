@@ -51,6 +51,8 @@ def main():
     p.add_argument("--prior-model", action="append", default=[],
                    help="completed model read with --prior-columns instead of --columns")
     p.add_argument("--dag", type=Path, required=True, help="reader generator's direct reach DAG TSV")
+    p.add_argument("--formulas", type=Path, help="normalized bodies from census-formulas.lean")
+    p.add_argument("--reach-out", type=Path, help="write the direct reach predicates used by the candidates")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--differential", type=Path, required=True)
     p.add_argument("--contrasts", type=Path,
@@ -66,6 +68,12 @@ def main():
     exact = columns(a.columns)
     prior_exact = columns(a.prior_columns or [])
     reaches = dict(s.split("\t", 1) for s in a.dag.read_text().splitlines())
+    bodies = {}
+    if a.formulas:
+        with a.formulas.open() as f:
+            bodies = {r["name"]: r["normalized_body"] for r in csv.DictReader(f, delimiter="\t")}
+    if a.reach_out and not bodies:
+        p.error("--reach-out requires --formulas")
     models = {p.name: completed(p) for p in a.models}
     if (set(a.prior_model) - models.keys() or bool(a.prior_model) != bool(prior_exact)
             or not prior_exact <= exact):
@@ -99,12 +107,12 @@ def main():
             candidates.append((",".join(direct), q, ",".join(models),
                                sum(rows[q][1] for _, rows in models.values()),
                                f"ConsensusCoverage.SolvedWitnesses.{arm} s.frame s.after s.context",
-                               ",".join(witnessed[q])))
+                               ",".join(witnessed[q]), *((bodies[arm],) if a.formulas else ())))
         if baseline not in positive and not models[baseline][1][q][2] and (positive or witnessed[q]):
             differential.append((q, baseline, ",".join(positive), ",".join(witnessed[q])))
     for path, header, rows in [
         (a.out, ("direct_reaches", "question", "completed_models", "false_model_edge_incidences", "formula",
-                 "witnessed_outside_models"),
+                 "witnessed_outside_models", *(("normalized_body",) if a.formulas else ())),
          sorted(candidates)),
         (a.differential, ("question", "absent_in_baseline", "true_in_models", "positive_witness_tables"), differential)
     ]:
@@ -112,6 +120,12 @@ def main():
             writer = csv.writer(f, delimiter="\t", lineterminator="\n")
             writer.writerow(header)
             writer.writerows(rows)
+    if a.reach_out:
+        direct = {n for row in candidates for n in row[0].split(",") if n}
+        with a.reach_out.open("w") as f:
+            writer = csv.writer(f, delimiter="\t", lineterminator="\n")
+            writer.writerow(("direct_reach", "normalized_body"))
+            writer.writerows((n, bodies[n]) for n in sorted(direct, key=lambda n: int(n.split("_")[-1])))
     if a.contrasts:
         configs = {m.name: settings(m) for m in a.models}
         with a.contrasts.open("w") as f:
@@ -129,7 +143,7 @@ def main():
                         if not before[q][0] and not before[q][2] and after[q][0]:
                             writer.writerow((k, lc[k], rc[k], left, right, q, before[q][1], after[q][0]))
     print(f"{len(candidates)} bounded negatives in {len({r[0] for r in candidates})} direct-reach groups;"
-          f" {sum(bool(r[-1]) for r in candidates)} witnessed outside completed models;"
+          f" {sum(bool(r[5]) for r in candidates)} witnessed outside completed models;"
           f" {len(differential)} positive outside baseline only; {len(exact)} total coordinates.")
 
 
