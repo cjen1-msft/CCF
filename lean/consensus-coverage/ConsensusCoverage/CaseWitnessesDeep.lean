@@ -4,6 +4,7 @@ module
 -- Licensed under the Apache 2.0 License.
 
 public import ConsensusCoverage.JointWitnesses
+import all ConsensusCoverage.ReadersWitnesses
 import all ConsensusCoverage.DeepSchedules
 import all ConsensusCoverage.EventSupport
 import all ConsensusCoverage.JointWitnesses
@@ -35,6 +36,15 @@ private noncomputable def ordered (s : Step) (b : Classes.StepBranch) : Option B
     @ReadersCompiler.readView ⟨s.cfg⟩ x b
 
 private abbrev Certificate := {b : Classes.StepBranch // ∃ s : Step, label s (.step b) = true}
+
+private def samePredicate (from_ to_ : Classes.StepBranch) (known : from_ ∈ ReadersWitnesses.witnessed)
+    (same : ∀ s : Step, @SolvedWitnesses.sig ⟨s.cfg⟩ s.frame s.after s.context from_ =
+      @SolvedWitnesses.sig ⟨s.cfg⟩ s.frame s.after s.context to_) : Certificate := by
+  refine ⟨to_, ?_⟩
+  obtain ⟨s, yes⟩ := ReadersWitnesses.occurs known
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  refine ⟨s, (label_true s _).mpr ((SolvedWitnesses.sig_iff s.context _).mpr ?_)⟩
+  exact same s ▸ (SolvedWitnesses.sig_iff s.context _).mp ((label_true s _).mp yes)
 
 private def certify (b : Classes.StepBranch) (chosen : Option Step)
     (checked : chosen.bind (ordered · b) = some true) : Certificate := by
@@ -79,11 +89,15 @@ private def certificates : List Certificate :=
    observed lateCopy 14 .old_complete_elected_after_inl,
    observed (threeTerms false) 18 .new_in_elected_lt_trichotomy_inl,
    observed (threeTerms true) 20 .new_in_elected_lt_trichotomy_inr_inr,
-   observed retireOnAppend 10 .post_log_role_inr]
+   observed retireOnAppend 10 .post_log_role_inr,
+   samePredicate .observeTerm_log_message_appendEntriesResponse
+     .observeTerm_log_message_proposeRequestVoteRequest (by decide +kernel) (fun _ => rfl),
+   samePredicate .observeTerm_commitIndex_message_appendEntriesResponse
+     .observeTerm_commitIndex_message_proposeRequestVoteRequest (by decide +kernel) (fun _ => rfl)]
 
 public def witnessed : List Classes.StepBranch := certificates.map Subtype.val
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 12 := by decide +kernel
+public theorem count : witnessed.Nodup ∧ witnessed.length = 14 := by decide +kernel
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
