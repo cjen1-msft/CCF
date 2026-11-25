@@ -8,7 +8,9 @@ import all ConsensusCoverage.ClauseQuestions
 import all ConsensusCoverage.FrontierWitnesses
 import all ConsensusCoverage.FrontierRows
 import all ConsensusCoverage.PairQuestions
+import all ConsensusCoverage.SolvedWitnesses
 import all ConsensusCoverage.StateCoverage
+import all Consensus.Proofs.SafetyInvariant
 
 namespace ConsensusCoverage.ClauseExactTables
 
@@ -70,5 +72,22 @@ public theorem distinct_reduction (s : Step) :
   have h : questions .distinct = [.replaceNode_keys_here_pos, .replaceNode_keys_here_neg] :=
     by decide +kernel
   simp only [clauseLabel, h, restrictedLabel, endpoints, List.map_cons, List.map_nil]
+
+/-- The two existential tests share every caller. Their arbitrary list-entry
+binder can supply either a matching ID or a different ID (not necessarily
+one of the deployed nodes). Thus they are one distinction, not two. -/
+public theorem distinct_bits_eq (s : Step) :
+    label s (.step .replaceNode_keys_here_pos) = label s (.step .replaceNode_keys_here_neg) := by
+  letI : Consensus.Proofs.Config.InitialConfiguration := ⟨s.cfg⟩
+  have yes (n : Nat) : ∃ e : Nat × Consensus.Model.Node.NodeState, e.1 = n :=
+    ⟨(n,s.context.pre), rfl⟩
+  have no (n : Nat) : ∃ e : Nat × Consensus.Model.Node.NodeState, e.1 ≠ n :=
+    ⟨(n+1,s.context.pre), Nat.succ_ne_self n⟩
+  apply Bool.eq_iff_iff.mpr
+  simp only [label_true, holds, SolvedWitnesses.sig_iff]
+  change SolvedWitnesses.step_replaceNode_keys_here_pos _ _ _ ↔
+    SolvedWitnesses.step_replaceNode_keys_here_neg _ _ _
+  simp only [SolvedWitnesses.step_replaceNode_keys_here_pos, SolvedWitnesses.step_replaceNode_keys_here_neg,
+    yes, no, and_true]
 
 end ConsensusCoverage.ClauseExactTables

@@ -62,13 +62,16 @@ public def query (s : Step) : Classes.StepBranch → Option Bool :=
   let view := (ReadersAtoms.ofXAction s.cfg s.before s.after s.past s.act).map
     fun x => (CensusExactRow.exactView s.cfg x).val
   let fallback := ReadersTotal.read s.cfg s.before s.act s.after s.past
-  fun b => (ReplayAnswers.answer replay (.step b)).orElse fun _ =>
+  fun b => (ReadersRefuted.read? b).orElse fun _ => (ReplayAnswers.answer replay (.step b)).orElse fun _ =>
     (view.bind (· b)).orElse fun _ => fallback b
 
 public theorem query_eq (s : Step) {b : Classes.StepBranch} (mem : b ∈ ReadersTotal.covered) :
     query s b = ReadersTotal.read s.cfg s.before s.act s.after s.past b := by
   unfold query
   rw [ReadersTotal.read_total s mem]
+  cases neg : ReadersRefuted.read? b
+  case some v => exact congrArg some (ReadersRefuted.read?_correct s neg).symm
+  rw [Option.orElse_none]
   cases h : ReplayAnswers.answer (ReplayAnswers.read s.cfg s.before s.act s.after s.past) (.step b) with
   | some v => simp only [Option.orElse_some, ReplayAnswers.sound s _ h]
   | none =>
