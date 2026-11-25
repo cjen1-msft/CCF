@@ -8,6 +8,7 @@ import all ConsensusCoverage.HandReadersAAppend
 import all ConsensusCoverage.HandReadersABatch
 import all ConsensusCoverage.HandReadersACampaign
 import all ConsensusCoverage.HandReadersAChain
+import all ConsensusCoverage.HandReadersACommitTerm
 import all ConsensusCoverage.HandReadersAElection
 import all ConsensusCoverage.HandReadersAHandler
 import all ConsensusCoverage.HandReadersALeader
@@ -41,6 +42,8 @@ private def lookup : (b : Classes.StepBranch) → Option (Exact b)
   | .facts_advance_inl_2 => some Primary.exactIdentity
   | .advance_chain_fresh => some (Chain.exactReader true)
   | .advance_chain_backed => some (Chain.exactReader false)
+  | .commitChains_step_led_inl => some (CommitTerm.exactReader true)
+  | .commitChains_step_led_inr => some (CommitTerm.exactReader false)
   | .campaign_three_campaign_inl => some (CampaignRows.exactReader false true)
   | .campaign_three_campaign_inr => some (CampaignRows.exactReader false false)
   | .campaign_votes_campaign_inl => some (CampaignRows.exactReader true true)
@@ -111,6 +114,6 @@ public theorem read_total (s : Step) {b} (h : b ∈ covered) :
   simpa only [read, Option.isSome_map] using (List.mem_filter.mp h).2
 
 set_option maxRecDepth 8192 in
-public theorem count : covered.Nodup ∧ covered.length = 63 := by decide +kernel
+public theorem count : covered.Nodup ∧ covered.length = 65 := by decide +kernel
 
 end ConsensusCoverage.HandReadersA
