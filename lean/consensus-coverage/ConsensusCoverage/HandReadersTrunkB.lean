@@ -4,6 +4,7 @@ module
 -- Licensed under the Apache 2.0 License.
 
 public import ConsensusCoverage.HandReadersABase
+import all ConsensusCoverage.HandReadersTrunkBCandidate
 import all ConsensusCoverage.HandReadersTrunkBElect
 import all ConsensusCoverage.HandReadersTrunkBStart
 
@@ -17,6 +18,10 @@ private def lookup : (b : Classes.StepBranch) → Option (HandReadersA.Exact b)
   | .canStartElection_engaged_can_inr_inr => some (Start.exactReader .candidate)
   | .elect_result_elected_inl => some (Elect.exactReader false)
   | .elect_result_elected_inr => some (Elect.exactReader true)
+  | .becomeCandidate_result_done_inl => some (Candidate.exactReader .wait)
+  | .becomeCandidate_result_done_inr => some (Candidate.exactReader .win)
+  | .becomeCandidate_result_started_inl => some (Candidate.exactReader .start)
+  | .becomeCandidate_result_started_inr => some (Candidate.exactReader .ballot)
   | _ => none
 
 public def covered : List Classes.StepBranch :=
@@ -36,6 +41,6 @@ public theorem read_total (s : Step) {b} (h : b ∈ covered) :
   simpa only [read,Option.isSome_map] using (List.mem_filter.mp h).2
 
 set_option maxRecDepth 8192 in
-public theorem count : covered.Nodup ∧ covered.length = 5 := by decide +kernel
+public theorem count : covered.Nodup ∧ covered.length = 9 := by decide +kernel
 
 end ConsensusCoverage.HandReadersTrunkB

@@ -130,8 +130,9 @@ private def Tree.injected (stem : Array Expr) (root : Name) (tail r h : Expr) :
 def compile (n : Name) : MetaM Unit := do
   let rs ← HandReadersBFactor.roots
   lambdaTelescope (←getConstInfo n).value! fun xs body => do
-    let stem := xs ++ #[xs[2]!,←mkAppM ``Ctx.tr #[xs[3]!]]
-    let proof ← split rs xs stem body
+    let ctx := xs.extract 0 4
+    let stem := ctx ++ #[xs[2]!,←mkAppM ``Ctx.tr #[xs[3]!]]
+    let proof ← split rs ctx stem body
     let mut ts := #[]
     for (_,t) in proof.tree.leaves do
       unless ← ts.anyM (isDefEq t) do ts := ts.push t
@@ -170,6 +171,36 @@ def compile (n : Name) : MetaM Unit := do
       addDecl (.thmDecl {
         name := en,levelParams := [],type := ←mkForallFVars vars (←mkAppM ``Iff #[lhs,tgt])
         value := ←mkLambdaFVars vars (←mkAppM ``Iff.intro #[fw,back])})
+
+private partial def template (p : Expr) (args : Array Expr) (pred : Option Expr) : MetaM Expr := do
+  if p.isAppOf ``Or then
+    return mkApp2 (mkConst ``Or) (←template (p.getArg! 0) args pred) (←template p.appArg! args pred)
+  if p.isAppOf ``Exists then
+    return ←withLocalDeclD `x (p.getArg! 0) fun x => do
+      let inner ← template (p.appArg!.beta #[x]) (args.push x) pred
+      if pred.isNone then return inner
+      return mkApp2 p.getAppFn (p.getArg! 0) (←mkLambdaFVars #[x] inner)
+  unless p.isAppOf ``And && HandReadersBPaths.reaches (p.getArg! 0) do
+    throwError "expected guarded call: {p.getAppFn}"
+  match pred with
+  | none => mkLambdaFVars args p.appArg!
+  | some k => return mkApp2 (mkConst ``And) (p.getArg! 0) (mkAppN k args)
+
+/-- Abstract only the local branch test; every caller, including any merged
+origin, remains in the kernel-checked dispatch equivalence. -/
+def query (n out : Name) : MetaM Unit := do
+  lambdaTelescope (←getConstInfo n).value! fun xs b => do
+    let first ← template (b.getArg! 0) #[] none
+    withLocalDeclD `pred (←inferType first) fun k => do
+      let body ← template b #[] (some k)
+      let vars := xs.push k
+      addDecl (.defnDecl {
+        name := out, levelParams := [], type := ←mkForallFVars vars (mkSort .zero)
+        value := ←mkLambdaFVars vars body, hints := .abbrev, safety := .safe})
+  compile out
+
+def guardOf (n : Name) : MetaM Expr := do
+  lambdaTelescope (←getConstInfo n).value! fun _ b => template (b.getArg! 0) #[] none
 
 end
 end ConsensusCoverage.HandReadersTrunkBFactor
