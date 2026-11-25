@@ -12,6 +12,7 @@ import all ConsensusCoverage.HandReadersTrunkCSent
 import all ConsensusCoverage.HandReadersTrunkCLog
 import all ConsensusCoverage.HandReadersTrunkCMatch
 import all ConsensusCoverage.HandReadersTrunkCRoleStrict
+import all ConsensusCoverage.HandReadersTrunkCRoleIdentity
 import all ConsensusCoverage.HandReadersTrunkCVote
 import all ConsensusCoverage.HandReadersTrunkCVoteIdentity
 
@@ -28,6 +29,7 @@ private def lookup : (b : Classes.StepBranch) → Option (Exact b)
   | .matchIndex_advance_inl => some (Match.reader false)
   | .matchIndex_advance_inr => some (Match.reader true)
   | .role_advance_inr => some RoleSites.strict
+  | .role_advance_inl => some RoleSites.identity
   | .votedFor_advance_inr => some VoteSites.strict
   | .votedFor_advance_inl => some VoteSites.identity
   | .handleAppendEntiresFromPrimary_eq_roleCase__inl => some (Fold.reader false)
@@ -53,6 +55,6 @@ public theorem read_total (s : Step) {b} (mem : b ∈ covered) :
   simpa only [read, Option.isSome_map] using (List.mem_filter.mp mem).2
 
 set_option maxRecDepth 8192 in
-public theorem count : covered.Nodup ∧ covered.length = 14 := by decide +kernel
+public theorem count : covered.Nodup ∧ covered.length = 15 := by decide +kernel
 
 end ConsensusCoverage.HandReadersTrunkC
