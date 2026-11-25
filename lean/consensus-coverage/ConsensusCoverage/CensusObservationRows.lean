@@ -11,6 +11,7 @@ import all ConsensusCoverage.ReadersGenerated
 import all ConsensusCoverage.ReadersAtoms
 import all ConsensusCoverage.ReadersIndex
 import all ConsensusCoverage.GuardedDomain
+meta import ConsensusCoverage.CensusReach
 
 namespace ConsensusCoverage.CensusObservationRows
 
@@ -20,6 +21,17 @@ set_option backward.privateInPublic true
 set_option backward.privateInPublic.warn false
 set_option maxRecDepth 16384
 set_option maxHeartbeats 0
+
+census_reach finitePersistAccept := reach% CensusGhost.Exec.step_persist_pre_kind_accept[0]
+census_reach rawPersistAccept := reach% ReadersCompiler.R.step_persist_pre_kind_accept[0]
+census_reach finitePersistNow := reach% CensusGhost.Exec.step_persist_now_after_inl[0]
+census_reach rawPersistNow := reach% ReadersCompiler.R.step_persist_now_after_inl[0]
+census_reach finiteStableNow := reach% CensusGhost.Exec.step_rv_stable_now_after_inl[0]
+census_reach rawStableNow := reach% ReadersCompiler.R.step_rv_stable_now_after_inl[0]
+census_reach finiteNewAppendRequest := reach% CensusGhost.Exec.step_new_message_h_appendEntriesRequest[0]
+census_reach rawNewAppendRequest := reach% ReadersCompiler.R.step_new_message_h_appendEntriesRequest[0]
+census_reach finiteOutgoingMessage := reach% CensusGhost.Exec.step_messages_mem_network_inr[0]
+census_reach rawOutgoingMessage := reach% ReadersCompiler.R.step_messages_mem_network_inr[0]
 
 private abbrev input (x : XView) (g h : Ghost) : CensusGhost.Input :=
   ⟨slice g, slice h, ExplorerGhost.elections h x.base.before x.base.after⟩
@@ -47,9 +59,9 @@ local macro "observed_proof " finite:ident raw:ident : tactic => `(tactic|
    change some (@$finite (input x g h) ⟨cfg⟩ (physical x g h)) = some (@$raw ⟨cfg⟩ x)
    congr 1
    unfold $finite:ident $raw:ident
-   simp only [Exec.reach_237, ReadersCompiler.R.reach_237, Exec.reach_39, ReadersCompiler.R.reach_39,
-     Exec.reach_395, ReadersCompiler.R.reach_395, Exec.reach_26, ReadersCompiler.R.reach_26,
-     Exec.reach_25, ReadersCompiler.R.reach_25, ReadersIndex.sameSent, ReadersIndex.patchedMatch,
+   simp only [finitePersistAccept, rawPersistAccept, finitePersistNow, rawPersistNow,
+     finiteStableNow, rawStableNow, finiteNewAppendRequest, rawNewAppendRequest,
+     finiteOutgoingMessage, rawOutgoingMessage, ReadersIndex.sameSent, ReadersIndex.patchedMatch,
      ReadersIndex.sameMatch, XView.sent, physical, input, obs, slice, any_as_exists,
      List.mem_attach, true_and, Subtype.exists, exists_prop, List.mem_eraseDups, List.mem_flatMap,
      List.mem_map, CensusObserved.observation_mem pre, CensusObserved.observation_mem post]))

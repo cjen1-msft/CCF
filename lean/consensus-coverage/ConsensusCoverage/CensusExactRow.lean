@@ -8,6 +8,7 @@ import all ConsensusCoverage.ReadersGenerated
 import all ConsensusCoverage.ReadersCompiler
 import all ConsensusCoverage.ReadersAtoms
 meta import Lean
+meta import ConsensusCoverage.CensusReach
 
 namespace ConsensusCoverage.CensusExactRow
 
@@ -17,6 +18,8 @@ set_option backward.privateInPublic true
 set_option backward.privateInPublic.warn false
 set_option maxRecDepth 16384
 set_option maxHeartbeats 0
+
+census_reach historicalChange := reach% ReadersCompiler.R.step_sorted_now_after_inl[3]
 
 meta section
 
@@ -58,13 +61,13 @@ private partial def specialize (n target : Name) (memo : NameMap (Option Name)) 
 end
 
 local elab "share_raw" : command => Lean.Elab.Command.liftTermElabM do
-  let _ ← specialize ``ReadersCompiler.readView `ConsensusCoverage.ReadersCompiler.R.reach_8 {}
+  let _ ← specialize ``ReadersCompiler.readView ``historicalChange {}
 
 share_raw
 
 private theorem sameThunk (cfg : FullProfile.Configuration) (x : XView) :
     (Thunk.mk fun _ => @CensusFresh.guarded ⟨cfg⟩ x) =
-      (Thunk.mk fun _ => @ReadersCompiler.R.reach_8 ⟨cfg⟩ x) := by
+      (Thunk.mk fun _ => @historicalChange ⟨cfg⟩ x) := by
   apply congrArg Thunk.mk
   funext
   exact @CensusFresh.guarded_eq ⟨cfg⟩ x
