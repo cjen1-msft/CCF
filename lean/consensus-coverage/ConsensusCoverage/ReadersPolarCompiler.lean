@@ -281,12 +281,26 @@ private partial def guarded (e : PolarEnv) (n : Name) (yes ex : Bool)
         | false, false => mkAppOptM ``guarded_forall_no #[α, pred, g.list, test, sound]
       return some (← fromProof proof)
 
-private partial def quantifier (e : PolarEnv) (n : Name) (yes ex : Bool) (p α pred : Expr) :
+private partial def quantifier (e : PolarEnv) (n : Name) (yes ex : Bool) (p α pred : Expr)
+    (swapped := false) :
     CM (Option Compiled) := do
   if ← isProp α then return ← propositional e n yes ex α pred
   let bound ← if ex then existsGuard e.exact α pred else forallGuard e.exact α pred
   if let some (g, bounded, binder) := bound then
     if let some v ← guarded e n yes ex α pred g bounded binder then return some v
+  -- The dependent union can forget which inner candidate supplied the guard.
+  if ex && !swapped && bound.all (fun (g, _, _) => g.tag.startsWith "dep:") then
+    let nested ← withLocalDeclD `outer α fun x => do
+      let inner := pred.beta #[x]
+      unless inner.isAppOfArity ``Exists 2 &&
+          !(inner.getArg! 0).containsFVar x.fvarId! do return none
+      return some (← mkLambdaFVars #[x] inner.appArg!)
+    if let some nested := nested then
+      let iff ← mkAppOptM ``exists_comm #[none, none, nested]
+      let rhs ← Core.betaReduce (← typeArg iff 1)
+      if let some v ← quantifier e n yes ex rhs (rhs.getArg! 0) rhs.appArg! (swapped := true) then
+        let eq ← mkAppM ``propext #[iff]
+        return some (← transport yes { expr := rhs, proof? := some eq } v)
   if yes != ex then
     if ← isNatType α then
       if let some sat ← saturateNat ex pred then

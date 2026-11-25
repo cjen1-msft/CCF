@@ -107,7 +107,8 @@ private def claim12 : Claim :=
     .accept_backed_max_eq_or_inl, .accept_backed_max_eq_or_inr, .accept_backed_shape_inr,
     .accept_shape_eq_zero_or_pos_inl, .accept_shape_shape_neg,
     .appendEntriesRequest_summary_observe_bumping_inr, .commitFrontier_invariant_event_receive,
-    .commit_backed_kind_accept, .new_message_h_appendEntriesResponse, .post_log_kind_accept,
+    .commit_backed_kind_accept, .handleAppendEntriesRequest_stepDown_neg,
+    .handleAppendEntriesRequest_conflict_none, .new_message_h_appendEntriesResponse, .post_log_kind_accept,
     .post_two_active_inr_inr_inl, .receive_message_appendEntriesRequest, .summary_event_receive,
     .summary_message_appendEntriesRequest
   ], by decide +kernel⟩
@@ -191,14 +192,16 @@ private def claims : List Claim := [
 
 private def caseClaims : List (Claim ReadersCorpus.caseStepAt) :=
   [⟨20, 4, [
-    .observeTerm_log_message_appendEntriesResponse, .observeTerm_commitIndex_message_appendEntriesResponse
-  ], by decide +kernel⟩]
+    .observeTerm_log_message_appendEntriesResponse, .observeTerm_commitIndex_message_appendEntriesResponse,
+    .observeTerm_commitIndex_message_proposeRequestVoteRequest
+  ], by decide +kernel⟩,
+  ⟨31, 11, [.handleAppendEntriesRequest_conflict_some], by decide +kernel⟩]
 
 /-- Cases witnessed by an executable reader on a replayed corpus step. -/
 public def witnessed : List Classes.StepBranch :=
   (claims.flatMap (·.questions) ++ caseClaims.flatMap (·.questions)) ++ [.summary_message_requestVoteResponse]
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 184 := by decide
+public theorem count : witnessed.Nodup ∧ witnessed.length = 188 := by decide
 
 /-- Count the current union without pinning the independently updated case census. -/
 public theorem union_count :
