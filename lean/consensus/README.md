@@ -445,6 +445,10 @@ lake -d "$WS/consensus-coverage" env lean --run "$PWD/lean/consensus-coverage/sc
   --exhaust --voters 0,1 --nodes 0,1 --max-log 2 --max-term 3 --max-copies 1 --out /tmp/bounded.tsv
 ```
 
+By default `build-explorer.sh` builds the engine without the generated
+readers, in about a minute. `--with-readers` links them in for the reader
+census; that build takes much longer.
+
 ```sh
 EXE=$(LEAN_CC=/path/to/gcc16/bin/cc bash lean/consensus-coverage/scripts/build-explorer.sh | tail -n 1)
 nice "$EXE" --queue-ladder --max-log 2 --max-term 3 --out /tmp/ladder.tsv
