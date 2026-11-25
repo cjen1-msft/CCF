@@ -48,7 +48,7 @@ private def claim0 : Claim :=
   ], by decide +kernel⟩
 private def claim1 : Claim :=
   ⟨0, 1, [
-    .persist_persist_inl, .persist_pre_kind_append, .persist_seen_after_inl
+    .commitChains_step_led_inl, .persist_persist_inl, .persist_pre_kind_append, .persist_seen_after_inl
   ], by decide +kernel⟩
 private def claim2 : Claim :=
   ⟨1, 0, [.rooted_now_after_inr, .sorted_now_after_inr], by decide +kernel⟩
@@ -163,6 +163,7 @@ private def claim29 : Claim :=
 private def claim30 : Claim :=
   ⟨131, 3, [
     .campaign_backed_pre_split_inl, .candidate_kind_inl, .candidate_now_after_inl,
+    .grantFactsBefore_grant_inr, .grantFactsBefore_supported_inl,
     .message_terms_h_requestVoteRequest, .new_message_h_requestVoteRequest,
     .receive_message_proposeRequestVoteRequest, .summary_message_proposeRequestVoteRequest
   ], by decide +kernel⟩
@@ -197,7 +198,7 @@ private def caseClaims : List (Claim ReadersCorpus.caseStepAt) :=
 public def witnessed : List Classes.StepBranch :=
   (claims.flatMap (·.questions) ++ caseClaims.flatMap (·.questions)) ++ [.summary_message_requestVoteResponse]
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 181 := by decide
+public theorem count : witnessed.Nodup ∧ witnessed.length = 184 := by decide
 
 /-- Count the current union without pinning the independently updated case census. -/
 public theorem union_count :
