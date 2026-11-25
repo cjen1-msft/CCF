@@ -221,13 +221,58 @@ private def individual : List Classes.StepBranch :=
     .nominateSuccessor_successor_some, .nominateSuccessor_successor_none,
     .commit_backed_now_after_inr, .certificates_agree_backing_inl,
     .certificates_agree_backing_inr, .new_in_elected_led_inr, .rv_stable_now_after_inl,
-    .led_cur_role_inr]
+    .led_cur_role_inr, .led_cur_now_after_inr, .persist_now_after_inr, .seen_after_now_after_inr]
+
+private theorem old_seen_other [Config.InitialConfiguration] {f : Frame} {t : State}
+    (c : Ctx f t) {n o} (other : n ≠ c.actor) (h : Seen (f.advance t) n o) : Seen f n o := by
+  rcases c.seen_after h with old | ⟨eq, _⟩
+  · exact old
+  · exact (other eq).elim
+
+private theorem persist_delta_actor [Config.InitialConfiguration] {f : Frame} {t : State}
+    (c : Ctx f t) {n st o i}
+    (r : (reach% SolvedWitnesses.step_persist_now_after_inr[0]) f t c c n st o i) :
+    n = c.actor := by
+  apply Classical.byContradiction
+  intro different
+  obtain ⟨now, seen, sig, fresh, _⟩ := r
+  rcases c.now_after now with ⟨eq, _⟩ | ⟨_, old⟩
+  · exact different eq
+  · exact fresh ⟨old, old_seen_other c different seen, sig⟩
+
+public theorem led_cur_other_false (s : Step) : label s (.step .led_cur_now_after_inr) = false := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  apply solved_false
+  change ¬ SolvedWitnesses.step_led_cur_now_after_inr _ _ _
+  rintro ⟨_, _, _, r, ⟨other, old⟩, _⟩
+  exact r.2.2.1 ⟨old, s.context.led_other other r.2.1⟩
+
+public theorem persist_other_false (s : Step) : label s (.step .persist_now_after_inr) = false := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  apply solved_false
+  change ¬ SolvedWitnesses.step_persist_now_after_inr _ _ _
+  rintro ⟨_, _, _, _, r, ⟨other, _⟩, _⟩
+  exact other (persist_delta_actor s.context r)
+
+public theorem seen_other_false (s : Step) : label s (.step .seen_after_now_after_inr) = false := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  apply solved_false
+  change ¬ SolvedWitnesses.step_seen_after_now_after_inr _ _ _
+  rintro (h | h)
+  all_goals obtain ⟨n, o, r, _, st, _, _, _, _, _, ⟨other, _⟩, _⟩ := h
+  · obtain ⟨_, now, seen, fresh, _⟩ := r
+    rcases s.context.now_after now with ⟨eq, _⟩ | ⟨_, old⟩
+    · exact other eq
+    · exact fresh ⟨old, old_seen_other s.context other seen⟩
+  · rcases r with ⟨_, _, _, _, _, _, _, _, _, eq⟩ | ⟨_, _, r, _⟩
+    · exact other eq
+    · exact other (persist_delta_actor s.context r)
 
 /-- Cases refuted by the generic support checks or individual proofs below. -/
 public def refuted : List Classes.StepBranch :=
   FullProfile.stepBranches.toList.filter fun b => noSupport b || decide (b ∈ individual)
 
-public theorem count : refuted.Nodup ∧ refuted.length = 10 := by decide +kernel
+public theorem count : refuted.Nodup ∧ refuted.length = 13 := by decide +kernel
 
 public theorem label_false {b : Classes.StepBranch} (mem : b ∈ refuted) :
     ∀ s : Step, label s (.step b) = false := by
@@ -238,7 +283,7 @@ public theorem label_false {b : Classes.StepBranch} (mem : b ∈ refuted) :
   · exact support_false s b unsupported
   · have mem := of_decide_eq_true direct
     simp only [individual, List.mem_cons, List.not_mem_nil, or_false] at mem
-    rcases mem with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+    rcases mem with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
     · exact retained_false s
     · exact act_nomination_false s
     · exact nomination_some_false s
@@ -249,5 +294,8 @@ public theorem label_false {b : Classes.StepBranch} (mem : b ∈ refuted) :
     · exact new_in_elected_fresh_leader_false s
     · exact rv_stable_actor_false s
     · exact led_cur_retired_false s
+    · exact led_cur_other_false s
+    · exact persist_other_false s
+    · exact seen_other_false s
 
 end ConsensusCoverage.CaseUnreachable
