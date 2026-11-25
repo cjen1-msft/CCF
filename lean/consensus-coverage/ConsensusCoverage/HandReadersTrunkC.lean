@@ -7,6 +7,7 @@ public import ConsensusCoverage.HandReadersABase
 import all ConsensusCoverage.HandReadersTrunkCFollower
 import all ConsensusCoverage.HandReadersTrunkCReply
 import all ConsensusCoverage.HandReadersTrunkCAppend
+import all ConsensusCoverage.HandReadersTrunkCCommit
 
 namespace ConsensusCoverage.HandReadersTrunkC
 
@@ -14,6 +15,7 @@ open Consensus ActionProfile HandReadersA
 
 private def lookup : (b : Classes.StepBranch) → Option (Exact b)
   | .appendBatch_summary_role_inr => some Batch.retired
+  | .commit_le_advance_inr => some Batch.commitStrict
   | .handleAppendEntiresFromPrimary_eq_roleCase__inl => some (Fold.reader false)
   | .handleAppendEntiresFromPrimary_eq_roleCase__inr => some (Fold.reader true)
   | .aeReply_stepDown_pos => some (Reply.reader true)
@@ -37,6 +39,6 @@ public theorem read_total (s : Step) {b} (mem : b ∈ covered) :
   simpa only [read, Option.isSome_map] using (List.mem_filter.mp mem).2
 
 set_option maxRecDepth 8192 in
-public theorem count : covered.Nodup ∧ covered.length = 5 := by decide +kernel
+public theorem count : covered.Nodup ∧ covered.length = 6 := by decide +kernel
 
 end ConsensusCoverage.HandReadersTrunkC
