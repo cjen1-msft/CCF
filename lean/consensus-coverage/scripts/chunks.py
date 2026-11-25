@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) Microsoft Corporation. All rights reserved.
+# Licensed under the Apache 2.0 License.
 """Partition the unmarked case splits of the consensus proof into chunks for workers.
 
 Usage, from the root of a checkout, after `check.py final` has run at the current commit:

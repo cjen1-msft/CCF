@@ -11,6 +11,11 @@ import all ConsensusCoverage.ReplayAnswers
 import all ConsensusCoverage.CensusReplay
 import all ConsensusCoverage.Readers
 import all ConsensusCoverage.ReadersGenerated
+import all ConsensusCoverage.ReadersPolarGenerated
+import all ConsensusCoverage.ReadersPolarBacking
+import all ConsensusCoverage.ReadersPolarSummary
+import all ConsensusCoverage.ReadersPolarObserve
+import all ConsensusCoverage.ReadersPolar
 import all ConsensusCoverage.ReadersAtoms
 import all ConsensusCoverage.ReadersShapes
 import all ConsensusCoverage.ReadersIndex
@@ -464,14 +469,40 @@ private theorem bounded35Valid : bounded35.valid := by decide
 private def bounded35Cert : Certificate := certify bounded35 [] bounded35Valid
   [caseAt 21 [.candidate_candidate_inr]]
 
-private def certificates : List Certificate := [cert0, cert1, bounded0Cert, bounded1Cert, bounded2Cert, bounded3Cert, bounded4Cert, bounded5Cert, bounded6Cert, bounded7Cert, bounded8Cert, bounded9Cert, bounded10Cert, bounded11Cert, bounded12Cert, bounded13Cert, bounded14Cert, bounded15Cert, bounded16Cert, bounded17Cert, bounded18Cert, bounded19Cert, bounded20Cert, bounded21Cert, bounded22Cert, bounded23Cert, bounded24Cert, bounded25Cert, bounded26Cert, bounded27Cert, bounded28Cert, bounded29Cert, bounded30Cert, bounded31Cert, bounded32Cert, bounded33Cert, bounded34Cert, bounded35Cert]
+private def bounded36 : Run :=
+  ⟨{0, 1}, [0, 1], [     .input 0 (.append [{content := .transaction 1 {}}])]⟩
+private theorem bounded36Valid : bounded36.valid := by decide
+private def bounded36Cert : Certificate := certify bounded36 [] bounded36Valid
+  [caseAt 0 [.appendEntry_configuration_none,
+    .foldlM__items_nil_2,
+    .foldl_select_max_values_nil,
+    .seen_after_now_after_inl,
+    .seen_after_seen_inl,
+    .seen_after_seen_inr,
+    .summary_input_append]]
+
+private def bounded37 : Run :=
+  ⟨{0, 1}, [0, 1], [     .input 0 (.timeout .checkQuorum)]⟩
+private theorem bounded37Valid : bounded37.valid := by decide
+private def bounded37Cert : Certificate := certify bounded37 [] bounded37Valid
+  [caseAt 0 [.prefix_small_inr,
+    .summary_input_timeout,
+    .summary_kind_checkQuorum]]
+
+private def bounded38 : Run :=
+  ⟨{0}, [0], [     .input 0 (.append [{content := .signature}]),     .input 0 (.append [{content := .transaction 1 {}}])]⟩
+private theorem bounded38Valid : bounded38.valid := by decide
+private def bounded38Cert : Certificate := certify bounded38 [] bounded38Valid
+  [caseAt 1 [.weaken_backed_inr]]
+
+private def certificates : List Certificate := [cert0, cert1, bounded0Cert, bounded1Cert, bounded2Cert, bounded3Cert, bounded4Cert, bounded5Cert, bounded6Cert, bounded7Cert, bounded8Cert, bounded9Cert, bounded10Cert, bounded11Cert, bounded12Cert, bounded13Cert, bounded14Cert, bounded15Cert, bounded16Cert, bounded17Cert, bounded18Cert, bounded19Cert, bounded20Cert, bounded21Cert, bounded22Cert, bounded23Cert, bounded24Cert, bounded25Cert, bounded26Cert, bounded27Cert, bounded28Cert, bounded29Cert, bounded30Cert, bounded31Cert, bounded32Cert, bounded33Cert, bounded34Cert, bounded35Cert, bounded36Cert, bounded37Cert, bounded38Cert]
 -- END GENERATED CERTIFICATES
 
 /-- The positive cases computed by running the sound reader on the cover. -/
 public def witnessed : List Classes.StepBranch :=
   (certificates.flatMap (·.questions)).eraseDups
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 181 := by decide +kernel
+public theorem count : witnessed.Nodup ∧ witnessed.length = 192 := by decide +kernel
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by

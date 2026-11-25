@@ -49,11 +49,15 @@ witnesses (among the evaluated steps) and a greedy schedule cover are
 written to `--out`.
 
 `--exhaust` explores a single bounded deployment by breadth-first search,
-merging equal finite proof-frame keys. On every merge it checks the
-enabled action signatures of both concrete histories. Counts are not
-proofs of key sufficiency or exhaustion of the unbounded model. With
-`--case-out FILE`, it also reads every question on every admitted edge
-of the merged graph, using only ReplayAnswers. `--finite-case-reads`
+merging equal finite proof-frame keys. By default it checks the enabled
+action signatures of both histories on every merge. Counts are not proofs
+of key sufficiency or exhaustion of the unbounded model. `--case-out FILE`
+records ReplayAnswers on every admitted edge. Add `--reader-census` to
+try the generated three-valued reader wherever ReplayAnswers is unknown.
+Its inputs are the ordered history of the chosen BFS representative,
+including its witness pools, not every history entering that frame.
+The wider key adds only total coordinates, not one-sided answers.
+`--finite-case-reads`
 prepares its evidence from the incremental ghost and uses the projection
 for unconditional columns. It checks all answers against history at
 the first appearance of each key and every 1,024th admitted edge.
@@ -526,20 +530,20 @@ def backgrounds (o : Options) : Array Deployment :=
 def search (o : Options) : IO Score := do
   let start ← IO.monoMsNow
   let family := if o.checkFamily then some nominationExample else none
-  let roots := (backgrounds o).map fun d => ({deployment := d, state := d.initial} : Path)
+  let initialPaths := (backgrounds o).map fun d => ({deployment := d, state := d.initial} : Path)
   let selected ← IO.ofExcept (o.prefixes.mapM findSeed)
   let mut score := {}
   if o.cases then
     score := {score with cases := FullProfile.stepBranches.map fun _ => {}}
   if o.checkTimely then
-    for p in roots do
+    for p in initialPaths do
       let old := score.timelyFailures
       score := score.checkTimely p
       if score.timelyFailures > old then IO.println s!"TIMELY FAILURE at initialization: {repr p.deployment}"
-  let mut walkRoots := roots
+  let mut walkRoots := initialPaths
   for seed in selected do
     let d := seed.deployment
-    let some root := roots.find? (fun p => p.deployment.voters == d.voters && p.deployment.nodes == d.nodes)
+    let some root := initialPaths.find? (fun p => p.deployment.voters == d.voters && p.deployment.nodes == d.nodes)
       | throw (IO.userError s!"missing deployment for prefix {seed.name}")
     let mut p := root
     for cmd in seed.commands do
@@ -552,7 +556,7 @@ def search (o : Options) : IO Score := do
       p := q
     walkRoots := walkRoots.push p
   unless selected.isEmpty do growth s!"Replayed {selected.length} walk prefixes" score
-  let mut todo := roots
+  let mut todo := initialPaths
   for i in [:o.depth] do
     let mut next := #[]
     for p in todo do

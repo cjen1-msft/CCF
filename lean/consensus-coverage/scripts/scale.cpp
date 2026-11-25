@@ -268,6 +268,8 @@ namespace
   {
     L* b;
     U64 cap, budget, seconds, audit_every, audited = 0;
+    U64 audited_known = 0, audited_extra = 0;
+    bool ordered_census;
     std::string out, case_out;
     Pool nodes, ghosts, envelopes;
     std::vector<U64> sources, targets;
@@ -297,6 +299,7 @@ namespace
       budget(lean_unbox(lean_array_uget_borrowed(params, 1)) - U64(1)),
       seconds(lean_unbox(lean_array_uget_borrowed(params, 2)) - U64(1)),
       audit_every(lean_unbox(lean_array_uget_borrowed(params, 5))),
+      ordered_census(lean_unbox(lean_array_uget_borrowed(params, 6)) != 0),
       out(lean_string_cstr(out)),
       case_out(lean_string_cstr(cases))
     {
@@ -460,7 +463,7 @@ namespace
       auto ki = keys.add(lean_string_cstr(lean_ctor_get(r, 1)));
       auto fi = families.add(lean_string_cstr(lean_ctor_get(r, 2)));
       Id ci = NIL;
-      if (!case_out.empty())
+      if (!case_out.empty() && (!ordered_census || audit_every))
       {
         auto code = lean_ctor_get(r, 3);
         if (!lean_is_scalar(code) || lean_unbox(code) >= NIL)
@@ -570,6 +573,31 @@ namespace
       queue({});
     }
 
+    void check_row(const std::string& actual, Id cases, U64 step, U64 frame)
+    {
+      const auto& cached = census.at(cases).answers;
+      if (actual.size() != cached.size())
+        throw std::runtime_error("ordered-history census row width mismatch");
+      for (Id i : wide_columns)
+        if (!cached.at(i))
+          throw std::runtime_error("unknown total coordinate in finite audit");
+      for (size_t i = 0; i < actual.size(); ++i)
+      {
+        if (cached[i] == 0)
+        {
+          audited_extra += actual[i] != 0;
+          continue;
+        }
+        ++audited_known;
+        if (actual[i] != cached[i])
+          throw std::runtime_error(
+            "ordered-history mismatch on edge " + std::to_string(step) +
+            ", frame " + std::to_string(frame) + ", question " +
+            std::to_string(i));
+      }
+      ++audited;
+    }
+
     void run()
     {
       initialize();
@@ -588,18 +616,11 @@ namespace
           auto row = lean_task_get(job.task.p);
           if (lean_is_scalar(row))
             throw std::runtime_error("ordered-history row replay failed");
-          const auto actual = bytes(Ref::borrow(lean_ctor_get(row, 0)));
-          const auto& cached = census.at(job.cases).answers;
-          if (actual != cached)
-          {
-            const auto i = std::mismatch(
-              actual.begin(), actual.end(), cached.begin(), cached.end());
-            throw std::runtime_error(
-              "ordered-history mismatch on edge " + std::to_string(job.step) +
-              ", frame " + std::to_string(job.frame) + ", question " +
-              std::to_string(i.first - actual.begin()));
-          }
-          ++audited;
+          check_row(
+            bytes(Ref::borrow(lean_ctor_get(row, 0))),
+            job.cases,
+            job.step,
+            job.frame);
         }
         audits.clear();
         if (audited && audited % 1024 == 0)
@@ -624,7 +645,18 @@ namespace
             break;
           }
           auto r = read(f, arc);
-          if (audit_every && steps % audit_every == 0)
+          if (ordered_census)
+          {
+            auto path = actions(parent_path(id(head), arc.edge));
+            Ref row(call<ccf_scale_history_row>(b, path.p));
+            if (lean_is_scalar(row.p))
+              throw std::runtime_error("ordered-history census replay failed");
+            auto actual = intern_row(Ref::borrow(row[0]));
+            if (audit_every && steps % audit_every == 0)
+              check_row(census[actual].answers, r.label.cases, steps, head);
+            r.label.cases = actual;
+          }
+          else if (audit_every && steps % audit_every == 0)
           {
             auto prefix = actions(parent_path(id(head), arc.edge));
             auto fn = lean_alloc_closure(reinterpret_cast<void*>(history_job), 3, 2);
@@ -654,7 +686,9 @@ namespace
       {
         if (!audits.empty())
           check_audits();
-        std::cout << "ordered-history row comparisons: " << audited << '\n';
+        std::cout << "ordered-history row comparisons: " << audited
+                  << "\nknown finite answers checked: " << audited_known
+                  << "; additional ordered answers: " << audited_extra << '\n';
       }
       report(visited.frames.size());
     }
