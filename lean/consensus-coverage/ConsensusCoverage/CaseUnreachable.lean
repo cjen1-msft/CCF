@@ -4,6 +4,7 @@ module
 -- Licensed under the Apache 2.0 License.
 
 meta import ConsensusCoverage.ReachPath
+meta import ConsensusCoverage.PathPremises
 public import ConsensusCoverage.EvidenceSupport
 public import ConsensusCoverage.EventSupport
 public import ConsensusCoverage.ReducedQuestions
@@ -221,7 +222,8 @@ private def individual : List Classes.StepBranch :=
     .nominateSuccessor_successor_some, .nominateSuccessor_successor_none,
     .commit_backed_now_after_inr, .certificates_agree_backing_inl,
     .certificates_agree_backing_inr, .new_in_elected_led_inr, .rv_stable_now_after_inl,
-    .led_cur_role_inr, .led_cur_now_after_inr, .persist_now_after_inr, .seen_after_now_after_inr]
+    .led_cur_role_inr, .led_cur_now_after_inr, .persist_now_after_inr, .seen_after_now_after_inr,
+    .facts_advance_inr_2, .facts_role_inl, .facts_role_inr]
 
 private theorem old_seen_other [Config.InitialConfiguration] {f : Frame} {t : State}
     (c : Ctx f t) {n o} (other : n ≠ c.actor) (h : Seen (f.advance t) n o) : Seen f n o := by
@@ -268,11 +270,44 @@ public theorem seen_other_false (s : Step) : label s (.step .seen_after_now_afte
     · exact other eq
     · exact other (persist_delta_actor s.context r)
 
+private theorem no_winning_advance [Config.InitialConfiguration] {f : Frame} {t : State}
+    (c : Ctx f t) (middle : NodeState) (win : Wins c.actor c.pre c.event c.post)
+    (log : c.post.log = middle.log) (term : c.post.currentTerm = middle.currentTerm)
+    (lt : middle.commitIndex < c.post.commitIndex)
+    (eq : c.post.commitIndex = highestCommittableIndex middle c.actor) : False := by
+  obtain ⟨bound, signed, stamp, _⟩ := highestCommittableIndex_spec middle c.actor (eq ▸ lt)
+  exact no_election_entry c (c.wins_elect win) (signature_pos signed)
+    (log.symm ▸ bound) (by rw [log, term]; exact stamp)
+
+local macro "winning_advance_paths " c:term:arg h:term:arg : tactic => `(tactic|
+  (rcases ($h) with h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h
+   all_goals
+     obtain ⟨self, pre, ev, post, origin, candidate, rest⟩ := h
+     have pins : self = ($c).actor ∧ pre = ($c).pre ∧ ev = ($c).event ∧ post = ($c).post := by
+       path_premise origin
+     obtain ⟨hs, hp, he, ht⟩ := pins
+     subst self; subst pre; subst ev; subst post
+     apply no_winning_advance $c (primaryState candidate)
+     all_goals path_premise rest))
+
+public theorem winning_advance_false (s : Step) (b : Classes.StepBranch)
+    (arm : b = .facts_advance_inr_2 ∨ b = .facts_role_inl ∨ b = .facts_role_inr) :
+    label s (.step b) = false := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  apply solved_false
+  rcases arm with rfl | rfl | rfl
+  all_goals
+    first | change ¬ SolvedWitnesses.step_facts_advance_inr_2 _ _ _
+          | change ¬ SolvedWitnesses.step_facts_role_inl _ _ _
+          | change ¬ SolvedWitnesses.step_facts_role_inr _ _ _
+    intro h
+    winning_advance_paths s.context h
+
 /-- Cases refuted by the generic support checks or individual proofs below. -/
 public def refuted : List Classes.StepBranch :=
   FullProfile.stepBranches.toList.filter fun b => noSupport b || decide (b ∈ individual)
 
-public theorem count : refuted.Nodup ∧ refuted.length = 13 := by decide +kernel
+public theorem count : refuted.Nodup ∧ refuted.length = 16 := by decide +kernel
 
 public theorem label_false {b : Classes.StepBranch} (mem : b ∈ refuted) :
     ∀ s : Step, label s (.step b) = false := by
@@ -284,6 +319,7 @@ public theorem label_false {b : Classes.StepBranch} (mem : b ∈ refuted) :
   · have mem := of_decide_eq_true direct
     simp only [individual, List.mem_cons, List.not_mem_nil, or_false] at mem
     rcases mem with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+      | rfl | rfl | rfl
     · exact retained_false s
     · exact act_nomination_false s
     · exact nomination_some_false s
@@ -297,5 +333,6 @@ public theorem label_false {b : Classes.StepBranch} (mem : b ∈ refuted) :
     · exact led_cur_other_false s
     · exact persist_other_false s
     · exact seen_other_false s
+    all_goals exact winning_advance_false s _ (by decide)
 
 end ConsensusCoverage.CaseUnreachable
