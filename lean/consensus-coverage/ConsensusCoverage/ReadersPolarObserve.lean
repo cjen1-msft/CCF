@@ -18,7 +18,9 @@ set_option Elab.async false
 compile_required_reader_shard ConsensusCoverage.ReadersPolarObserve budget 400000
   + [step_observeTerm_log_message_appendEntriesResponse,
     step_observeTerm_commitIndex_message_appendEntriesResponse,
-    step_observeTerm_commitIndex_message_proposeRequestVoteRequest, step_vals_upToDate_lt_or_eq_of_le_inl,
+    step_observeTerm_commitIndex_message_proposeRequestVoteRequest, step_observeTerm_commitIndex_message_other,
+    step_observeTerm_log_message_proposeRequestVoteRequest, step_observeTerm_log_message_other,
+    step_vals_upToDate_lt_or_eq_of_le_inl,
     step_vals_upToDate_lt_or_eq_of_le_inr, step_initAsBackup_summary_eq_zero_or_pos_inr,
     step_appendEntriesRequest_summary_observe_bumping_inr, step_voteRequest_summary_observe_bumping_inr,
     step_voteResponse_summary_observe_bumping_inr, step_preVoteRequest_summary_observe_bumping_inr,

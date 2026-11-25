@@ -13,6 +13,7 @@ import all ConsensusCoverage.ReadersPolarGenerated
 import all ConsensusCoverage.ReadersPolarBacking
 import all ConsensusCoverage.ReadersPolarSummary
 import all ConsensusCoverage.ReadersPolarObserve
+import all ConsensusCoverage.ReadersPolarFrontier
 import all ConsensusCoverage.ReadersPolar
 import all ConsensusCoverage.ReplayAnswers
 import all ConsensusCoverage.CaseWitnesses
@@ -44,11 +45,12 @@ private def claim0 : Claim :=
     .rooted_now_after_inl, .rooted_post_log_inr_inl, .seen_after_now_after_inl,
     .seen_after_seen_inl, .seen_after_seen_inr, .sorted_now_after_inl, .sorted_post_log_inr_inl,
     .summary_input_append, .terms_mem_append_inl, .terms_mem_append_inr, .terms_now_after_inl,
-    .terms_post_log_inr_inl
+    .terms_post_log_inr_inl, .transfer_backed_inl, .weaken_backed_inl
   ], by decide +kernel⟩
 private def claim1 : Claim :=
   ⟨0, 1, [
-    .commitChains_step_led_inl, .persist_persist_inl, .persist_pre_kind_append, .persist_seen_after_inl
+    .commitChains_step_led_inl, .persist_persist_inl, .persist_pre_kind_append, .persist_seen_after_inl,
+    .transfer_backed_inr
   ], by decide +kernel⟩
 private def claim2 : Claim :=
   ⟨1, 0, [.rooted_now_after_inr, .sorted_now_after_inr], by decide +kernel⟩
@@ -163,7 +165,7 @@ private def claim29 : Claim :=
   ⟨130, 6, [.canon_mono_now_after_inr, .completeness_committed_inr], by decide +kernel⟩
 private def claim30 : Claim :=
   ⟨131, 3, [
-    .campaign_backed_pre_split_inl, .candidate_kind_inl, .candidate_now_after_inl,
+    .campaign_backed_pre_split_inl, .campaign_three_campaign_inl, .candidate_kind_inl, .candidate_now_after_inl,
     .grantFactsBefore_grant_inr, .grantFactsBefore_supported_inl,
     .message_terms_h_requestVoteRequest, .new_message_h_requestVoteRequest,
     .receive_message_proposeRequestVoteRequest, .summary_message_proposeRequestVoteRequest
@@ -193,15 +195,24 @@ private def claims : List Claim := [
 private def caseClaims : List (Claim ReadersCorpus.caseStepAt) :=
   [⟨20, 4, [
     .observeTerm_log_message_appendEntriesResponse, .observeTerm_commitIndex_message_appendEntriesResponse,
-    .observeTerm_commitIndex_message_proposeRequestVoteRequest
+    .observeTerm_commitIndex_message_proposeRequestVoteRequest, .observeTerm_commitIndex_message_other,
+    .observeTerm_log_message_proposeRequestVoteRequest, .observeTerm_log_message_other
   ], by decide +kernel⟩,
-  ⟨31, 11, [.handleAppendEntriesRequest_conflict_some], by decide +kernel⟩]
+  ⟨21, 5, [.elect_backed_termCase_inr], by decide +kernel⟩,
+  ⟨23, 5, [.elect_backed_termCase_inl], by decide +kernel⟩,
+  ⟨29, 6, [.pre_split_pre_backed_inl], by decide +kernel⟩,
+  ⟨31, 11, [.handleAppendEntriesRequest_conflict_some], by decide +kernel⟩,
+  ⟨32, 9, [.commitChains_step_led_inr], by decide +kernel⟩]
+
+private def scenarioClaims : List (Claim ReadersCorpus.scenarioStepAt) :=
+  [⟨0, 18, [.pre_split_pre_backed_inr, .pre_split_backing_inl], by decide +kernel⟩]
 
 /-- Cases witnessed by an executable reader on a replayed corpus step. -/
 public def witnessed : List Classes.StepBranch :=
-  (claims.flatMap (·.questions) ++ caseClaims.flatMap (·.questions)) ++ [.summary_message_requestVoteResponse]
+  (claims.flatMap (·.questions) ++ caseClaims.flatMap (·.questions) ++
+    scenarioClaims.flatMap (·.questions)) ++ [.summary_message_requestVoteResponse]
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 188 := by decide
+public theorem count : witnessed.Nodup ∧ witnessed.length = 201 := by decide
 
 /-- Count the current union without pinning the independently updated case census. -/
 public theorem union_count :
@@ -211,11 +222,13 @@ public theorem union_count :
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by
-  rw [witnessed, List.mem_append, List.mem_append, List.mem_singleton] at mem
-  rcases mem with (direct | cases) | rfl
+  rw [witnessed, List.mem_append, List.mem_append, List.mem_append, List.mem_singleton] at mem
+  rcases mem with ((direct | cases) | scenarios) | rfl
   · obtain ⟨c, _, found⟩ := List.mem_flatMap.mp direct
     exact c.occurs found
   · obtain ⟨c, _, found⟩ := List.mem_flatMap.mp cases
+    exact c.occurs found
+  · obtain ⟨c, _, found⟩ := List.mem_flatMap.mp scenarios
     exact c.occurs found
   · exact ReadersWitnessesSplit.voteResponse
 
