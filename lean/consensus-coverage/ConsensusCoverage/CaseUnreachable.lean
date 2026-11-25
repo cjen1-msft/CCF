@@ -114,6 +114,42 @@ public theorem certificates_committed_false (s : Step) :
   intro h
   certificate_paths s.context h
 
+-- A copied or retained entry has a pre-step canonical log in its term.
+-- Appending in that term instead needs a pre-step leader in the term.
+private theorem no_election_entry [Config.InitialConfiguration] {f : Frame} {t : Model.State}
+    (c : Ctx f t) {n k l i j} (e : ElectStep f t n k l i)
+    (pos : 0 < j) (bound : j ≤ c.post.log.length) (term : termAt c.post.log j = k) : False := by
+  have noCanon {log} (old : Canon f k log) : False := by
+    obtain ⟨_, led⟩ := c.inv.owner old
+    exact no_repeat_election c e led
+  rcases c.post_log with sub | ⟨_, _, _, primary, same, _⟩ | ⟨log, size, copy, _, eq⟩
+  · obtain ⟨_, anchor, _⟩ := c.inv.anchor _ _ j c.pre_now pos (Nat.le_trans bound sub.length_le)
+    rw [termAt_of_prefix sub bound, term] at anchor
+    exact noCanon anchor
+  · have sameTerm := (c.electStep e).2.2.2.2.1
+    exact no_repeat_election c e ((same.symm.trans sameTerm) ▸ c.pre_led primary)
+  · have sub : c.post.log <+: log := eq ▸ List.take_prefix _ _
+    obtain ⟨_, anchor, _⟩ := copy.anchor j pos (Nat.le_trans bound sub.length_le)
+    rw [termAt_of_prefix sub bound, term] at anchor
+    exact noCanon anchor
+
+private theorem no_election_commit [Config.InitialConfiguration] {f : Frame} {t : Model.State}
+    (c : Ctx f t) {n k l i st b j} (e : ElectStep f t n k l i)
+    (cert : CommitStep (f.advance t) n st k b j) : False := by
+  obtain rfl := (c.electStep e).1
+  obtain rfl := c.now_post cert.1.1
+  exact no_election_entry c e (signature_pos cert.2.2.2.1) cert.2.2.1 cert.2.2.2.2.1
+
+public theorem new_in_elected_fresh_leader_false (s : Step) :
+    label s (.step .new_in_elected_led_inr) = false := by
+  letI : Config.InitialConfiguration := ⟨s.cfg⟩
+  apply solved_false
+  change ¬ SolvedWitnesses.step_new_in_elected_led_inr s.frame s.after s.context
+  rintro (h | h | h | h | h)
+  all_goals repeat' first
+    | exact no_election_commit s.context h.1 h.2.1
+    | obtain ⟨_, h⟩ := h
+
 public theorem act_nomination_false (s : Step) :
     label s (.step .act_input_nominateSuccessor) = false := by
   letI : Config.InitialConfiguration := ⟨s.cfg⟩
@@ -150,13 +186,13 @@ private def individual : List Classes.StepBranch :=
   [.mem_network_mem_append_inl, .act_input_nominateSuccessor,
     .nominateSuccessor_successor_some, .nominateSuccessor_successor_none,
     .commit_backed_now_after_inr, .certificates_agree_backing_inl,
-    .certificates_agree_backing_inr]
+    .certificates_agree_backing_inr, .new_in_elected_led_inr]
 
 /-- Cases refuted by the generic support checks or individual proofs below. -/
 public def refuted : List Classes.StepBranch :=
   FullProfile.stepBranches.toList.filter fun b => noSupport b || decide (b ∈ individual)
 
-public theorem count : refuted.Nodup ∧ refuted.length = 7 := by decide +kernel
+public theorem count : refuted.Nodup ∧ refuted.length = 8 := by decide +kernel
 
 public theorem label_false {b : Classes.StepBranch} (mem : b ∈ refuted) :
     ∀ s : Step, label s (.step b) = false := by
@@ -167,7 +203,7 @@ public theorem label_false {b : Classes.StepBranch} (mem : b ∈ refuted) :
   · exact support_false s b unsupported
   · have mem := of_decide_eq_true direct
     simp only [individual, List.mem_cons, List.not_mem_nil, or_false] at mem
-    rcases mem with rfl | rfl | rfl | rfl | rfl | rfl | rfl
+    rcases mem with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
     · exact retained_false s
     · exact act_nomination_false s
     · exact nomination_some_false s
@@ -175,5 +211,6 @@ public theorem label_false {b : Classes.StepBranch} (mem : b ∈ refuted) :
     · exact commit_backed_other_false s
     · exact certificates_zero_false s
     · exact certificates_committed_false s
+    · exact new_in_elected_fresh_leader_false s
 
 end ConsensusCoverage.CaseUnreachable
