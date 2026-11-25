@@ -225,6 +225,27 @@ private theorem ackStable (q : AppendEntriesResponse) (ev : x.event = .receive n
   branch_at 15
   exact ⟨x.base.pre, q, ⟨x.base.actor, n, by long_path ok changed ev, fun h => h.2 peer⟩, leader, le⟩
 
+private def grant (p : NodeState) (n : NodeID) (q : RequestVoteRequest) : Bool :=
+  let p := bumpedState p q.term
+  decide (q.term = p.currentTerm ∧ voteLogUpToDate p q ∧ (!p.primaryKnown) = true ∧
+    (p.votedFor = none ∨ p.votedFor = some n))
+
+local macro "grant_path " x:ident ok:ident ch:ident n:ident q:ident ev:ident lt:ident g:ident : tactic => `(tactic|
+  (branch_at 15
+   rcases observe_bumping ($x).base.pre (message := .requestVoteRequest $q) trivial with h | h
+   · refine ⟨($x).base.actor, ($x).base.pre, $n, $q, ?_, h, h.1, h.2, $g,
+       $n, _, rfl, trivial, Nat.le_refl _⟩
+     long_path $ok $ch $ev
+   · exact absurd h.1 (Nat.not_le_of_lt $lt)))
+
+private theorem grantYes (q : RequestVoteRequest) (ev : x.event = .receive n (.requestVoteRequest q))
+    (lt : x.base.pre.currentTerm < q.term) (g : grant x.base.pre n q = true) :
+    step_voteRequest_summary_granted_pos f t c := by grant_path x ok changed n q ev lt g
+
+private theorem grantNo (q : RequestVoteRequest) (ev : x.event = .receive n (.requestVoteRequest q))
+    (lt : x.base.pre.currentTerm < q.term) (g : ¬grant x.base.pre n q = true) :
+    step_voteRequest_summary_granted_neg f t c := by grant_path x ok changed n q ev lt g
+
 end
 
 private def voteBump : Certificate := by
@@ -247,6 +268,8 @@ local macro "check_bump " b:term:arg r:term:arg i:num tag:term:arg get:ident cer
 
 private def certificates : List Certificate := [
   voteBump,
+  check_receive .voteRequest_summary_granted_pos campaign 4 request grantYes,
+  check_receive .voteRequest_summary_granted_neg denyVote 7 request grantNo,
   check_receive .preVoteRequest_summary_observe_bumping_inl higherPreRequest 8 request preNew,
   check_receive .voteResponse_summary_observe_bumping_inl higherVoteReply 20 response voteReplyNew,
   check_receive .preVoteResponse_summary_observe_bumping_inl higherPreReply 21 response preReplyNew,
