@@ -4,6 +4,7 @@ module
 -- Licensed under the Apache 2.0 License.
 
 public import ConsensusCoverage.HandReadersABase
+import all ConsensusCoverage.HandReadersTrunkBCampaign
 import all ConsensusCoverage.HandReadersTrunkBCandidate
 import all ConsensusCoverage.HandReadersTrunkBCandidateSends
 import all ConsensusCoverage.HandReadersTrunkBElect
@@ -30,6 +31,14 @@ private def lookup : (b : Classes.StepBranch) → Option (HandReadersA.Exact b)
   | .becomeCandidate_sends_mem_append_inr => some (CandidateSends.exactReader .ballot)
   | .becomePrimary_sends_mem_append_inl => some (Primary.exactReader false)
   | .becomePrimary_sends_mem_append_inr => some (Primary.exactReader true)
+  | .campaign_summary_result_inl => some (CampaignRows.exactReader .wait)
+  | .campaign_summary_campaign_inl => some (CampaignRows.exactReader .fresh)
+  | .campaign_summary_campaign_inr => some (CampaignRows.exactReader .kept)
+  | .campaign_summary_result_inr => some (CampaignRows.exactReader .win)
+  | .campaign_summary_role_inl => some (CampaignRows.exactReader .role)
+  | .campaign_summary_started_inl => some (CampaignRows.exactReader .nominate)
+  | .campaign_summary_started_inr_inl => some (CampaignRows.exactReader .ping)
+  | .campaign_summary_started_inr_inr => some (CampaignRows.exactReader .ballot)
   | _ => none
 
 public def covered : List Classes.StepBranch :=
@@ -49,6 +58,6 @@ public theorem read_total (s : Step) {b} (h : b ∈ covered) :
   simpa only [read,Option.isSome_map] using (List.mem_filter.mp h).2
 
 set_option maxRecDepth 8192 in
-public theorem count : covered.Nodup ∧ covered.length = 15 := by decide +kernel
+public theorem count : covered.Nodup ∧ covered.length = 23 := by decide +kernel
 
 end ConsensusCoverage.HandReadersTrunkB
