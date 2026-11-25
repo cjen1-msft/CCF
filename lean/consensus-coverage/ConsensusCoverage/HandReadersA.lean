@@ -5,6 +5,7 @@ module
 
 public import ConsensusCoverage.HandReadersABase
 import all ConsensusCoverage.HandReadersAAppend
+import all ConsensusCoverage.HandReadersAHandler
 import all ConsensusCoverage.HandReadersALeader
 import all ConsensusCoverage.HandReadersAObserve
 import all ConsensusCoverage.HandReadersBSummary
@@ -22,6 +23,10 @@ private def lookup : (b : Classes.StepBranch) → Option (Exact b)
   | .appendEntry_configuration_none => some (Append.exactReader .none)
   | .appendEntry_configuration_some => some (Append.exactReader .some)
   | .foldlM__items_cons => some (Append.exactReader .cons)
+  | .handleAppendEntriesRequest_stepDown_pos => some (Handler.exactReader .down)
+  | .handleAppendEntriesRequest_stepDown_neg => some (Handler.exactReader .stay)
+  | .handleAppendEntriesRequest_conflict_none => some (Handler.exactReader .clear)
+  | .handleAppendEntriesRequest_conflict_some => some (Handler.exactReader .conflict)
   | .summary_event_internal => some (summary .internal)
   | .summary_input_append => some (summary .append)
   | .summary_input_sendEntries => some (summary .send)
@@ -60,6 +65,6 @@ public theorem read_total (s : Step) {b} (h : b ∈ covered) :
   simpa only [read, Option.isSome_map] using (List.mem_filter.mp h).2
 
 set_option maxRecDepth 8192 in
-public theorem count : covered.Nodup ∧ covered.length = 24 := by decide +kernel
+public theorem count : covered.Nodup ∧ covered.length = 28 := by decide +kernel
 
 end ConsensusCoverage.HandReadersA
