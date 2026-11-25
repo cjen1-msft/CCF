@@ -79,4 +79,24 @@ public theorem label_false (s : Step) {b : Classes.StepBranch}
       reach_150, reach_151, reach_152, reach_153, reach_154, reach_155] at arm
     grind only
 
+public def answer (b : Classes.StepBranch) : Option Bool :=
+  if b = .ballot_step_mem_after_inl ∨ b = .ballot_step_mem_after_inr then some false else none
+
+public theorem answer_correct (s : Step) {b : Classes.StepBranch} {v : Bool}
+    (read : answer b = some v) : label s (.step b) = v := by
+  unfold answer at read
+  split at read
+  · obtain rfl := Option.some.inj read
+    exact label_false s ‹_ ∨ _›
+  · cases read
+
+/-- Adding these two newly total coordinates cannot split any wider-key
+class on actual initialized steps, regardless of the old key's shape. -/
+public theorem same_projection {α : Type} (key : Step → α) (s t : Step) :
+    (key s, label s (.step .ballot_step_mem_after_inl), label s (.step .ballot_step_mem_after_inr)) =
+      (key t, label t (.step .ballot_step_mem_after_inl), label t (.step .ballot_step_mem_after_inr)) ↔
+      key s = key t := by
+  simp only [label_false s (.inl rfl), label_false s (.inr rfl),
+    label_false t (.inl rfl), label_false t (.inr rfl), Prod.mk.injEq, and_true]
+
 end ConsensusCoverage.CensusBallots

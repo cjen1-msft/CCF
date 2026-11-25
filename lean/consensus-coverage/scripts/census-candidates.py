@@ -20,7 +20,7 @@ def settings(prefix):
                     config.groups(), strict=True))
 
 
-def completed(prefix):
+def completed(prefix, case_file=None):
     text = Path(str(prefix) + ".log").read_text()
     fix = re.search(r"^frames: (\d+); expanded: (\d+); frontier: 0; fixpoint: true$", text, re.M)
     steps = re.search(r"^steps: (\d+);", text, re.M)
@@ -29,7 +29,7 @@ def completed(prefix):
     steps = int(steps[1])
     if steps == 0:
         raise ValueError(f"{prefix}: empty graph")
-    with Path(str(prefix) + ".cases.tsv").open() as f:
+    with (case_file or Path(str(prefix) + ".cases.tsv")).open() as f:
         rows = list(csv.DictReader(f, delimiter="\t"))
     if [int(r["index"]) for r in rows] != list(range(516)) or len({r["question"] for r in rows}) != len(rows):
         raise ValueError(f"{prefix}: missing or duplicated questions")
@@ -59,6 +59,8 @@ def main():
                    help="total questions changing from absent to present between one-setting controls")
     p.add_argument("--positive-witnesses", action="append", type=Path, default=[],
                    help="positive-only evidence (a .cases.tsv), never included in fixpoint denominators")
+    p.add_argument("--certified-models", type=Path,
+                   help="models.tsv from census-ballot-extension.py; replace these raw counts with its theorem extension")
     p.add_argument("models", nargs="+", type=Path, help="prefix of .cases.tsv and .log; baseline first")
     a = p.parse_args()
     if len({m.name for m in a.models}) != len(a.models):
@@ -74,7 +76,27 @@ def main():
             bodies = {r["name"]: r["normalized_body"] for r in csv.DictReader(f, delimiter="\t")}
     if a.reach_out and not bodies:
         p.error("--reach-out requires --formulas")
-    models = {p.name: completed(p) for p in a.models}
+    overrides = {}
+    if a.certified_models:
+        with a.certified_models.open() as f:
+            for r in csv.DictReader(f, delimiter="\t"):
+                name = r["representative"]
+                if name in overrides or r["reader_snapshot"] != "prepolar186 + two certified false (no pools)":
+                    raise ValueError("unexpected or duplicate theorem-backed model")
+                overrides[name] = a.certified_models.parent / r["case_table"]
+        if not overrides.keys() <= {p.name for p in a.models}:
+            raise ValueError("theorem-backed table is not a named input model")
+    models = {p.name: completed(p, overrides.get(p.name)) for p in a.models}
+    derived = {}
+    for model in a.models:
+        if model.name not in overrides:
+            continue
+        steps, raw = completed(model)
+        for q, new in models[model.name][1].items():
+            if raw[q] != new:
+                if q not in {"ballot_step_mem_after_inl", "ballot_step_mem_after_inr"} or raw[q][0] or new != (0, steps, 0):
+                    raise ValueError(f"unexpected change in theorem-backed table: {model.name} {q}")
+                derived.setdefault(q, []).append(model.name)
     if (set(a.prior_model) - models.keys() or bool(a.prior_model) != bool(prior_exact)
             or not prior_exact <= exact):
         raise ValueError("prior models must be named inputs with an explicit subset of total columns")
@@ -107,12 +129,14 @@ def main():
             candidates.append((",".join(direct), q, ",".join(models),
                                sum(rows[q][1] for _, rows in models.values()),
                                f"ConsensusCoverage.SolvedWitnesses.{arm} s.frame s.after s.context",
-                               ",".join(witnessed[q]), *((bodies[arm],) if a.formulas else ())))
+                               ",".join(witnessed[q]), *((bodies[arm],) if a.formulas else ()),
+                               *((",".join(derived.get(q, [])),) if a.certified_models else ())))
         if baseline not in positive and not models[baseline][1][q][2] and (positive or witnessed[q]):
             differential.append((q, baseline, ",".join(positive), ",".join(witnessed[q])))
     for path, header, rows in [
         (a.out, ("direct_reaches", "question", "completed_models", "false_model_edge_incidences", "formula",
-                 "witnessed_outside_models", *(("normalized_body",) if a.formulas else ())),
+                 "witnessed_outside_models", *(("normalized_body",) if a.formulas else ()),
+                 *(("proof_extended_models",) if a.certified_models else ())),
          sorted(candidates)),
         (a.differential, ("question", "absent_in_baseline", "true_in_models", "positive_witness_tables"), differential)
     ]:
