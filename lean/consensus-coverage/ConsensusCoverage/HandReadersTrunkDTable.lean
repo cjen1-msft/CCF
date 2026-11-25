@@ -35,9 +35,9 @@ def reader (actor : Bool) : Reader := fun cfg before act after past =>
     !CommitKeys.noNew (cfg.min?.getD 0) after (before :: past)
   let e := Readers.read cfg before act after past
   let yes := fun b => (Readers.read? e b).getD false
-  if actor then all || yes .commit_backed_now_after_inl || yes .rv_stable_now_after_inl || yes .ballot_step_mem_after_inl
+  if actor then all || yes .commit_backed_now_after_inl || yes .rv_stable_now_after_inl
   else (all && before.nodes.any (fun (n,_) => n != GuardedDomain.actionActor act)) ||
-    yes .rv_stable_now_after_inr || yes .ballot_step_mem_after_inr
+    yes .rv_stable_now_after_inr
 
 section
 variable [Config.InitialConfiguration] {f : Frame} {t : Model.State} (c : Ctx f t)
@@ -112,9 +112,24 @@ private theorem any_member (a : AllPairs c) {n st} (now : Now (f.advance t) n st
     place (DelayedNomination.r1233 (c := c) newKey now)
 
 private abbrev LocalGate (pos : Bool) :=
-  if pos then (AllPairs c ∨ step_commit_backed_now_after_inl f t c ∨ step_rv_stable_now_after_inl f t c ∨
-    step_ballot_step_mem_after_inl f t c) else
-    ((AllPairs c ∧ Peer c) ∨ step_rv_stable_now_after_inr f t c ∨ step_ballot_step_mem_after_inr f t c)
+  if pos then (AllPairs c ∨ step_commit_backed_now_after_inl f t c ∨ step_rv_stable_now_after_inl f t c) else
+    ((AllPairs c ∧ Peer c) ∨ step_rv_stable_now_after_inr f t c)
+
+include c in
+private theorem stamp_bound {v n term k : Nat} {st : NodeState}
+    (stamp : (⟨v,term,some n⟩ : VoteFacts.Stamp) ∈ (f.advance t).votes)
+    (m : (v,st) ∈ t.nodes) (eq : st.currentTerm = k) (lt : k < term) : False := by
+  have le := c.ballots.bounds _ stamp st m
+  change term ≤ st.currentTerm at le; omega
+
+private theorem noBallot (stable : Still f t)
+    (h : (reach% step_mem_replaceNode_here_pos[25,0,1]) f t c c.tr) : False := by
+  obtain ⟨(h | h | h),_⟩ := h
+  all_goals
+    repeat' first | change _ ∧ _ at h; obtain ⟨_,h⟩ := h | change Exists _ at h; obtain ⟨_,h⟩ := h
+    first
+    | apply stamp_bound c <;> assumption
+    | apply (stable_elect_iff c).mp stable.elected <;> assumption
 
 local elab "excluded_site% " co:ident " under " s:term:arg : term => do
   let h ←Lean.Elab.Term.elabTerm co none
@@ -139,53 +154,27 @@ private theorem stable_only (stable : Still f t) (pos : Bool) {n st} (co : Membe
     · cases eq_of_heq he
       cases pos
       · have old := ((c.now_after now).resolve_left (fun h => k h.1)).2
-        exact .inr (.inl ⟨n,term,r,site,st,now,candidate,stamp,⟨k,old⟩,k,old,seen,prior⟩)
+        exact .inr ⟨n,term,r,site,st,now,candidate,stamp,⟨k,old⟩,k,old,seen,prior⟩
       · change n = c.actor at k; subst n; obtain rfl := c.now_post now
-        exact .inr (.inr (.inl ⟨term,r,site,now,candidate,stamp,seen,prior⟩))
+        exact .inr (.inr ⟨term,r,site,now,candidate,stamp,seen,prior⟩)
     · cases eq_of_heq he
-      cases pos
-      · right; right; place ⟨ballot,n,st,now,k,((c.now_after now).resolve_left fun h => k h.1).2⟩
-      · right; right; right; place ⟨ballot,c.post_now⟩
-
-private theorem ballot_site {tr : LocalTransition f.current t} {n st} (now : Now (f.advance t) n st)
-    (same : tr = c.tr)
-    (h : (reach% step_ballot_step_mem_after_inl[0]) f t c tr ∨
-      (reach% step_ballot_step_mem_after_inl[1]) f t c tr ∨ (reach% step_ballot_step_mem_after_inl[2]) f t c tr ∨
-      (reach% step_ballot_step_mem_after_inl[3]) f t c tr ∨ (reach% step_ballot_step_mem_after_inl[4]) f t c tr ∨
-      (reach% step_ballot_step_mem_after_inl[5]) f t c tr ∨ (reach% step_ballot_step_mem_after_inl[6]) f t c tr ∨
-      (reach% step_ballot_step_mem_after_inl[7]) f t c tr ∨ (reach% step_ballot_step_mem_after_inl[8]) f t c tr ∨
-      (reach% step_ballot_step_mem_after_inl[9]) f t c tr ∨ (reach% step_ballot_step_mem_after_inl[10]) f t c tr ∨
-      (reach% step_ballot_step_mem_after_inl[11]) f t c tr) : Member c n st := by
-  subst tr
-  repeat' (change _ ∨ _ at h; rcases h with h | h)
-  all_goals first
-    | place ⟨t,c.tr,Or.inr ⟨h,now,rfl,HEq.rfl⟩,now,rfl,rfl⟩
-    | place ⟨t,c.tr,Or.inr (Or.inl ⟨h,now,rfl,HEq.rfl⟩),now,rfl,rfl⟩
-    | place ⟨t,c.tr,Or.inr (Or.inr ⟨h,now,rfl,HEq.rfl⟩),now,rfl,rfl⟩
-    | place ⟨t,c.tr,⟨h,now,rfl,HEq.rfl⟩,now,rfl,rfl⟩
+      exact (noBallot c stable ballot).elim
 
 private theorem sufficient (pos : Bool) (g : LocalGate c pos) : Ticket c pos := by
   cases pos
   case true =>
     refine ⟨c.actor,c.post,?_,c.post_now,rfl⟩
-    rcases g with fresh | (⟨old,_⟩ | ⟨packet,_⟩) | ⟨term,r,src,now,role,stamp,seen,prior⟩ | b
+    rcases g with fresh | (⟨old,_⟩ | ⟨packet,_⟩) | ⟨term,r,src,now,role,stamp,seen,prior⟩
     · exact any_member c fresh c.post_now
     · exact any_member c (.inl old.2.1) c.post_now
     · place ⟨t,c.tr,⟨⟨packet,c.post_now,rfl⟩,c.post_now,rfl,HEq.rfl⟩,c.post_now,rfl,rfl⟩
     · place ⟨t,c.tr,Or.inl ⟨Or.inr (.inr ⟨term,r,src,now,role,stamp,seen,prior,rfl⟩),now,rfl,HEq.rfl⟩,now,rfl,rfl⟩
-    · apply ballot_site c c.post_now rfl
-      repeat' (change _ ∨ _ at b; rcases b with b | b)
-      all_goals place b.1
   case false =>
-    rcases g with ⟨a,n,st,old,ne⟩ | ⟨n,term,r,src,st,now,role,stamp,_,ne,_,seen,prior⟩ | b
+    rcases g with ⟨a,n,st,old,ne⟩ | ⟨n,term,r,src,st,now,role,stamp,_,ne,_,seen,prior⟩
     · have now := present c ne old
       exact ⟨n,st,any_member c a now,now,ne⟩
     · refine ⟨n,st,?_,now,ne⟩
       place ⟨t,c.tr,Or.inl ⟨Or.inr (.inr ⟨term,r,src,now,role,stamp,seen,prior,rfl⟩),now,rfl,HEq.rfl⟩,now,rfl,rfl⟩
-    · repeat' (change _ ∨ _ at b; rcases b with b | b)
-      all_goals
-        obtain ⟨h,n,st,now,ne,_⟩ := b
-        exact ⟨n,st,ballot_site c now rfl (by place h),now,ne⟩
 end
 
 def exactReader (pos : Bool) : Exact (column pos) where
@@ -218,8 +207,7 @@ def exactReader (pos : Bool) : Exact (column pos) where
       Bool.not_eq_true',←all,actor,←peer,Readers.read?_at s (b := .commit_backed_now_after_inl) (by decide +kernel),
       Readers.read?_at s (b := .rv_stable_now_after_inr) (by decide +kernel),
       Readers.read?_at s (b := .rv_stable_now_after_inl) (by decide +kernel),
-      Readers.read?_at s (b := .ballot_step_mem_after_inr) (by decide +kernel),
-      Readers.read?_at s (b := .ballot_step_mem_after_inl) (by decide +kernel),Option.getD_some,label_true,holds,sig_iff]
-    all_goals change _ ↔ _; simp only [or_assoc]; rfl
+      Option.getD_some,label_true,holds,sig_iff]
+    all_goals first | rfl | simp only [or_assoc]; rfl
 
 end ConsensusCoverage.HandReadersTrunkD.Table
