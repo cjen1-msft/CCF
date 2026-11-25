@@ -9,6 +9,7 @@ import all ConsensusCoverage.HandReadersTrunkAPackets
 import all ConsensusCoverage.HandReadersTrunkAConflict
 import all ConsensusCoverage.HandReadersTrunkARest
 import all ConsensusCoverage.HandReadersTrunkALoop
+import all ConsensusCoverage.HandReadersTrunkAPrefix
 import all ConsensusCoverage.HandReadersTrunkAAdvance
 
 namespace ConsensusCoverage.HandReadersTrunkA
@@ -36,6 +37,8 @@ private def lookup : (b : Classes.StepBranch) → Option (Exact b)
   | .fromLeader_loop_signature_neg => some Loop.transaction
   | .fromLeader_loop_roleCase_inl => some Loop.sameRole
   | .fromLeader_loop_roleCase_inr => some Loop.noneRole
+  | .maxCommittableIndex_le_of_prefix_zero_pos => some Loop.zeroPrefix
+  | .maxCommittableIndex_le_of_prefix_zero_neg => some Loop.signedPrefix
   | .commit_le_advance_inl => some Batch.commitIdentity
   | _ => none
 
@@ -56,6 +59,6 @@ public theorem read_total (s : Step) {b} (mem : b ∈ covered) :
   simpa only [read, Option.isSome_map] using (List.mem_filter.mp mem).2
 
 set_option maxRecDepth 8192 in
-public theorem count : covered.Nodup ∧ covered.length = 21 := by decide +kernel
+public theorem count : covered.Nodup ∧ covered.length = 23 := by decide +kernel
 
 end ConsensusCoverage.HandReadersTrunkA
