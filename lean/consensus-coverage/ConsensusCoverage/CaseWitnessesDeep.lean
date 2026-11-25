@@ -13,6 +13,17 @@ import all ConsensusCoverage.DeepInputCases
 import all ConsensusCoverage.DeepGrantCases
 import all ConsensusCoverage.DeepActorCases
 import all ConsensusCoverage.DeepCampaignCases
+import all ConsensusCoverage.DeepReceiveCases
+import all ConsensusCoverage.DeepBatchCases
+import all ConsensusCoverage.DeepPrefixCases
+import all ConsensusCoverage.DeepListCases
+import all ConsensusCoverage.DeepObserveCases
+import all ConsensusCoverage.DeepHandlerCases
+import all ConsensusCoverage.DeepSignedCases
+import all ConsensusCoverage.DeepBoundCases
+import all ConsensusCoverage.DeepWinningCases
+import all ConsensusCoverage.DeepRankingCases
+import all ConsensusCoverage.DeepHistoryCases
 import all ConsensusCoverage.ReadersCorpus
 import all ConsensusCoverage.EventSupport
 import all ConsensusCoverage.JointWitnesses
@@ -134,7 +145,7 @@ local macro "onScript " sc:term:arg i:num : term =>
   `(selected (Script.run $sc) (Script.choices $sc) (by unfold Run.valid; decide) $i)
 
 open DeepSchedules in
-private def certificates : List Certificate :=
+private def earlier : List Certificate :=
   [certify .commit_backed_max_eq_or_inl (selected duplicateAck [] validAck 5) (by decide +kernel),
    observed installLater 12 .leader_floor_led_inr,
    observed divergent 8 .new_in_elected_backing_inl,
@@ -186,9 +197,15 @@ private def certificates : List Certificate :=
    campaignAt .retained (onScript lateCopy 11) 1 (by decide +kernel),
    campaignAt .received (onScript lateCopy 11) 2 (by decide +kernel)]
 
+private def certificates : List Certificate :=
+  earlier ++ DeepReceiveCases.certificates ++ DeepBatchCases.certificates ++
+    DeepPrefixCases.certificates ++ DeepListCases.certificates ++ DeepObserveCases.certificates ++
+    DeepHandlerCases.certificates ++ DeepSignedCases.certificates ++ DeepBoundCases.certificates ++
+    DeepWinningCases.certificates ++ DeepRankingCases.certificates ++ DeepHistoryCases.certificates
+
 public def witnessed : List Classes.StepBranch := certificates.map Subtype.val
 
-public theorem count : witnessed.Nodup ∧ witnessed.length = 37 := by decide +kernel
+public theorem count : witnessed.Nodup ∧ witnessed.length = 101 := by decide +kernel
 
 public theorem occurs {b : Classes.StepBranch} (mem : b ∈ witnessed) :
     ∃ s : Step, label s (.step b) = true := by

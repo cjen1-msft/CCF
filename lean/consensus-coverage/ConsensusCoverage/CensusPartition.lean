@@ -16,10 +16,25 @@ import all ConsensusCoverage.CaseWitnesses
 import all ConsensusCoverage.CaseWitnessesDeep
 import all ConsensusCoverage.CaseWitnessesDeepB
 import all ConsensusCoverage.CaseWitnessesQueued
+import all ConsensusCoverage.DeepReceiveCases
+import all ConsensusCoverage.DeepBatchCases
+import all ConsensusCoverage.DeepPrefixCases
+import all ConsensusCoverage.DeepListCases
+import all ConsensusCoverage.DeepObserveCases
+import all ConsensusCoverage.DeepHandlerCases
+import all ConsensusCoverage.DeepSignedCases
+import all ConsensusCoverage.DeepBoundCases
+import all ConsensusCoverage.DeepWinningCases
+import all ConsensusCoverage.DeepRankingCases
+import all ConsensusCoverage.DeepHistoryCases
 import all ConsensusCoverage.MaximumCasesB
 import all ConsensusCoverage.ReceiveCasesB
 import all ConsensusCoverage.CampaignCasesB
 import all ConsensusCoverage.SelfQuorumCasesB
+import all ConsensusCoverage.FollowerFoldCasesB
+import all ConsensusCoverage.FollowerArmsB
+import all ConsensusCoverage.PromotionArmsB
+import all ConsensusCoverage.LoopSendCasesB
 import all ConsensusCoverage.FullProfile
 import all ConsensusCoverage.ReadersWitnesses
 import all ConsensusCoverage.Readers
@@ -76,11 +91,11 @@ public theorem unsettled_iff (b : Classes.StepBranch) :
     exact Array.getElem_mem _
   simp [unsettled, all]
 
-public theorem witnessed_count : witnessed.Nodup ∧ witnessed.length = 285 := by decide +kernel
+public theorem witnessed_count : witnessed.Nodup ∧ witnessed.length = 376 := by decide +kernel
 
 public theorem refuted_count : refuted.Nodup ∧ refuted.length = 23 := by decide +kernel
 
-public theorem unsettled_count : unsettled.Nodup ∧ unsettled.length = 208 := by decide +kernel
+public theorem unsettled_count : unsettled.Nodup ∧ unsettled.length = 117 := by decide +kernel
 
 /-- Every total generated or legacy reader is accounted for in a proved
 class. One-sided readers may still give evidence about an unsettled case. -/
