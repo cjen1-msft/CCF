@@ -1714,6 +1714,7 @@ public theorem deadlock_free_after_bootstrap (config : Finset NodeID)
   obtain ⟨f, eq, reach, inv, extra, term, part, committed, partPos⟩ := traced
   subst eq
   obtain ⟨node, local_, member, acts⟩ := Witness.witness reach inv extra committed partPos
-  exact enabled_of_member (config := config) (nodes := nodes) inv.distinct member acts
+  exact enabled_of_member (config := config) (nodes := nodes) (Direct.keys_nodup reach) member
+    acts
 
 end Consensus.Proofs.Deadlock

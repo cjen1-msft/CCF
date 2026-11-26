@@ -801,6 +801,10 @@ private def Sorted (frame : Frame) : Prop :=
     Now frame node state
     -> state.log.Pairwise fun first second => first.term <= second.term
 
+/-- Each node has one state. -/
+private def Unique (frame : Frame) : Prop :=
+  forall node first second, Now frame node first -> Now frame node second -> first = second
+
 private def Active (frame : Frame) : Prop :=
   forall node state, Now frame node state -> Engaged state -> 2 <= state.currentTerm
 
@@ -1101,7 +1105,7 @@ private structure Inv (frame : Frame) : Prop where
   message_terms : MessageTerms frame
   leader_logs : LeaderLogs frame
   comparable : Comparable frame
-  distinct : (frame.current.nodes.map Prod.fst).Nodup
+  unique : Unique frame
   frontier : ∀ n st, Now frame n st → Direct.CommitFrontier st
   observed : ∀ n st, Now frame n st → Seen frame n (observe st)
   term_mono : TermMono frame
@@ -4876,7 +4880,7 @@ private theorem inv_initial : Inv (Frame.start initial) := by
   · intro first second left right leftCommit _
     rw [initial_commit initialized leftCommit]
     exact Or.inl List.nil_prefix
-  · exact initialized.2.2.1
+  · exact fun _ _ _ => state_unique initialized.2.2.1
   · intro n st mem
     have eq : st = Model.initialNodeState INITIAL_CONFIGURATION n := initialized.2.2.2.2 _ mem
     rw [eq]
@@ -5241,28 +5245,37 @@ include c
 
 private theorem sum : Summary c.actor c.pre c.event c.post c.sent := c.tr.summary
 
-private theorem keys_after : (after.nodes.map Prod.fst).Nodup := by
-  rw [c.tr.nodesEq, Concrete.replaceNode_keys]
-  exact c.inv.distinct
-
 private theorem pre_now : Now f c.actor c.pre := c.tr.pre_mem
 
 private theorem post_now : Now (f.advance after) c.actor c.post := c.tr.post_mem
 
 private theorem now_pre {state : NodeState} (now : Now f c.actor state)
     : state = c.pre :=
-  state_unique (c.inv.distinct) now c.pre_now
-
-private theorem now_post {state : NodeState}
-    (now : Now (f.advance after) c.actor state)
-    : state = c.post :=
-  state_unique c.keys_after now c.post_now
+  c.inv.unique c.actor state c.pre now c.pre_now
 
 private theorem now_after {node : NodeID} {state : NodeState}
     (now : Now (f.advance after) node state)
     : (node = c.actor /\ state = c.post)
       \/ (Not (node = c.actor) /\ Now f node state) :=
   c.tr.mem_after now
+
+private theorem now_post {state : NodeState}
+    (now : Now (f.advance after) c.actor state)
+    : state = c.post := by
+  split_rel now_after := (rcases c.now_after now with ⟨_, eq⟩ | ⟨other, _⟩) with
+  | inl => exact eq
+  | inr => exact absurd rfl other
+
+/-- Each node still has one state: the actor its new one, every other node its old one. -/
+private theorem unique : Unique (f.advance after) := by
+  intro node first second left right
+  split_rel now_after := (rcases c.now_after left with ⟨rfl, rfl⟩ | ⟨other, old⟩) with
+  | inl => exact (c.now_post right).symm
+  | inr =>
+    refine c.inv.unique node first second old ?_
+    split_rel now_after := (rcases c.now_after right with ⟨actor, _⟩ | ⟨_, old'⟩) with
+    | inl => exact absurd actor other
+    | inr => exact old'
 
 private theorem seen_after {n : NodeID} {o : Observation} (seen : Seen (f.advance after) n o) :
     Seen f n o ∨ (n = c.actor ∧ o = observe c.post) := by
@@ -5403,7 +5416,7 @@ private theorem electStep {node : NodeID} {term commit : Nat} {log : List Entry}
     subst this
     exact ⟨rfl, logEq, commitEq, termCase, leaderTerm, leaderRole, winning, three⟩
   | inr =>
-    have := state_unique (c.inv.distinct) old candidateMem
+    have := c.inv.unique _ _ _ old candidateMem
     subst this
     split_rel termCase := (rcases termCase with lt | ⟨_, role⟩) with
     | inl => exact absurd leaderTerm (Nat.ne_of_lt lt)
@@ -5572,12 +5585,14 @@ private theorem vote_step {before after : Model.State} (tr : LocalTransition bef
 
 omit c in
 private theorem ballot_step {before after : Model.State} {g : VoteFacts.Ghost}
-    (tr : LocalTransition before after) (distinct : (after.nodes.map Prod.fst).Nodup)
+    (tr : LocalTransition before after)
+    (unique : forall node first second,
+      (node, first) ∈ after.nodes -> (node, second) ∈ after.nodes -> first = second)
     (prior : VoteFacts.Inv before g) : VoteFacts.Inv after (VoteFacts.advance g after) :=
-  VoteFacts.preserve prior (fun _ _ _ => state_unique distinct) fun _ _ now => vote_step tr now
+  VoteFacts.preserve prior unique fun _ _ now => vote_step tr now
 
 private theorem ballots : Ballots (f.advance after) :=
-  ballot_step c.tr c.keys_after c.inv.ballots
+  ballot_step c.tr c.unique c.inv.ballots
 
 private theorem rankAtGrant {v n t r k l i}
     (fresh : LogFacts.GrantAt f.current after v n t r) (obs : f.logs.seen v k l)
@@ -6526,7 +6541,7 @@ private theorem canon_mono : CanonMono (f.advance after) := by
     -- A leader log recorded by this state is that of the one leader of the term.
     have := c.election_safety node' node _ led' led
     subst this logEq
-    rw [state_unique c.keys_after now' now]
+    rw [c.unique _ _ _ now' now]
     exact List.prefix_refl _
 
 /-- A leader that appends entries of its term keeps a copyable log: the extended log
@@ -7390,7 +7405,7 @@ private theorem inv_step : Inv (f.advance after) :=
     message_terms := c.message_terms
     leader_logs := c.leader_logs
     comparable := c.comparable
-    distinct := c.keys_after
+    unique := c.unique
     observed := fun _ st mem => .inr ⟨st, mem, rfl, rfl⟩
     term_mono := by
       intro n st o mem seen
