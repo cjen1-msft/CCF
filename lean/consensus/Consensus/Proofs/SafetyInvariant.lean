@@ -826,15 +826,14 @@ private def Candidate (frame : Frame) : Prop :=
 private def ElectionSafety (frame : Frame) : Prop :=
   forall node other term, Led frame node term -> Led frame other term -> node = other
 
+/-- A leader's log is the greatest recorded leader log of its term. -/
 private def CanonMono (frame : Frame) : Prop :=
   forall node state,
     Now frame node state
     -> Not (state.role = .candidate)
     -> Led frame node state.currentTerm
-    -> (forall log, Canon frame state.currentTerm log -> log <+: state.log)
-        /\ forall log commit,
-            Elected frame node state.currentTerm log commit
-            -> log.take (maxCommittableIndex log) <+: state.log
+    -> Canon frame state.currentTerm state.log
+        /\ forall log, Canon frame state.currentTerm log -> log <+: state.log
 
 private def Anchor (frame : Frame) : Prop :=
   forall node state index,
@@ -876,6 +875,13 @@ private structure CanonLog (g : LogFacts.Ghost) (k : Nat) (l : List Entry) : Pro
 private def CanonLogs (g : LogFacts.Ghost) : Prop :=
   ∀ k l, g.canon k l → CanonLog g k l
 
+private theorem CanonLog.advance {g prev s k l} (old : CanonLog g k l) :
+    CanonLog (LogFacts.advance INITIAL_PRIMARY g prev s) k l := by
+  obtain ⟨copy, ⟨n, led⟩, winning⟩ := old
+  refine ⟨copy.advance, ⟨n, led.imp_right fun ⟨p, i, e⟩ => ⟨p, i, .inl e⟩⟩, fun gt => ?_⟩
+  obtain ⟨n, p, i, elect, sub⟩ := winning gt
+  exact ⟨n, p, i, .inl elect, sub⟩
+
 /-- Earlier leader logs keep their facts; the logs of this state's leaders supply theirs. -/
 private theorem canonLogs_step {g prev s} (old : CanonLogs g)
     (current : ∀ n st k,
@@ -884,11 +890,7 @@ private theorem canonLogs_step {g prev s} (old : CanonLogs g)
     CanonLogs (LogFacts.advance INITIAL_PRIMARY g prev s) := by
   intro k l canon
   split_rel canon := (rcases canon with past | ⟨n, st, now, rfl⟩) with
-  | inl =>
-    obtain ⟨copy, ⟨n, led⟩, winning⟩ := old k l past
-    refine ⟨copy.advance, ⟨n, led.imp_right fun ⟨p, i, e⟩ => ⟨p, i, .inl e⟩⟩, fun gt => ?_⟩
-    obtain ⟨n, p, i, elect, sub⟩ := winning gt
-    exact ⟨n, p, i, .inl elect, sub⟩
+  | inl => exact (old k l past).advance
   | inr => exact current n st k now
 
 private def Completeness (frame : Frame) : Prop :=
@@ -4835,9 +4837,9 @@ private theorem inv_initial : Inv (Frame.start initial) := by
     rw [(led_single left).2, (led_single right).2]
   · intro n t l i e
     exact (not_elected_single (e)).elim
-  · intro node state now _ led
+  · intro node state now role led
+    refine ⟨.inr ⟨node, state, ⟨now, rfl, role, led⟩, rfl⟩, fun log canon => ?_⟩
     obtain ⟨-, rfl⟩ := led_single led
-    refine ⟨fun log canon => ?_, fun log commit elected => absurd elected not_elected_single⟩
     rw [(initial_canon initialized canon).2, stateOf now]
     exact List.prefix_refl _
   · intro k a b ca cb
@@ -6445,8 +6447,7 @@ private theorem rankedElections : RankedElections (f.advance after).logs
     suffices ne : k ≠ t from Nat.le_sub_one_of_lt (Nat.lt_of_le_of_ne le ne)
     rintro rfl
     obtain ⟨other, old⟩ := c.inv.owner witnessed
-    have same := c.election_safety other n k (old.mono after)
-      (.inr ⟨l, i, .inr ⟨f.current, rfl, new⟩⟩)
+    have same := c.new_old_unique new old
     subst other
     obtain ⟨st', _, mem, _, _, _, _, termCase, _⟩ := new
     split_rel led := (rcases c.inv.led_cur n st' k mem old with lt | ⟨eq, notCandidate⟩) with
@@ -6532,66 +6533,43 @@ private theorem old_led_actor (led : Led f c.actor c.post.currentTerm)
   | inl => exact (Nat.lt_irrefl _ (Nat.lt_of_lt_of_le lt le)).elim
   | inr => exact ⟨eq.symm, role⟩
 
-private theorem canon_mono : CanonMono (f.advance after) := by
-  have safety := c.election_safety
-  intro node state now role led
-  -- A leader log of the term recorded at the head is this state's log.
-  have current : forall node' state', CanonNow (f.advance after) node' state'
-      state.currentTerm -> state'.log <+: state.log := by
-    intro node' state' ⟨now', _, _, led'⟩
-    have := safety node' node _ led' led
-    subst this
-    rw [state_unique c.keys_after now' now]
-    exact List.prefix_refl _
-  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨different, old⟩) with
+/-- A node that already led its term continues from an earlier state of that term. -/
+private theorem continuing {node : NodeID} {state : NodeState}
+    (now : Now (f.advance after) node state) (role : Not (state.role = .candidate))
+    (led : Led f node state.currentTerm) :
+    ∃ before, Now f node before ∧ before.currentTerm = state.currentTerm
+      ∧ Not (before.role = .candidate) ∧ before.log <+: state.log := by
+  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨_, old⟩) with
   | inl =>
     subst nodeEq stateEq
-    have fromOld : Led f c.actor c.post.currentTerm
-        -> c.pre.log <+: c.post.log /\ CanonMono f
-            /\ c.pre.currentTerm = c.post.currentTerm
-            /\ Not (c.pre.role = .candidate) := by
-      intro oldLed
-      obtain ⟨eq, preRole⟩ := c.old_led_actor oldLed
-      exact ⟨c.keep_log eq.symm preRole (eq ▸ oldLed), c.inv.canon_mono, eq, preRole⟩
-    refine ⟨fun log canon => ?_, fun log commit elected => ?_⟩
-    · split_rel canon_after :=
-          (rcases c.canon_after canon with canon | ⟨node', state', canonNow, logEq⟩) with
-      | inl =>
-        have oldLed : Led f c.actor c.post.currentTerm := by
-          obtain ⟨node', led'⟩ := c.inv.owner (canon)
-          have := safety node' c.actor _ (led'.mono after) led
-          subst this
-          exact led'
-        obtain ⟨keep, mono, eq, preRole⟩ := fromOld oldLed
-        rw [← eq] at canon oldLed
-        exact ((mono c.actor c.pre c.pre_now preRole oldLed).1 _ canon).trans keep
-      | inr =>
-        subst logEq
-        exact current node' state' canonNow
-    · split_rel elected_after := (rcases c.elected_after elected with old | step) with
-      | inl =>
-        obtain ⟨keep, mono, eq, preRole⟩ := fromOld (Or.inr ⟨log, commit, old⟩)
-        rw [← eq] at old
-        exact ((mono c.actor c.pre c.pre_now preRole (Or.inr ⟨log, commit, old⟩)).2 log commit
-          old).trans keep
-      | inr => exact (c.electStep step).2.2.2.2.2.2.1
+    obtain ⟨eq, preRole⟩ := c.old_led_actor led
+    exact ⟨c.pre, c.pre_now, eq, preRole, c.keep_log eq.symm preRole (eq ▸ led)⟩
+  | inr => exact ⟨state, old, rfl, role, List.prefix_refl _⟩
+
+private theorem canon_mono : CanonMono (f.advance after) := by
+  intro node state now role led
+  refine ⟨.inr ⟨node, state, ⟨now, rfl, role, led⟩, rfl⟩, fun log canon => ?_⟩
+  split_rel canon_after :=
+      (rcases c.canon_after canon with canon | ⟨node', state', ⟨now', _, _, led'⟩, logEq⟩) with
+  | inl =>
+    -- An earlier leader log of the term is its one leader's, whose log only grew.
+    obtain ⟨node', led'⟩ := c.inv.owner canon
+    have := c.election_safety node' node _ (led'.mono after) led
+    subst this
+    obtain ⟨before, old, term, oldRole, keep⟩ := c.continuing now role led'
+    rw [← term] at canon led'
+    exact ((c.inv.canon_mono node' before old oldRole led').2 _ canon).trans keep
   | inr =>
-    have oldLed := c.led_other different led
-    refine ⟨fun log canon => ?_, fun log commit elected => ?_⟩
-    · split_rel canon_after :=
-          (rcases c.canon_after canon with canon | ⟨node', state', canonNow, logEq⟩) with
-      | inl => exact (c.inv.canon_mono node state old role oldLed).1 log canon
-      | inr =>
-        subst logEq
-        exact current node' state' canonNow
-    · split_rel elected_after := (rcases c.elected_after elected with old' | step) with
-      | inl => exact (c.inv.canon_mono node state old role oldLed).2 log commit old'
-      | inr => exact absurd (c.electStep step).1 different
+    -- A leader log recorded by this state is that of the one leader of the term.
+    have := c.election_safety node' node _ led' led
+    subst this logEq
+    rw [state_unique c.keys_after now' now]
+    exact List.prefix_refl _
 
 private theorem chains : LogFacts.Chain (f.advance after).logs := by
   apply LogFacts.chain_step c.inv.chains
   rintro n st k ⟨now, rfl, role, led⟩ l canon
-  exact (c.canon_mono n st now role led).1 l canon
+  exact (c.canon_mono n st now role led).2 l canon
 
 /-- Every log stays one a follower may copy: a prefix of the old log, the leader's own
 extension of it, or a prefix of a leader log. -/
@@ -6619,11 +6597,19 @@ private theorem node_logs : NodeLogs (f.advance after) := by
 private theorem canonLogs : CanonLogs (f.advance after).logs := by
   apply canonLogs_step c.inv.canonLogs
   rintro n st k ⟨now, rfl, role, led⟩
-  refine ⟨c.node_logs n st now, ⟨n, led⟩, fun gt => ?_⟩
-  split_rel led := (rcases led with boot | ⟨l, i, elect⟩) with
-  | inl => exact (Nat.not_lt_of_ge (Nat.le_of_eq boot.1) gt).elim
+  refine ⟨c.node_logs _ _ now, ⟨_, led⟩, fun gt => ?_⟩
+  split_rel led_after := (rcases c.led_after led with oldLed | ⟨l, i, step⟩) with
+  | inl =>
+    -- A continuing leader extends its previous log, which already held the prefix.
+    obtain ⟨before, old, term, oldRole, keep⟩ := c.continuing now role oldLed
+    rw [← term] at oldLed gt ⊢
+    obtain ⟨m, p, i, elect, sub⟩ := c.inv.winningPrefix _ _
+      (c.inv.canon_mono n before old oldRole oldLed).1 gt
+    exact ⟨m, p, i, .inl elect, sub.trans keep⟩
   | inr =>
-    exact ⟨n, l, i, elect, (c.canon_mono n st now role (.inr ⟨l, i, elect⟩)).2 l i elect⟩
+    obtain ⟨rfl, _, _, _, _, _, winning, _⟩ := c.electStep step
+    obtain rfl := c.now_post now
+    exact ⟨_, l, i, .inr ⟨f.current, rfl, step⟩, winning⟩
 
 private theorem winningPrefix : LogFacts.WinningPrefix (f.advance after).logs :=
   fun k l canon gt => (c.canonLogs k l canon).winning gt
@@ -6709,7 +6695,7 @@ private theorem acked_pre (leader : c.pre.role = .primary) {voter : NodeID} {ind
     intro h
     cases h
   have inLog :=
-    (c.inv.canon_mono c.actor c.pre c.pre_now notCandidate (c.pre_led leader)).1 log canon
+    (c.inv.canon_mono c.actor c.pre c.pre_now notCandidate (c.pre_led leader)).2 log canon
   refine ⟨acker, seen.mono after, termEq, Nat.le_trans bound inLog.length_le, ?_⟩
   rw [take_eq_of_prefix inLog bound]
   exact sub
