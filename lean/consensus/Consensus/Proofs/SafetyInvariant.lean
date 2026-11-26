@@ -5644,11 +5644,7 @@ private theorem grantFactsBefore : GrantFacts (f.advance after).logs
     obtain ⟨_, post, _, postMem, _, term, vote, _⟩ := fresh
     have stamp : ⟨v, t, some n⟩ ∈ (f.advance after).votes :=
       VoteFacts.mem_advance.2 (.inl ⟨v, post, postMem, by simp [VoteFacts.stamp, term, vote]⟩)
-    refine ⟨⟨stamp, extend stamp rank⟩, ?_⟩
-    split_rel supported := (rcases supported with rfl | ⟨l, seen⟩) with
-    | inl =>
-      exact ⟨post.log, .inr ⟨post, postMem, term, rfl⟩⟩
-    | inr => exact ⟨l, .inl seen⟩
+    exact ⟨⟨stamp, extend stamp rank⟩, supported⟩
 
 private theorem grantFacts : GrantFacts (f.advance after).logs
     (f.advance after).votes (f.advance after).logs.canon := by
@@ -5675,7 +5671,7 @@ private theorem self_granted {term : Nat} (le : c.pre.currentTerm <= term)
       voted,
       vals_outranks term c.pre_sorted c.frontier_pre
     ⟩,
-    Or.inl rfl
+    ⟨c.post.log, .inr ⟨c.post, c.tr.post_mem, termEq, rfl⟩⟩
   ⟩
 
 /-- A campaign's term is above the bootstrap term and no earlier than the term before the
@@ -7335,7 +7331,7 @@ private theorem new_message {envelope : Model.Envelope} (new : envelope ∈ c.se
       obtain ⟨o, seen, atT⟩ := seen
       exact .inr ⟨f.current, rfl, ⟨c.pre, c.post, c.tr.pre_mem,
         c.tr.post_mem, c.term_le, rfl, voted, outranks_of_upToDate upToDate⟩,
-        .inr ⟨o.log, atT ▸ seen⟩⟩
+        ⟨o.log, .inl (atT ▸ seen)⟩⟩
   | requestPreVoteRequest => simp only [MessageOK, h]
   | requestPreVoteResponse => simp only [MessageOK, h]
   | proposeRequestVoteRequest => simp only [MessageOK, h]

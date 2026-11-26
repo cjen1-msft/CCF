@@ -57,14 +57,15 @@ def Ghost.canonNow (g : Ghost) (bootstrap : NodeID) (s : Model.State)
   (n, st) ∈ s.nodes ∧ st.currentTerm = k ∧ st.role ≠ .candidate ∧ g.led bootstrap n k
 
 /-- Initialisation has no incoming step; it can observe logs, but not grants or elections.
-New elections may count new grants. -/
+A grant is recorded once its candidate has been observed in the term, in this state or
+earlier. New elections may count new grants. -/
 def advance (bootstrap : NodeID) (g : Ghost) (prev : Option Model.State) (s : Model.State) : Ghost := Id.run do
-  let g := { g with grant := fun v c k r => g.grant v c k r ∨
-    ∃ p, prev = some p ∧ GrantAt p s v c k r ∧ (v = c ∨ ∃ l, g.seen c k l) }
-  let g := { g with elected := fun n k l i => g.elected n k l i ∨
-    ∃ p, prev = some p ∧ ElectionAt p s g.grant n k l i }
   let g := { g with seen := fun n k l => g.seen n k l ∨
     ∃ st, (n, st) ∈ s.nodes ∧ st.currentTerm = k ∧ st.log = l }
+  let g := { g with grant := fun v c k r => g.grant v c k r ∨
+    ∃ p, prev = some p ∧ GrantAt p s v c k r ∧ ∃ l, g.seen c k l }
+  let g := { g with elected := fun n k l i => g.elected n k l i ∨
+    ∃ p, prev = some p ∧ ElectionAt p s g.grant n k l i }
   return { g with canon := fun k l => g.canon k l ∨
     ∃ n st, g.canonNow bootstrap s n st k ∧ st.log = l }
 
