@@ -349,8 +349,7 @@ private inductive Kind (self : NodeID) (before : NodeState) (event : Event)
   | elect (elected : Wins self before event after)
   | install (entries : List Entry)
     (initialized : event = .internal (.initAsBackup entries))
-    (positive : 0 < entries.length)
-    (signature : isSignatureAt entries entries.length = true)
+    (signed : 0 < entries.length -> isSignatureAt entries entries.length = true)
     (fresh : before.isFresh) (log : after.log = entries)
     (commit : after.commitIndex = entries.length)
     (term : after.currentTerm = termAt entries entries.length)
@@ -3970,7 +3969,7 @@ private theorem proposeVote_summary (before : NodeState) (source : NodeID) (term
       campaign_summary (fresh_campaign engaged rfl rfl rfl) (fresh_start engaged rfl) result
         trivial
 
-/-- A fresh node follows from an empty prefix in term zero, or installs a snapshot. -/
+/-- A fresh node installs a snapshot, which may be empty. -/
 private theorem initAsBackup_summary (before : NodeState) (entries : List Entry)
     : Sends
         (fun after sent =>
@@ -3980,43 +3979,32 @@ private theorem initAsBackup_summary (before : NodeState) (entries : List Entry)
   refine Sends.bind' Sends.guard' fun _ sent ⟨⟨fresh, signed⟩, empty⟩ => Sends.pure' ?_
   subst empty
   obtain ⟨none, zero, emptyLog, noCommit⟩ := fresh
-  split_rel eq_zero_or_pos := (rcases Nat.eq_zero_or_pos entries.length with length | positive) with
-  | inl =>
-    have nil : entries = [] := List.eq_nil_of_length_eq_zero length
-    subst nil
-    refine ⟨
-      by simp [becomeAwareOfNewTerm, zero, termAt, entryAt?],
-      fun _ voted eq => by simpa [becomeAwareOfNewTerm, zero, termAt, entryAt?] using eq,
-      fun engaged => (engaged.2 ⟨by simp [becomeAwareOfNewTerm], by simp [becomeAwareOfNewTerm,
-        termAt, entryAt?], by simp [becomeAwareOfNewTerm]⟩).elim,
-      no_bumping_sends,
-      fun c => by simp [becomeAwareOfNewTerm] at c,
-      fun c => by simp [becomeAwareOfNewTerm] at c,
-      fun c => by simp [becomeAwareOfNewTerm] at c,
-      Kind.same (by simp [becomeAwareOfNewTerm, emptyLog])
-        (by simp [becomeAwareOfNewTerm, noCommit]),
-      by simp
-    ⟩
-  | inr =>
-    have signature : isSignatureAt entries entries.length = true := by
-      split_rel signed := (rcases signed with nil | signature) with
-      | inl =>
-        subst nil
-        simp at positive
-      | inr => exact signature
-    refine ⟨by simp [becomeAwareOfNewTerm, zero], fun same voted eq => ?_,
-      fun _ => Or.inr (Or.inr (Or.inr ⟨entries, rfl, positive, signature,
-        by simp [becomeAwareOfNewTerm]⟩)),
-      fun _ => Or.inr (Or.inr (Or.inr ⟨entries, rfl, positive, signature,
-        by simp [becomeAwareOfNewTerm]⟩)),
-      fun c => by simp [becomeAwareOfNewTerm] at c, fun c => by simp [becomeAwareOfNewTerm] at c,
-      fun c => by simp [becomeAwareOfNewTerm] at c,
-      Kind.install entries rfl positive signature ⟨none, zero, emptyLog, noCommit⟩
-        (by simp [becomeAwareOfNewTerm]) (by simp [becomeAwareOfNewTerm])
-        (by simp [becomeAwareOfNewTerm]) (by simp [becomeAwareOfNewTerm]), by simp⟩
-    split_rel termZero := (by_cases termZero : termAt entries entries.length = 0) with
-    | pos => simpa [becomeAwareOfNewTerm, zero, termZero] using eq
-    | neg => simp [becomeAwareOfNewTerm, zero, termZero] at same
+  have signature (positive : 0 < entries.length)
+      : isSignatureAt entries entries.length = true := by
+    split_rel signed := (rcases signed with nil | signature) with
+    | inl =>
+      subst nil
+      simp at positive
+    | inr => exact signature
+  refine ⟨by simp [becomeAwareOfNewTerm, zero], fun same voted eq => ?_, fun engaged => ?_,
+    no_bumping_sends,
+    fun c => by simp [becomeAwareOfNewTerm] at c, fun c => by simp [becomeAwareOfNewTerm] at c,
+    fun c => by simp [becomeAwareOfNewTerm] at c,
+    Kind.install entries rfl signature ⟨none, zero, emptyLog, noCommit⟩
+      (by simp [becomeAwareOfNewTerm]) (by simp [becomeAwareOfNewTerm])
+      (by simp [becomeAwareOfNewTerm]) (by simp [becomeAwareOfNewTerm]), by simp⟩
+  · -- The term is unchanged, so the vote is.
+    have kept : before.currentTerm = termAt entries entries.length := by
+      simpa [becomeAwareOfNewTerm] using same.symm
+    simpa [becomeAwareOfNewTerm, kept] using eq
+  · -- A node engaged after an empty snapshot would still be a follower in term zero.
+    have positive : 0 < entries.length := Nat.pos_of_ne_zero fun length => by
+      have nil : entries = [] := List.eq_nil_of_length_eq_zero length
+      subst nil
+      exact engaged.2 ⟨by simp [becomeAwareOfNewTerm],
+        by simp [becomeAwareOfNewTerm, termAt, entryAt?], by simp [becomeAwareOfNewTerm]⟩
+    exact Or.inr (Or.inr (Or.inr ⟨entries, rfl, positive, signature positive,
+      by simp [becomeAwareOfNewTerm]⟩))
 
 private theorem voteResponse_summary (before : NodeState) (source : NodeID)
     (response : RequestVoteResponse)
@@ -5228,9 +5216,12 @@ private theorem Kind.frontier {self : NodeID} {before after : NodeState} {event 
     obtain ⟨candidate, ⟨_, logEq, commitEq, _⟩, _, advance, _⟩ := wins
     exact advance.frontier (primaryState_frontier (frontier.of_log logEq commitEq))
   | install =>
-    rename_i entries _ _ signature _ log commit _ _
+    rename_i entries _ signed _ log commit _ _
     exact ⟨by rw [log, commit]; exact Nat.le.refl,
-      fun _ => by rw [log, commit]; exact signature⟩
+      fun positive => by
+        rw [commit] at positive
+        rw [log, commit]
+        exact signed positive⟩
 
 end Consensus.Proofs.Safety
 
@@ -5366,6 +5357,16 @@ private theorem snap_available {entries : List Entry}
   have sub : entries <+: state.log := prefixEq ▸ List.take_prefix _ _
   have ok := c.snap_of_committed member positive le (isSignatureAt_of_prefix sub signature)
   rwa [prefixEq] at ok
+
+/-- An installed snapshot is empty, or a committed, signed prefix of a leader log. -/
+private theorem snap_cases {motive : Prop} {entries : List Entry}
+    (eq : c.event = .internal (.initAsBackup entries))
+    (signed : 0 < entries.length -> isSignatureAt entries entries.length = true)
+    (empty : entries = [] -> motive) (snap : SnapOK f entries -> motive)
+    : motive := by
+  split_rel empty := (rcases Nat.eq_zero_or_pos entries.length with zero | positive) with
+  | inl => exact empty (List.eq_nil_of_length_eq_zero zero)
+  | inr => exact snap (c.snap_available eq positive (signed positive))
 
 private theorem pre_two (active : Engaged c.pre) : 2 <= c.pre.currentTerm :=
   c.inv.active c.actor c.pre c.pre_now active
@@ -6389,7 +6390,7 @@ private theorem keep_log (sameTerm : c.post.currentTerm = c.pre.currentTerm)
     | inl => exact (Nat.lt_irrefl _ (Nat.lt_of_lt_of_le lt (Nat.le_of_eq sameTerm))).elim
     | inr => exact (role candidate).elim
   | install =>
-    rename_i _ _ _ _ fresh _ _ _ _
+    rename_i _ _ _ fresh _ _ _ _
     have := c.inv.leader_floor led
     rw [fresh.2.1] at this
     omega
@@ -6469,7 +6470,7 @@ private theorem leader_cases {motive : NodeID -> NodeState -> Prop} {node : Node
       rename_i won
       exact wins won
     | install =>
-      rename_i _ _ _ _ fresh _ _ _ role
+      rename_i _ _ _ fresh _ _ _ role
       exfalso
       refine c.led_after led (fun old => ?_) fun _ _ step => ?_
       · have floor := c.inv.leader_floor old
@@ -6618,9 +6619,10 @@ private theorem node_logs : NodeLogs (f.advance after) := by
       obtain ⟨_, ⟨_, candidateLog, _⟩, _, log, _⟩ := Wins.facts wins
       exact shorter (by rw [log, ← candidateLog]; exact primaryState_log_prefix _)
     | install =>
-      rename_i entries initialized positive signature _ log _ term _
-      obtain ⟨_, _, ⟨leaderLog, canon, inLog⟩, _⟩ :=
-        c.snap_available initialized positive signature
+      rename_i entries initialized signed _ log _ term _
+      refine c.snap_cases initialized signed
+        (fun nil => shorter (by rw [log, nil]; exact List.nil_prefix))
+        fun ⟨_, _, ⟨leaderLog, canon, inLog⟩, _⟩ => ?_
       exact copied (by rw [term]; exact c.inv.copyLog canon)
         (by rw [log]; exact List.prefix_iff_eq_take.mp inLog)
   | inr => exact (c.inv.node_logs node state old).mono after
@@ -6991,7 +6993,7 @@ private theorem backing_cases {motive : Prop}
     (installs
       : forall entries : List Entry,
           c.event = .internal (.initAsBackup entries)
-          -> 0 < entries.length -> isSignatureAt entries entries.length = true
+          -> (0 < entries.length -> isSignatureAt entries entries.length = true)
           -> c.pre.isFresh -> c.post.log = entries -> c.post.commitIndex = entries.length
           -> motive)
     : motive := by
@@ -7012,19 +7014,21 @@ private theorem backing_cases {motive : Prop}
       rename_i wins
       exact leads (c.wins_backing wins)
   | install =>
-      rename_i entries initialized positive signature fresh log commit _ _
-      exact installs entries initialized positive signature fresh log commit
+      rename_i entries initialized signed fresh log commit _ _
+      exact installs entries initialized signed fresh log commit
 
 /-- The actor's commit index is backed in some term. -/
 private theorem post_backed_any
     : exists term, Backed (f.advance after) c.post.log c.post.commitIndex term := by
   refine c.backing_cases (fun log commit => ?_) (fun backed => ⟨_, backed⟩)
     (fun _ _ received accepted => c.accept_backed received accepted)
-    fun entries initialized positive signature _ log commit => ?_
+    fun entries initialized signed _ log commit => ?_
   · rw [commit]
     exact c.pre_backed_any (by rw [log])
-  · obtain ⟨_, _, _, term, part, committed, inPart⟩ :=
-      c.snap_available initialized positive signature
+  · refine c.snap_cases initialized signed
+      (fun nil => ⟨0, 0, [], Commit.base, Nat.le.refl,
+        by rw [log, nil, List.take_nil]; exact List.nil_prefix⟩)
+      fun ⟨_, _, _, term, part, committed, inPart⟩ => ?_
     refine ⟨term, term, part, committed.mono after, Nat.le.refl, ?_⟩
     rw [log, commit, List.take_length]
     exact inPart
@@ -7039,7 +7043,7 @@ private theorem origin_backing
     : Backed (f.advance after) c.post.log c.post.commitIndex c.post.currentTerm := by
   refine c.backing_cases (fun log commit => c.keep_backed (by rw [log]) commit origin) id
     (fun source request received accepted => ?_)
-    fun entries initialized _ _ fresh _ _ => ?_
+    fun entries initialized _ fresh _ _ => ?_
   · exfalso
     split_rel origin := (rcases origin with ⟨leader, termEq⟩ | wins) with
     | inl =>
@@ -7179,7 +7183,7 @@ private theorem persist_pre {part : List Entry}
         (c.electStep (c.wins_elect wins)).2.2.2.2.2.2.1
       exact (prefix_committable inPre signature).trans winning
   | install =>
-      rename_i _ _ _ _ fresh _ _ _ _
+      rename_i _ _ _ fresh _ _ _ _
       rw [fresh.2.2.1, List.prefix_nil] at inPre
       subst inPre
       simp [isSignatureAt, entryAt?] at signature
