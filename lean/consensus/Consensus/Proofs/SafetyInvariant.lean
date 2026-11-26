@@ -5531,24 +5531,25 @@ private theorem accept_evidence {source : NodeID} {request : AppendEntriesReques
   simp only [MessageOK, payload, sourceEq, targetEq] at ok
   exact ok
 
-/-- An accepted request copies its sender's log up to the end of the batch,
-keeping the follower's suffix exactly when the follower already agreed. -/
-private theorem accept_shape {source : NodeID} {request : AppendEntriesRequest}
+/-- An accepted request copies its sender's log up to the end of the batch, followed by
+the follower's own suffix exactly when the follower already agreed up to there. -/
+private theorem accept_take {source : NodeID} {request : AppendEntriesRequest}
     (eq : c.event = .receive source (.appendEntriesRequest request))
     (accepted : Accepted c.pre request c.post)
     : exists leaderLog : List Entry,
         AppendEvidence f source c.actor request leaderLog
         /\ request.prevLogIndex + request.entries.length <= leaderLog.length
+        /\ c.pre.log.take request.prevLogIndex
+            = leaderLog.take request.prevLogIndex
         /\ c.post.log.take (request.prevLogIndex + request.entries.length)
             = leaderLog.take (request.prevLogIndex + request.entries.length)
-        /\ (c.post.log = c.pre.log
-            \/ (c.post.log
-                  = leaderLog.take (request.prevLogIndex + request.entries.length)
-                /\ Not
-                    (c.pre.log.take (request.prevLogIndex + request.entries.length)
-                      = leaderLog.take (request.prevLogIndex + request.entries.length))))
-        /\ c.pre.log.take request.prevLogIndex
-            = leaderLog.take request.prevLogIndex := by
+        /\ c.post.log
+            = leaderLog.take (request.prevLogIndex + request.entries.length)
+              ++ (if c.pre.log.take (request.prevLogIndex + request.entries.length)
+                      = leaderLog.take (request.prevLogIndex + request.entries.length) then
+                    c.pre.log.drop (request.prevLogIndex + request.entries.length)
+                  else
+                    []) := by
   obtain ⟨leaderLog, evidence⟩ := c.accept_evidence eq
   refine ⟨leaderLog, evidence, ?_⟩
   obtain ⟨_, _, canon, prevBound, prevTerm, entries, _⟩ := evidence
@@ -5571,19 +5572,38 @@ private theorem accept_shape {source : NodeID} {request : AppendEntriesRequest}
     | inr => exact match' _ positive followerBound prevBound (termEq.trans prevTerm)
   have shape := acceptLog_eq followerBound prevBound prevAgree entries match'
   rw [← logEq] at shape
-  refine ⟨batchBound, ?_⟩
+  refine ⟨batchBound, prevAgree, ?_, shape⟩
+  rw [shape, List.take_append_of_le_length (Nat.le_of_eq (List.length_take_of_le batchBound).symm),
+    List.take_take, Nat.min_self]
+
+/-- An accepted request leaves the follower's log unchanged, or replaces it by the
+sender's log up to the end of the batch, which the follower's log did not agree with. -/
+private theorem accept_shape {motive : Prop} {source : NodeID}
+    {request : AppendEntriesRequest}
+    (eq : c.event = .receive source (.appendEntriesRequest request))
+    (accepted : Accepted c.pre request c.post)
+    (same
+      : forall leaderLog : List Entry,
+          AppendEvidence f source c.actor request leaderLog -> c.post.log = c.pre.log -> motive)
+    (fresh
+      : forall leaderLog : List Entry,
+          AppendEvidence f source c.actor request leaderLog
+          -> request.prevLogIndex + request.entries.length <= leaderLog.length
+          -> c.post.log = leaderLog.take (request.prevLogIndex + request.entries.length)
+          -> Not
+              (c.pre.log.take (request.prevLogIndex + request.entries.length)
+                = leaderLog.take (request.prevLogIndex + request.entries.length))
+          -> motive)
+    : motive := by
+  obtain ⟨leaderLog, evidence, batchBound, _, _, shape⟩ := c.accept_take eq accepted
   split_rel shape := (split at shape) with
   | pos =>
     rename_i agree
-    have same : c.post.log = c.pre.log := by
-      rw [shape, ← agree, List.take_append_drop]
-    rw [same]
-    exact ⟨agree, Or.inl rfl, prevAgree⟩
+    exact same leaderLog evidence (by rw [shape, ← agree, List.take_append_drop])
   | neg =>
     rename_i differ
     rw [List.append_nil] at shape
-    rw [shape, List.take_take, Nat.min_self]
-    exact ⟨rfl, Or.inr ⟨rfl, differ⟩, prevAgree⟩
+    exact fresh leaderLog evidence batchBound shape differ
 
 private theorem active : Active (f.advance after) := by
   intro node state now role
@@ -6618,11 +6638,10 @@ private theorem node_logs : NodeLogs (f.advance after) := by
       exact shorter (by rw [log]; exact List.prefix_refl _)
     | accept =>
       rename_i source request eq accepted
-      split_rel accept_shape :=
-          (obtain ⟨leaderLog, evidence, bound, _, same | ⟨fresh, _⟩, _⟩ :=
-            c.accept_shape eq accepted) with
-      | inl => exact shorter (by rw [same]; exact List.prefix_refl _)
-      | inr => exact copied (accepted.1 ▸ c.inv.copyLog evidence.canon) fresh
+      exact c.accept_shape eq accepted
+        (fun _ _ same => shorter (by rw [same]; exact List.prefix_refl _))
+        fun leaderLog evidence _ fresh _ =>
+          copied (accepted.1 ▸ c.inv.copyLog evidence.canon) fresh
     | elect =>
       rename_i wins
       obtain ⟨_, ⟨_, candidateLog, _⟩, _, log, _⟩ := Wins.facts wins
@@ -6857,8 +6876,8 @@ private theorem accept_backed {source : NodeID} {request : AppendEntriesRequest}
     (accepted : Accepted c.pre request c.post)
     : exists term,
         Backed (f.advance after) c.post.log c.post.commitIndex term := by
-  obtain ⟨leaderLog, evidence, _, postTake, shape, prevAgree⟩ :=
-    c.accept_shape received accepted
+  obtain ⟨leaderLog, evidence, _, prevAgree, postTake, _⟩ :=
+    c.accept_take received accepted
   obtain ⟨_, _, commitLe, _, _, _, commitEq⟩ := accepted
   rw [commitEq]
   split_rel max_eq_or :=
@@ -6869,21 +6888,21 @@ private theorem accept_backed {source : NodeID} {request : AppendEntriesRequest}
   | inl =>
     rw [choice]
     refine c.pre_backed_any ?_
-    split_rel shape := (rcases shape with same | ⟨fresh, _⟩) with
-    | inl => rw [same]
-    | inr =>
-      rw [fresh]
-      calc
-        (leaderLog.take (request.prevLogIndex + request.entries.length)).take
-              c.pre.commitIndex
-            = leaderLog.take c.pre.commitIndex := by
-          rw [List.take_take, Nat.min_eq_left (Nat.le_trans commitLe (Nat.le_add_right _ _))]
-        _ = (leaderLog.take request.prevLogIndex).take c.pre.commitIndex := by
-          rw [List.take_take, Nat.min_eq_left commitLe]
-        _ = (c.pre.log.take request.prevLogIndex).take c.pre.commitIndex := by
-          rw [prevAgree]
-        _ = c.pre.log.take c.pre.commitIndex := by
-          rw [List.take_take, Nat.min_eq_left commitLe]
+    -- The committed prefix lies before the batch, where both logs follow the sender's.
+    have within := Nat.le_trans commitLe (Nat.le_add_right _ request.entries.length)
+    calc
+      c.post.log.take c.pre.commitIndex
+          = (c.post.log.take (request.prevLogIndex + request.entries.length)).take
+              c.pre.commitIndex := by
+        rw [List.take_take, Nat.min_eq_left within]
+      _ = leaderLog.take c.pre.commitIndex := by
+        rw [postTake, List.take_take, Nat.min_eq_left within]
+      _ = (leaderLog.take request.prevLogIndex).take c.pre.commitIndex := by
+        rw [List.take_take, Nat.min_eq_left commitLe]
+      _ = (c.pre.log.take request.prevLogIndex).take c.pre.commitIndex := by
+        rw [prevAgree]
+      _ = c.pre.log.take c.pre.commitIndex := by
+        rw [List.take_take, Nat.min_eq_left commitLe]
   | inr =>
     rw [choice]
     have kLe := maxCommittableIndexUpTo_le c.post.log
@@ -7096,15 +7115,12 @@ private theorem accept_persist {source : NodeID} {request : AppendEntriesRequest
     : part <+: c.post.log
       \/ Bad (f.advance after) part (termAt part part.length)
           c.post.currentTerm := by
-  obtain ⟨leaderLog, evidence, batchBound, _, shape, _⟩ :=
-    c.accept_shape received accepted
-  split_rel shape := (rcases shape with same | ⟨fresh, differ⟩) with
-  | inl =>
-    left
+  refine c.accept_shape received accepted (fun _ _ same => ?_)
+    fun leaderLog evidence batchBound fresh differ => ?_
+  · left
     rw [same]
     exact inPre
-  | inr =>
-    have requestTerm : request.term = c.post.currentTerm := accepted.1
+  · have requestTerm : request.term = c.post.currentTerm := accepted.1
     have senderCanon : Canon f c.post.currentTerm leaderLog := requestTerm ▸ evidence.canon
     generalize request.prevLogIndex + request.entries.length = n at batchBound fresh differ
     -- A part agreeing with the sender beyond the batch end contradicts the truncation.
@@ -7361,8 +7377,8 @@ private theorem new_message {envelope : Model.Envelope} (new : envelope ∈ c.se
       simp only [MessageOK, h]
       intro success
       obtain ⟨source, request, received, accepted, responseTerm, lastEq⟩ := ok success
-      obtain ⟨leaderLog, evidence, batchBound, postTake, _, _⟩ :=
-        c.accept_shape received accepted
+      obtain ⟨leaderLog, evidence, batchBound, _, postTake, _⟩ :=
+        c.accept_take received accepted
       rw [sourceEq, responseTerm, lastEq]
       refine ⟨observe c.post, leaderLog, c.post_seen, rfl, ?_, batchBound, ?_⟩
       · rw [← accepted.1]
