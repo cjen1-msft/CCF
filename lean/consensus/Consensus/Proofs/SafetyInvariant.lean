@@ -5143,6 +5143,18 @@ private theorem Wins.facts {self : NodeID} {before' : NodeState} {event : Event}
   exact ⟨advance.log, advance.term, advance.votedFor,
     fun peer => by rw [advance.matchIndex]; rfl, advance.role, advance.commit_le⟩
 
+/-- A node that keeps its term and was not a candidate of it does not win it. -/
+private theorem Wins.fresh {self : NodeID} {before after : NodeState} {event : Event}
+    (wins : Wins self before event after)
+    (sameTerm : after.currentTerm = before.currentTerm)
+    (role : Not (before.role = .candidate))
+    : False := by
+  obtain ⟨candidate, ⟨_, _, _, campaign⟩, _, advance, _⟩ := wins
+  have term : after.currentTerm = candidate.currentTerm := advance.term
+  split_rel campaign := (rcases campaign with ⟨_, fresh, _⟩ | ⟨kept, _⟩) with
+  | inl => exact Nat.succ_ne_self _ ((fresh.symm.trans term.symm).trans sameTerm)
+  | inr => exact role kept
+
 /-- A commit frontier survives `advanceCommit`. -/
 private theorem Advance.frontier {self : NodeID} {middle state : NodeState}
     (advance : Advance self middle state) (frontier : Direct.CommitFrontier middle)
@@ -6389,10 +6401,7 @@ private theorem keep_log (sameTerm : c.post.currentTerm = c.pre.currentTerm)
     exact evidence.different this.symm
   | elect =>
     rename_i wins
-    have ⟨_, _, _, termCase, _⟩ := c.electStep (c.wins_elect wins)
-    split_rel termCase := (rcases termCase with lt | ⟨_, candidate⟩) with
-    | inl => exact (Nat.lt_irrefl _ (Nat.lt_of_lt_of_le lt (Nat.le_of_eq sameTerm))).elim
-    | inr => exact (role candidate).elim
+    exact (wins.fresh sameTerm role).elim
   | install =>
     rename_i _ _ _ fresh _ _ _ _
     have := c.inv.leader_floor led
@@ -6513,12 +6522,8 @@ private theorem continuing {node : NodeID} {state : NodeState}
       extends_ (by rw [(Advance.facts advance).1]; exact List.prefix_append _ _) led)
     (fun won _ led => ?_) role led
   -- A node that led the term before the step does not win it again.
-  exfalso
   obtain ⟨eq, preRole⟩ := c.old_led_actor led
-  have ⟨_, _, _, termCase, _⟩ := c.electStep (c.wins_elect won)
-  split_rel termCase := (rcases termCase with lt | ⟨_, candidate⟩) with
-  | inl => exact Nat.lt_irrefl _ (Nat.lt_of_lt_of_le lt (Nat.le_of_eq eq.symm))
-  | inr => exact preRole candidate
+  exact (won.fresh eq.symm preRole).elim
 
 private theorem canon_mono : CanonMono (f.advance after) := by
   intro node state now role led
