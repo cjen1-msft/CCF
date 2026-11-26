@@ -3757,11 +3757,12 @@ variable (self : NodeID)
 private theorem canStartElection_engaged {state : NodeState} {self : NodeID}
     (can : canStartElection state self)
     : Engaged state := by
-  refine ⟨by
-    split_rel can := (rcases can.1 with eq | eq | eq) with
-    | inl => rw [eq] <;> simp
-    | inr_inl => rw [eq] <;> simp
-    | inr_inr => rw [eq] <;> simp, fun ⟨_, _, empty⟩ => ?_⟩
+  refine ⟨fun none => ?_, fun ⟨_, _, empty⟩ => ?_⟩
+  · -- None of the three roles that may campaign is `none`.
+    split_rel role := (rcases can.1 with eq | eq | eq) with
+    | inl => rw [none] at eq; cases eq
+    | inr_inl => rw [none] at eq; cases eq
+    | inr_inr => rw [none] at eq; cases eq
   split_rel can := (rcases can.2.1 with member | member) with
   | inl =>
     simp [empty, NodeState.signedActiveConfigurations, NodeState.activeConfigurations,
