@@ -453,12 +453,16 @@ open Model.Node
 section Effects
 variable (self : NodeID)
 
-/-- The sends of a new leader: a nomination or a heartbeat. -/
+/-- The sends of a new leader: nominations, then heartbeats. -/
 private def LeaderStart (self : NodeID) (term : Nat) (state : NodeState)
-    (envelope : Model.Envelope)
+    (sent : List Model.Envelope)
     : Prop :=
-  (envelope.source = self /\ envelope.payload = .proposeRequestVoteRequest term)
-  \/ AEFrom self state.currentTerm state.commitIndex state.log envelope
+  exists nominated beats,
+    sent = nominated ++ beats
+    /\ (forall e,
+          e ∈ nominated
+          -> e.source = self /\ e.payload = .proposeRequestVoteRequest term)
+    /\ forall e, e ∈ beats -> AEFrom self state.currentTerm state.commitIndex state.log e
 
 /-- The candidate state `becomeCandidate` builds from `state`. -/
 private def freshCandidate (self : NodeID) (state : NodeState) : NodeState :=
@@ -482,19 +486,37 @@ open Consensus.Proofs.Config Consensus.Proofs.Ledger
 open CCF
 open Model.Node
 
-/-- What a campaigning step sends or becomes. -/
+/-- Whether the campaign of `candidate` won: the candidate is unchanged and sends
+nothing, or it has a quorum and starts as leader. -/
+private def Outcome (self : NodeID) (candidate after : NodeState)
+    (sent : List Model.Envelope)
+    : Prop :=
+  (after = candidate /\ sent = [])
+  \/ (hasQuorum (candidate.activeConfigurations) candidate.votesGranted
+      /\ Advance self (primaryState candidate) after
+      /\ LeaderStart self candidate.currentTerm after sent)
+
+/-- What a campaigning step becomes and sends: the sends of its outcome, then the
+vote requests of a fresh candidate. -/
 private def CampaignResult (self : NodeID) (before candidate after : NodeState)
     (sent : List Model.Envelope)
     : Prop :=
-  let request (e : Model.Envelope) :=
-    e.source = self
-    /\ e.payload = .requestVoteRequest (makeRequestVoteRequest candidate)
-    /\ before.currentTerm < candidate.currentTerm
-  (after = candidate /\ forall e, e ∈ sent -> request e)
-  \/ (hasQuorum (candidate.activeConfigurations) candidate.votesGranted
-      /\ Advance self (primaryState candidate) after
-      /\ forall e,
-          e ∈ sent -> LeaderStart self candidate.currentTerm after e \/ request e)
+  exists started requests,
+    sent = started ++ requests
+    /\ (forall e,
+          e ∈ requests
+          -> e.source = self
+              /\ e.payload = .requestVoteRequest (makeRequestVoteRequest candidate)
+              /\ before.currentTerm < candidate.currentTerm)
+    /\ Outcome self candidate after started
+
+/-- What a campaign gives about the state it started from, whichever way it started. -/
+private def CampaignStart (before candidate : NodeState) : Prop :=
+  before.currentTerm <= candidate.currentTerm
+  /\ Engaged before
+  /\ Not (before.role = .primary /\ candidate.currentTerm = before.currentTerm)
+  /\ (candidate.currentTerm = before.currentTerm
+      -> forall voted, before.votedFor = some voted -> candidate.votedFor = some voted)
 
 /-- The state after adopting a newer term. -/
 private def bumpedState (state : NodeState) (term : Nat) : NodeState :=
@@ -3514,14 +3536,17 @@ private theorem becomePrimary_sends (candidate : NodeState)
     : Sends
         (fun state sent =>
           Advance self (primaryState candidate) state
-          /\ forall e, e ∈ sent -> LeaderStart self candidate.currentTerm state e)
+          /\ LeaderStart self candidate.currentTerm state sent)
         (becomePrimary (Capabilities.record self : Caps) self candidate) := by
   unfold becomePrimary
   refine Sends.bind' (advanceCommit_sends self _)
     fun leader sent ⟨advance, nominated⟩ => ?_
   refine Sends.bind' (Q := fun _ later => forall e, e ∈ later ->
       AEFrom self leader.currentTerm leader.commitIndex leader.log e)
-    (Sends.forIn' fun peer _ member => ?_) fun _ later beats => Sends.pure' ⟨advance, ?_⟩
+    (Sends.forIn' fun peer _ member => ?_) fun _ later beats =>
+      Sends.pure' ⟨advance, sent, later, by simp,
+        fun e member => ⟨(nominated e member).1,
+          by simpa [primaryState] using (nominated e member).2⟩, beats⟩
   · refine Sends.bind' (Sends.send _ _ _) fun _ sent eq =>
       Sends.pure' ⟨⟨_, rfl⟩, fun e member => ?_⟩
     simp only [eq, List.append_nil, List.mem_singleton] at member
@@ -3532,35 +3557,15 @@ private theorem becomePrimary_sends (candidate : NodeState)
       simp [primaryState]
     refine ⟨rfl, other, _, rfl, rfl, ?_, rfl, ?_, Nat.le.refl⟩ <;>
       simp [makeAppendEntriesRequest, sentEq, messageEntries]
-  · intro e member
-    split_rel mem_append := (rcases List.mem_append.mp (by simpa using member) with old | new) with
-    | inl =>
-      have := nominated e old
-      exact Or.inl ⟨this.1, by simpa [primaryState] using this.2⟩
-    | inr => exact Or.inr (beats e new)
 
+/-- Electing on a quorum leaves the candidate unchanged or makes it the leader. -/
 private theorem electIfQuorum_sends (candidate : NodeState)
-    : Sends
-        (fun state sent =>
-          (state = candidate /\ sent = [])
-          \/ (candidate.role = .candidate
-              /\ hasQuorum (candidate.activeConfigurations) candidate.votesGranted
-              /\ Advance self (primaryState candidate) state
-              /\ forall e, e ∈ sent -> LeaderStart self candidate.currentTerm state e))
+    : Sends (fun state sent => Outcome self candidate state sent)
         (electIfQuorum (Capabilities.record self : Caps) self candidate) := by
   unfold electIfQuorum
   refine Sends.ite' (fun won => ?_) fun _ => Sends.pure' (Or.inl ⟨rfl, rfl⟩)
   exact Sends.mono (becomePrimary_sends self candidate) fun _ _ done =>
-    Or.inr ⟨won.1, won.2.1, done⟩
-
-/-- Electing on a quorum leaves the candidate unchanged or makes it the leader. -/
-private theorem electIfQuorum_result (before candidate : NodeState)
-    : Sends (fun state sent => CampaignResult self before candidate state sent)
-        (electIfQuorum (Capabilities.record self : Caps) self candidate) := by
-  unfold electIfQuorum
-  refine Sends.ite' (fun won => ?_) fun _ => Sends.pure' (Or.inl ⟨rfl, by simp⟩)
-  exact Sends.mono (becomePrimary_sends self candidate) fun _ _ ⟨advance, started⟩ =>
-    Or.inr ⟨won.2.1, advance, fun e member => Or.inl (started e member)⟩
+    Or.inr ⟨won.2.1, done⟩
 
 /-- A fresh candidate also broadcasts its vote request. -/
 private theorem becomeCandidate_result (state : NodeState)
@@ -3571,24 +3576,12 @@ private theorem becomeCandidate_result (state : NodeState)
         (becomeCandidate (Capabilities.record self : Caps) state self) := by
   unfold becomeCandidate
   refine Sends.bind' (electIfQuorum_sends self (freshCandidate self state))
-    fun next sent elected => ?_
+    fun next sent outcome => ?_
   refine Sends.bind' (broadcast_sends self _ _) fun _ later requests => Sends.pure' ?_
-  simp only [List.append_nil]
   have lt : before.currentTerm < (freshCandidate self state).currentTerm := by
     simp [freshCandidate, term]
-  split_rel elected := (rcases elected with ⟨nextEq, sentEq⟩ | ⟨_, quorum, advance, started⟩) with
-  | inl =>
-    subst nextEq sentEq
-    exact Or.inl ⟨rfl, fun e member => by
-      have := requests e (by simpa using member)
-      exact ⟨this.1, this.2.2, lt⟩⟩
-  | inr =>
-    refine Or.inr ⟨quorum, advance, fun e member => ?_⟩
-    split_rel mem_append := (rcases List.mem_append.mp member with old | new) with
-    | inl => exact Or.inl (started e old)
-    | inr =>
-      have := requests e new
-      exact Or.inr ⟨this.1, this.2.2, lt⟩
+  exact ⟨sent, later, by simp,
+    fun e member => ⟨(requests e member).1, (requests e member).2.2, lt⟩, outcome⟩
 
 end Effects
 end Consensus.Proofs.Safety
@@ -3603,47 +3596,30 @@ open Model.Node
 private theorem campaign_summary {self : NodeID} {before candidate after : NodeState}
     {event : Event} {sent : List Model.Envelope}
     (campaign : Campaign self before event candidate)
+    (start : CampaignStart before candidate)
     (result : CampaignResult self before candidate after sent)
     (electing : Electing event)
     : Summary self before event after sent := by
-  have termLe : before.currentTerm <= candidate.currentTerm := by
-    split_rel campaign := (rcases campaign.2.2.2 with fresh | kept) with
-    | inl => exact Nat.le_trans (Nat.le_succ _) (Nat.le_of_eq fresh.2.1.symm)
-    | inr => exact Nat.le_of_eq kept.2.1.symm
-  have engaged : Engaged before := by
-    split_rel campaign := (rcases campaign.2.2.2 with fresh | kept) with
-    | inl => exact fresh.1
-    | inr => simp [Engaged, kept.1]
-  have notLeaderKeep : before.role = .primary -> candidate.currentTerm = before.currentTerm
-      -> False := by
-    intro leader same
-    split_rel campaign := (rcases campaign.2.2.2 with fresh | kept) with
-    | inl => exact Nat.succ_ne_self _ (fresh.2.1.symm.trans same)
-    | inr => rw [kept.1] at leader; cases leader
-  have voteKeep : candidate.currentTerm = before.currentTerm -> forall voted,
-      before.votedFor = some voted -> candidate.votedFor = some voted := by
-    intro same voted votedEq
-    split_rel campaign := (rcases campaign.2.2.2 with fresh | kept) with
-    | inl => exact (Nat.succ_ne_self _ (fresh.2.1.symm.trans same)).elim
-    | inr =>
-      split_rel kept := (rcases kept.2.2.1 with none | eq) with
-      | inl => rw [none] at votedEq; cases votedEq
-      | inr => rw [← eq]; exact votedEq
-  unfold CampaignResult at result
-  split_rel result := (rcases result with ⟨afterEq, requests⟩ | ⟨quorum, advance, started⟩) with
-  | inl =>
-    subst afterEq
-    refine ⟨termLe, voteKeep, fun _ => Or.inl engaged, fun _ => campaign,
-      fun leader => (by rw [campaign.1] at leader; cases leader),
-      fun _ leader same => (notLeaderKeep leader same).elim,
-      Kind.same campaign.2.1 campaign.2.2.1, fun e member => ?_⟩
-    obtain ⟨source, payload, lt⟩ := requests e member
+  obtain ⟨termLe, engaged, notLeaderKeep, voteKeep⟩ := start
+  obtain ⟨started, requests, rfl, requested, outcome⟩ := result
+  have request : forall e, e ∈ requests -> after.currentTerm = candidate.currentTerm
+      -> (after.role = .candidate -> after = candidate)
+      -> SendOK self before event after e := by
+    intro e member termEq same
+    obtain ⟨source, payload, lt⟩ := requested e member
     refine ⟨source, ?_⟩
     rw [payload]
-    exact ⟨rfl, lt, fun _ => rfl⟩
+    exact ⟨termEq.symm, termEq ▸ lt, fun role => by rw [same role]⟩
+  split_rel result := (rcases outcome with ⟨afterEq, nothing⟩ | ⟨quorum, advance, leaderStart⟩) with
+  | inl =>
+    subst afterEq nothing
+    exact ⟨termLe, voteKeep, fun _ => Or.inl engaged, fun _ => campaign,
+      fun leader => (by rw [campaign.1] at leader; cases leader),
+      fun _ leader same => (notLeaderKeep ⟨leader, same⟩).elim,
+      Kind.same campaign.2.1 campaign.2.2.1,
+      fun e member => request e (by simpa using member) rfl fun _ => rfl⟩
   | inr =>
-    replace advance : Advance self (primaryState candidate) after :=
-      advance
+    obtain ⟨nominated, beats, rfl, nominations, heartbeats⟩ := leaderStart
     have termEq : after.currentTerm = candidate.currentTerm := by
       rw [advance.term]; rfl
     have elected : Wins self before event after :=
@@ -3654,24 +3630,25 @@ private theorem campaign_summary {self : NodeID} {before candidate after : NodeS
       simp [primaryState] at kept
     refine ⟨termEq ▸ termLe, fun same voted votedEq => ?_, fun _ => Or.inl engaged,
       fun candidate' => (notCandidate candidate').elim, fun _ => Or.inr elected,
-      fun _ leader same => (notLeaderKeep leader (termEq ▸ same)).elim,
+      fun _ leader same => (notLeaderKeep ⟨leader, termEq ▸ same⟩).elim,
       Kind.elect elected, fun e member => ?_⟩
     · rw [advance.votedFor]
       exact voteKeep (termEq ▸ same) voted votedEq
-    · split_rel started := (rcases started e member with (⟨source, payload⟩ | beat) | ⟨source, payload, lt⟩) with
+    · split_rel sent := (rcases List.mem_append.mp member with start | requested) with
       | inl =>
-        refine ⟨source, ?_⟩
-        rw [payload]
-        exact termEq.symm
-      | inr_inl =>
-        obtain ⟨request, payload, ok⟩ := beat.ok
-        refine ⟨beat.1, ?_⟩
-        rw [payload]
-        exact ⟨ok, notCandidate, Or.inr elected⟩
-      | inr_inr =>
-        refine ⟨source, ?_⟩
-        rw [payload]
-        exact ⟨termEq.symm, termEq ▸ lt, fun c => (notCandidate c).elim⟩
+        split_rel started := (rcases List.mem_append.mp start with nominated | beat) with
+        | inl =>
+          obtain ⟨source, payload⟩ := nominations e nominated
+          refine ⟨source, ?_⟩
+          rw [payload]
+          exact termEq.symm
+        | inr =>
+          have beat := heartbeats e beat
+          obtain ⟨request, payload, ok⟩ := beat.ok
+          refine ⟨beat.1, ?_⟩
+          rw [payload]
+          exact ⟨ok, notCandidate, Or.inr elected⟩
+      | inr => exact request e requested termEq fun role => (notCandidate role).elim
 
 private theorem quiet_summary {self : NodeID} {before after : NodeState}
     {event : Event} {sent : List Model.Envelope}
@@ -3809,6 +3786,16 @@ private theorem fresh_campaign {self : NodeID} {before state : NodeState}
   refine ⟨rfl, log, commit, Or.inl ⟨active, ?_, rfl, rfl⟩⟩
   simp [freshCandidate, term]
 
+/-- A fresh campaign starts from an engaged node, one term earlier. -/
+private theorem fresh_start {self : NodeID} {before state : NodeState}
+    (active : Engaged before) (term : state.currentTerm = before.currentTerm)
+    : CampaignStart before (freshCandidate self state) := by
+  have next : (freshCandidate self state).currentTerm = before.currentTerm + 1 := by
+    simp [freshCandidate, term]
+  exact ⟨next ▸ Nat.le_succ _, active,
+    fun ⟨_, same⟩ => Nat.succ_ne_self _ (next.symm.trans same),
+    fun same => (Nat.succ_ne_self _ (next.symm.trans same)).elim⟩
+
 private theorem checkQuorum_summary (state : NodeState) (input : Input)
     : Sends (fun after sent => Summary self state (.internal input) after sent)
         (checkQuorum state self) := by
@@ -3877,7 +3864,8 @@ private theorem startElection_summary (state : NodeState)
   dsimp only
   refine Sends.ite' (fun _ => ?_) fun _ => ?_
   · exact Sends.mono (becomeCandidate_result self _ state rfl) fun after sent result =>
-      campaign_summary (fresh_campaign engaged rfl rfl rfl) result trivial
+      campaign_summary (fresh_campaign engaged rfl rfl rfl) (fresh_start engaged rfl) result
+        trivial
   · refine Sends.bind' (broadcast_sends self _ _) fun _ sent requests => Sends.pure' ?_
     simp only [List.append_nil]
     refine ⟨Nat.le.refl, fun _ voted eq => eq, fun _ => Or.inl engaged, fun c => by simp at c,
@@ -4003,7 +3991,8 @@ private theorem proposeVote_summary (before : NodeState) (source : NodeID) (term
   have engaged := canStartElection_engaged start.2
   exact Sends.mono (becomeCandidate_result self before before rfl)
     fun after sent result =>
-      campaign_summary (fresh_campaign engaged rfl rfl rfl) result trivial
+      campaign_summary (fresh_campaign engaged rfl rfl rfl) (fresh_start engaged rfl) result
+        trivial
 
 /-- A fresh node follows from an empty prefix in term zero, or installs a snapshot. -/
 private theorem initAsBackup_summary (before : NodeState) (entries : List Entry)
@@ -4085,8 +4074,11 @@ private theorem voteResponse_summary (before : NodeState) (source : NodeID)
         subst same
         exact ⟨response, rfl, won.2.1, won.2.2⟩
       | inr => exact absurd old fresh
-    exact Sends.mono (electIfQuorum_result self before _) fun after sent result =>
-      campaign_summary campaign result trivial
+    exact Sends.mono (electIfQuorum_sends self _) fun after sent outcome =>
+      campaign_summary campaign
+        ⟨Nat.le.refl, by simp [Engaged, won.1], fun ⟨leader, _⟩ => by simp [won.1] at leader,
+          fun _ _ voted => voted⟩
+        ⟨sent, [], (List.append_nil sent).symm, by simp, outcome⟩ trivial
 
 private theorem preVoteResponse_summary (before : NodeState) (source : NodeID)
     (response : RequestVoteResponse)
@@ -4117,7 +4109,8 @@ private theorem preVoteResponse_summary (before : NodeState) (source : NodeID)
       Sends.pure' (quiet_summary rfl rfl rfl rfl rfl rfl rfl
         no_bumping_sends (by simp))
     exact Sends.mono (becomeCandidate_result self _ before rfl) fun after sent result =>
-      campaign_summary (fresh_campaign engaged rfl rfl rfl) result trivial
+      campaign_summary (fresh_campaign engaged rfl rfl rfl) (fresh_start engaged rfl) result
+        trivial
 
 /-- Only a primary observes the term of an AppendEntries response. -/
 private theorem observe_response (before : NodeState) (response : AppendEntriesResponse)
