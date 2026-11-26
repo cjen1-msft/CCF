@@ -2027,13 +2027,18 @@ private theorem send (source target : Node) (payload : Message)
   cases ran
   exact ⟨_, rfl, rfl⟩
 
-/-- A `for` loop whose bodies each only send envelopes satisfying `R`. -/
+/-- A `for` loop that never exits early, whose bodies each only send envelopes satisfying
+`R`. -/
 private theorem forIn' {β : Type} {items : List γ} {init : β}
     {f : γ -> β -> Effect Node Message Notification (ForInStep β)}
     {R : Envelope Node Message -> Prop}
     (each
       : forall item value,
-          item ∈ items -> Sends (fun _ sent => forall e, e ∈ sent -> R e) (f item value))
+          item ∈ items
+          -> Sends
+              (fun step sent =>
+                (exists next, step = ForInStep.yield next) /\ forall e, e ∈ sent -> R e)
+              (f item value))
     : Sends (fun _ sent => forall e, e ∈ sent -> R e) (forIn items init f) := by
   split_rel items := (induction items generalizing init) with
   | nil =>
@@ -2041,11 +2046,11 @@ private theorem forIn' {β : Type} {items : List γ} {init : β}
   | cons =>
       rename_i head tail ih
       rw [List.forIn_cons]
-      refine bind' (each head init List.mem_cons_self) fun step sent first => ?_
+      refine bind' (each head init List.mem_cons_self) fun step sent ⟨yields, first⟩ => ?_
       split_rel step := (cases step) with
       | done =>
-          rename_i value
-          exact pure' fun e member => first e (by simpa using member)
+          obtain ⟨_, eq⟩ := yields
+          cases eq
       | yield =>
           rename_i value
           refine mono (ih fun item value member => each item value (List.mem_cons_of_mem _ member))
@@ -3499,7 +3504,7 @@ private theorem broadcast_sends (state : NodeState) (message : Message)
       (R := fun e => e.source = self /\ Not (e.target = self) /\ e.payload = message)
       fun peer _ member => ?_)
     fun _ sent done => Sends.pure' (by simpa using done)
-  refine Sends.bind' (Sends.send _ _ _) fun _ sent eq => Sends.pure' ?_
+  refine Sends.bind' (Sends.send _ _ _) fun _ sent eq => Sends.pure' ⟨⟨_, rfl⟩, ?_⟩
   have : Not (peer = self) := by simp [Finset.mem_sort] at member; exact member.1
   simp [eq, this]
 
@@ -3515,7 +3520,8 @@ private theorem becomePrimary_sends (candidate : NodeState)
   refine Sends.bind' (Q := fun _ later => forall e, e ∈ later ->
       AEFrom self leader.currentTerm leader.commitIndex leader.log e)
     (Sends.forIn' fun peer _ member => ?_) fun _ later beats => Sends.pure' ⟨advance, ?_⟩
-  · refine Sends.bind' (Sends.send _ _ _) fun _ sent eq => Sends.pure' fun e member => ?_
+  · refine Sends.bind' (Sends.send _ _ _) fun _ sent eq =>
+      Sends.pure' ⟨⟨_, rfl⟩, fun e member => ?_⟩
     simp only [eq, List.append_nil, List.mem_singleton] at member
     subst member
     have other : Not (peer = self) := by simp [Finset.mem_sort, eligiblePeers] at member; exact member.1
@@ -4494,7 +4500,8 @@ private theorem appendEntry_batch (self : NodeID) (before : NodeState)
         (Sends.forIn' (R := AEFrom self before.currentTerm before.commitIndex
           (before.log ++ entries)) fun peer _ member => ?_)
         fun _ later sentBeats => Sends.pure' ?_
-      · refine Sends.bind' (Sends.send _ _ _) fun _ sent eq => Sends.pure' fun e member' => ?_
+      · refine Sends.bind' (Sends.send _ _ _) fun _ sent eq =>
+          Sends.pure' ⟨⟨_, rfl⟩, fun e member' => ?_⟩
         simp only [eq, List.append_nil, List.mem_singleton] at member'
         subst member'
         have added := Finset.mem_sort.mp member
