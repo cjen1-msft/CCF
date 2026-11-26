@@ -882,6 +882,11 @@ private structure CampaignFacts (g : LogFacts.Ghost) (v : VoteFacts.Ghost)
 private def RankedElections (g : LogFacts.Ghost) (v : VoteFacts.Ghost) : Prop :=
   ∀ n t l i, g.elected n t l i → CampaignFacts g v g.canon n t l i (t - 1)
 
+/-- Every recorded election has its certificate and the ranks certified by its voters. -/
+private def Elections (g : LogFacts.Ghost) (v : VoteFacts.Ghost) : Prop :=
+  ∀ n t l i, g.elected n t l i →
+    ElectionCert g v n t l i ∧ CampaignFacts g v g.canon n t l i (t - 1)
+
 private theorem CampaignFacts.transport {g g' : LogFacts.Ghost} {v v' : VoteFacts.Ghost}
     {a b : Nat → List Entry → Prop} {n t l i j j'} (c : CampaignFacts g v a n t l i j)
     (votes : ∀ x ∈ v, x ∈ v') (canon : ∀ k p, a k p → b k p)
@@ -1097,9 +1102,8 @@ private structure Inv (frame : Frame) : Prop where
   led_cur : LedCur frame
   leader_led : LeaderLed frame
   candidate : Candidate frame
-  electionCerts : ElectionCerts frame.logs frame.votes
+  elections : Elections frame.logs frame.votes
   election_safety : ElectionSafety frame
-  rankedElections : RankedElections frame.logs frame.votes
   canon_mono : CanonMono frame
   chains : LogFacts.Chain frame.logs
   canonLogs : CanonLogs frame.logs
@@ -1114,6 +1118,13 @@ private structure Inv (frame : Frame) : Prop where
   frontier : ∀ n st, Now frame n st → Direct.CommitFrontier st
   observed : ∀ n st, Now frame n st → Seen frame n (observe st)
   term_mono : TermMono frame
+
+private theorem Inv.electionCerts {h : Frame} (inv : Inv h) : ElectionCerts h.logs h.votes :=
+  fun n k l i e => (inv.elections n k l i e).1
+
+private theorem Inv.rankedElections {h : Frame} (inv : Inv h)
+    : RankedElections h.logs h.votes :=
+  fun n t l i e => (inv.elections n t l i e).2
 
 private theorem Inv.terms {h : Frame} (inv : Inv h) : Terms h :=
   fun node state now => (inv.node_logs node state now).terms
@@ -4828,8 +4839,6 @@ private theorem inv_initial : Inv (Frame.start initial) := by
     exact (not_elected_single (e)).elim
   · intro node other term left right
     rw [(led_single left).2, (led_single right).2]
-  · intro n t l i e
-    exact (not_elected_single (e)).elim
   · intro node state now role led
     refine ⟨.inr ⟨node, state, ⟨now, rfl, role, led⟩, rfl⟩, fun log canon => ?_⟩
     obtain ⟨-, rfl⟩ := led_single led
@@ -6263,18 +6272,6 @@ private theorem freshCert {node : NodeID} {term commit : Nat} {log : List Entry}
     ⟨voters, quorum, fun v m =>
       (c.grantFactsBefore v node term _ ((granted v m))).1.1⟩⟩
 
-private theorem previousBacking {n k l i} (e : (f.advance after).logs.elected n k l i) :
-    ElectionCert f.logs (f.advance after).votes n k l i := by
-  split_rel elected := (rcases c.elected_after e with old | new) with
-  | inl =>
-    exact (c.inv.electionCerts n k l i old).weaken
-      (fun _ _ h => h) (fun _ h => VoteFacts.mem_advance.2 (.inr h))
-  | inr => exact c.freshCert new
-
-private theorem electionCerts : ElectionCerts (f.advance after).logs
-    (f.advance after).votes := fun _ _ _ _ e =>
-  (c.previousBacking e).weaken (fun _ _ h => Commit.advance h) (fun _ h => h)
-
 omit c in
 private theorem certificates_agree {g : LogFacts.Ghost} {v : VoteFacts.Ghost}
     {s : Model.State} {n m k l i l' i'} (a : ElectionCert g v n k l i)
@@ -6323,13 +6320,16 @@ private theorem election_safety : ElectionSafety (f.advance after) := by
     · exact c.new_old_unique leftStep right
     · exact (c.electStep leftStep).1.trans (c.electStep rightStep).1.symm
 
-private theorem rankedElections : RankedElections (f.advance after).logs
-    (f.advance after).votes := by
+/-- Every election keeps its certificate and ranks; the election of the step has those of
+its campaign. -/
+private theorem elections : Elections (f.advance after).logs (f.advance after).votes := by
   intro n t l i e
   split_rel elected := (rcases c.elected_after (e) with old | new) with
   | inl =>
-    have cert := c.inv.rankedElections n t l i (old)
-    apply cert.transport (fun _ m => VoteFacts.mem_advance.2 (.inr m))
+    obtain ⟨cert, ranked⟩ := c.inv.elections n t l i old
+    refine ⟨cert.weaken (fun _ _ h => Commit.advance h)
+      (fun _ h => VoteFacts.mem_advance.2 (.inr h)), ?_⟩
+    apply ranked.transport (fun _ m => VoteFacts.mem_advance.2 (.inr m))
       (fun _ _ m => .inl m) (fun _ _ _ le => le)
     intro x stamp k p seen lt
     split_rel seen := (rcases seen with past | ⟨st, now, term, _⟩) with
@@ -6339,6 +6339,7 @@ private theorem rankedElections : RankedElections (f.advance after).logs
         (VoteFacts.mem_advance.2 (.inr stamp)) st now
       omega
   | inr =>
+    refine ⟨(c.freshCert new).weaken (fun _ _ h => Commit.advance h) (fun _ h => h), ?_⟩
     apply (c.freshCampaign new).transport (fun _ m => m) (fun _ _ m => .inl m) ?_
       (fun _ _ _ _ obs _ => obs)
     intro k p witnessed le
@@ -6357,6 +6358,14 @@ private theorem rankedElections : RankedElections (f.advance after).logs
       split_rel term_when_equal := (rcases termCase with lt' | ⟨_, role⟩) with
       | inl => exact (Nat.not_lt_of_ge (Nat.le_of_eq eq)) lt'
       | inr => exact notCandidate role
+
+private theorem electionCerts : ElectionCerts (f.advance after).logs
+    (f.advance after).votes :=
+  fun n k l i e => (c.elections n k l i e).1
+
+private theorem rankedElections : RankedElections (f.advance after).logs
+    (f.advance after).votes :=
+  fun n t l i e => (c.elections n t l i e).2
 
 /-- A leader continuing in its term keeps its log. -/
 private theorem keep_log (sameTerm : c.post.currentTerm = c.pre.currentTerm)
@@ -7433,9 +7442,8 @@ private theorem inv_step : Inv (f.advance after) :=
     led_cur := c.led_cur
     leader_led := c.leader_led
     candidate := c.candidate
-    electionCerts := c.electionCerts
+    elections := c.elections
     election_safety := c.election_safety
-    rankedElections := c.rankedElections
     canon_mono := c.canon_mono
     chains := c.chains
     canonLogs := c.canonLogs
