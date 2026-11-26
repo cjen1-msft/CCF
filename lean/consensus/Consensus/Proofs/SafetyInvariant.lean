@@ -4859,24 +4859,19 @@ open Model.Node
 open Consensus.Proofs.Ledger
 variable [Config.InitialConfiguration]
 
+/-- Terms do not decrease along a sorted log, from its first entry on. -/
 private theorem termAt_mono {log : List Entry}
     (sorted : log.Pairwise fun first second => first.term <= second.term) {i j : Nat}
-    (le : i <= j) (bound : j <= log.length)
+    (positive : 0 < i) (le : i <= j) (bound : j <= log.length)
     : termAt log i <= termAt log j := by
-  split_rel eq_zero_or_pos := (rcases Nat.eq_zero_or_pos i with zero | positive) with
+  rw [termAt_eq positive (Nat.le_trans le bound), termAt_eq (Nat.lt_of_lt_of_le positive le) bound]
+  split_rel eq_or_lt_of_le := (rcases Nat.eq_or_lt_of_le le with same | lt) with
   | inl =>
-    subst zero
-    rw [termAt_zero]
-    exact Nat.zero_le _
+    subst same
+    exact Nat.le.refl
   | inr =>
-    rw [termAt_eq positive (Nat.le_trans le bound), termAt_eq (Nat.lt_of_lt_of_le positive le) bound]
-    split_rel eq_or_lt_of_le := (rcases Nat.eq_or_lt_of_le le with same | lt) with
-    | inl =>
-      subst same
-      exact Nat.le.refl
-    | inr =>
-      exact List.pairwise_iff_getElem.mp sorted _ _ _ _
-        (Nat.sub_lt_sub_right (Nat.succ_le_of_lt positive) lt)
+    exact List.pairwise_iff_getElem.mp sorted _ _ _ _
+      (Nat.sub_lt_sub_right (Nat.succ_le_of_lt positive) lt)
 
 private theorem termAt_le_of_mem {log : List Entry} {bound : Nat}
     (terms : forall entry, entry ∈ log -> entry.term <= bound) (index : Nat)
@@ -5474,10 +5469,19 @@ private theorem makeRequestVoteRequest_eq (state : NodeState)
 private theorem vals_outranks {state : NodeState} (term : Nat)
     (sorted : state.log.Pairwise fun first second => first.term <= second.term)
     (frontier : state.commitIndex <= state.log.length)
-    : LogFacts.Outranks (vals term state.log state.commitIndex) state.log :=
-  ⟨termAt_mono sorted (Nat.le_max_right _ _)
-      (Nat.max_le.mpr ⟨frontier, maxCommittableIndexBounded state.log⟩),
-    fun _ => Nat.le_max_right _ _⟩
+    : LogFacts.Outranks (vals term state.log state.commitIndex) state.log := by
+  refine ⟨?_, fun _ => Nat.le_max_right _ _⟩
+  change termAt state.log (maxCommittableIndex state.log)
+    <= termAt state.log (max state.commitIndex (maxCommittableIndex state.log))
+  -- A log without a signature has last committable term zero.
+  split_rel signed :=
+      (rcases Nat.eq_zero_or_pos (maxCommittableIndex state.log) with none | positive) with
+  | inl =>
+    rw [none, termAt_zero]
+    exact Nat.zero_le _
+  | inr =>
+    exact termAt_mono sorted positive (Nat.le_max_right _ _)
+      (Nat.max_le.mpr ⟨frontier, maxCommittableIndexBounded state.log⟩)
 
 /-- A vote request that a log is up to date for ranks at least as high as the log. -/
 private theorem outranks_of_upToDate {state : NodeState} {request : RequestVoteRequest}
@@ -5627,7 +5631,8 @@ private theorem rankAtGrant {v n t r k l i}
     have bound := Nat.le_of_eq (List.length_take_of_le (signature_bound sig)).symm
     have signed := isSignatureAt_of_prefix sub (isSignatureAt_take_of_le Nat.le.refl sig)
     have index := signatureIndex_le_maxCommittableIndex signed
-    have rank := termAt_mono (c.inv.sorted v st preMem) index (maxCommittableIndexBounded _)
+    have rank := termAt_mono (c.inv.sorted v st preMem) (signature_pos signed) index
+      (maxCommittableIndexBounded _)
     rw [termAt_of_prefix sub bound, termAt_take Nat.le.refl, atI] at rank
     change k ≤ maxCommittableTerm st.log at rank
     exact .inl ⟨Nat.le_trans rank up.1,
@@ -6046,7 +6051,8 @@ private theorem core {g : LogFacts.Ghost} {v n t b i later commit bound k l log}
       | inl =>
         exfalso
         have partSorted := copy.sorted.sublist (List.take_sublist i l)
-        have mono := termAt_mono partSorted (Nat.le_of_lt short) (Nat.le_of_eq partLength.symm)
+        have mono := termAt_mono partSorted jPos (Nat.le_of_lt short)
+          (Nat.le_of_eq partLength.symm)
         have atJ : termAt (l.take i) j = termAt log j := by
           rw [← termAt_of_prefix sub (Nat.le_of_lt (Nat.lt_of_lt_of_eq short partLength.symm)),
             ← termAt_take (n := j) Nat.le.refl, ← anchoredTake,
