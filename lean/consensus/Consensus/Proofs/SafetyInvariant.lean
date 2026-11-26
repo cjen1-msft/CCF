@@ -1284,13 +1284,6 @@ set_option linter.unusedSectionVars false
 open Consensus.Proofs.Config
 open Consensus.Model.Node
 
-@[simp]
-private theorem EntryContent.isSignature_eq_true {content : EntryContent}
-    : content.isSignature = true <-> content = .signature := by
-  split_rel content := (cases content) with
-  | transaction => simp [EntryContent.isSignature]
-  | signature => simp [EntryContent.isSignature]
-
 /-- A successful one-based lookup proves the index lies within the log. -/
 private theorem entryAtSomeIndexBound
     {log : List Entry}
@@ -1352,7 +1345,7 @@ private theorem isSignatureAtTrue
     (signature : isSignatureAt log index = true)
     : Exists
         fun entry =>
-          entryAt? log index = some entry /\ entry.content = .signature := by
+          entryAt? log index = some entry /\ entry.content.isSignature = true := by
   split_rel found := (cases found : entryAt? log index) with
   | none =>
       simp [isSignatureAt, found] at signature
