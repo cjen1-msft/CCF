@@ -637,13 +637,18 @@ private theorem chain_step {bootstrap g prev s} (old : Chain g)
     (grows : ∀ n st k, (advance bootstrap g prev s).canonNow bootstrap s n st k →
       ∀ l, (advance bootstrap g prev s).canon k l → l <+: st.log) :
     Chain (advance bootstrap g prev s) := by
-  intro k a b ca cb
+  intro k a b ca cb m ma mb
+  -- A leader log recorded by this state extends every leader log of its term.
+  have extended {α : Type} {x y : List α} (sub : x <+: y) (mx : m ≤ x.length) :
+      x.take m = y.take m := by
+    obtain ⟨rest, rfl⟩ := sub
+    rw [List.take_append_of_le_length mx]
   split_rel right := (rcases cb with past | ⟨n, st, now, rfl⟩) with
   | inl =>
     split_rel left := (rcases ca with past' | ⟨n, st, now, rfl⟩) with
-    | inl => exact old k a b past' past
-    | inr => exact .inr (grows n st k now b (.inl past))
-  | inr => exact .inl (grows n st k now a ca)
+    | inl => exact old k a b past' past m ma mb
+    | inr => exact (extended (grows n st k now b (.inl past)) mb).symm
+  | inr => exact extended (grows n st k now a ca) ma
 
 end Consensus.Proofs.LogFacts
 
@@ -2242,14 +2247,6 @@ private theorem comparable_of_prefix {α : Type} {left right common : List α}
     (leftSub : left <+: common) (rightSub : right <+: common)
     : left <+: right \/ right <+: left :=
   List.prefix_or_prefix_of_prefix leftSub rightSub
-
-private theorem take_eq_take_of_comparable {α : Type} {left right : List α} {n : Nat}
-    (comparable : left <+: right \/ right <+: left)
-    (leftBound : n <= left.length) (rightBound : n <= right.length)
-    : left.take n = right.take n := by
-  split_rel comparable := (rcases comparable with sub | sub) with
-  | inl => exact (take_eq_of_prefix sub leftBound).symm
-  | inr => exact take_eq_of_prefix sub rightBound
 
 private theorem termAt_eq {log : List Entry} {index : Nat} (positive : 0 < index)
     (bound : index <= log.length)
@@ -4841,7 +4838,7 @@ private theorem inv_initial : Inv (Frame.start initial) := by
   · intro k a b ca cb
     rw [(initial_canon initialized (ca)).2,
       (initial_canon initialized (cb)).2]
-    exact Or.inl (List.prefix_refl _)
+    exact fun _ _ _ => rfl
   · apply canonLogs_step (g := LogFacts.empty) (prev := none) (s := initial)
       (fun _ _ h => False.elim h)
     rintro n st k ⟨now, rfl, _, led⟩
@@ -4969,13 +4966,6 @@ private theorem Led.elected {frame : Frame} {node : NodeID} {term : Nat}
     exact absurd above (by decide)
   | inr => exact elected
 
-/-- Logs of leaders of one term form a chain. -/
-private theorem canon_chain {frame : Frame} (chain : LogFacts.Chain frame.logs)
-    {term : Nat} {first second : List Entry} (left : Canon frame term first)
-    (right : Canon frame term second)
-    : first <+: second \/ second <+: first := by
-  exact chain _ _ _ (left) (right)
-
 /-- A commit of a positive term has signed quorum evidence. -/
 private theorem Commit.origin {g : LogFacts.Ghost} {t p} (commit : Commit g t p)
     (pos : 0 < t) : ∃ l b i, CommitFacts g l t b i ∧ p = l.take i := by
@@ -5012,44 +5002,55 @@ private theorem later_of_complete {g : LogFacts.Ghost} (wins : LogFacts.WinningP
     later_upto (bound := t) wins (fun k p n e l i c elect lt _ => complete k p n e l i c elect lt)
       floor k t p l commit canon lt (Nat.le_refl t)
 
-/-- Committed prefixes of terms up to `bound` are comparable: a leader log of a later term
-holds an earlier commit, and leader logs of one term form a chain. -/
-private theorem comparable_upto {g : LogFacts.Ghost} {bound : Nat} (chains : LogFacts.Chain g)
+/-- Committed prefixes of terms up to `bound` agree wherever both are defined: a leader
+log of a later term holds an earlier commit, and leader logs of one term agree. -/
+private theorem agree_upto {g : LogFacts.Ghost} {bound : Nat} (chains : LogFacts.Chain g)
     (later : LaterUpTo g bound) (floor : ∀ k l, g.canon k l → 2 ≤ k) {k t p q}
     (hp : Commit g k p) (hq : Commit g t q) (kb : k ≤ bound) (tb : t ≤ bound) :
-    p <+: q ∨ q <+: p := by
+    ∀ n, n ≤ p.length → n ≤ q.length → p.take n = q.take n := by
+  intro n np nq
   split_rel terms := (rcases Nat.lt_trichotomy k t with lt | same | gt) with
   | inl =>
+    -- Both are prefixes of the later leader log.
     obtain ⟨b, _, _, fb, rfl⟩ := hq.origin (Nat.zero_lt_of_lt lt)
-    exact List.prefix_or_prefix_of_prefix (later _ _ _ _ hp fb.canon lt tb)
-      (List.take_prefix _ _)
+    exact (take_eq_of_prefix (later _ _ _ _ hp fb.canon lt tb) np).symm.trans
+      (take_eq_of_prefix (List.take_prefix _ _) nq)
   | inr_inl =>
     subst same
     split_rel started := (rcases Nat.eq_zero_or_pos k with zero | pos) with
     | inl =>
       subst zero
-      rw [hp.nil_of_zero floor]
-      exact Or.inl List.nil_prefix
+      rw [hp.nil_of_zero floor] at np ⊢
+      rw [Nat.le_zero.mp np, List.take_zero, List.take_zero]
     | inr =>
       obtain ⟨a, _, _, fa, rfl⟩ := hp.origin pos
       obtain ⟨b, _, _, fb, rfl⟩ := hq.origin pos
-      split_rel chain := (rcases chains k a b fa.canon fb.canon with sub | sub) with
-      | inl =>
-        exact List.prefix_or_prefix_of_prefix ((List.take_prefix _ _).trans sub)
-          (List.take_prefix _ _)
-      | inr =>
-        exact List.prefix_or_prefix_of_prefix (List.take_prefix _ _)
-          ((List.take_prefix _ _).trans sub)
+      rw [← take_eq_of_prefix (List.take_prefix _ a) np,
+        ← take_eq_of_prefix (List.take_prefix _ b) nq]
+      exact chains k a b fa.canon fb.canon n
+        (Nat.le_trans np (List.take_prefix _ _).length_le)
+        (Nat.le_trans nq (List.take_prefix _ _).length_le)
   | inr_inr =>
     obtain ⟨a, _, _, fa, rfl⟩ := hp.origin (Nat.zero_lt_of_lt gt)
-    exact List.prefix_or_prefix_of_prefix (List.take_prefix _ _)
-      (later _ _ _ _ hq fa.canon gt kb)
+    exact (take_eq_of_prefix (List.take_prefix _ _) np).symm.trans
+      (take_eq_of_prefix (later _ _ _ _ hq fa.canon gt kb) nq)
 
+/-- Committed prefixes are comparable: they agree up to the shorter one. -/
 private theorem comparable_of {g : LogFacts.Ghost} (chains : LogFacts.Chain g)
     (later : Later g) (floor : ∀ k l, g.canon k l → 2 ≤ k) {k t p q}
-    (hp : Commit g k p) (hq : Commit g t q) : p <+: q ∨ q <+: p :=
-  comparable_upto (bound := max k t) chains (fun k t p l c canon lt _ => later k t p l c canon lt)
+    (hp : Commit g k p) (hq : Commit g t q) : p <+: q ∨ q <+: p := by
+  have agree := agree_upto (bound := max k t) chains
+    (fun k t p l c canon lt _ => later k t p l c canon lt)
     floor hp hq (Nat.le_max_left k t) (Nat.le_max_right k t)
+  split_rel shorter := (rcases Nat.le_total p.length q.length with le | le) with
+  | inl =>
+    have eq := agree p.length (Nat.le_refl _) le
+    rw [List.take_length] at eq
+    exact Or.inl (eq ▸ List.take_prefix _ _)
+  | inr =>
+    have eq := agree q.length le (Nat.le_refl _)
+    rw [List.take_length] at eq
+    exact Or.inr (eq ▸ List.take_prefix _ _)
 
 private theorem Inv.canon_floor {h : Frame} (inv : Inv h) {k l} (canon : h.logs.canon k l) :
     2 ≤ k := by
@@ -5545,8 +5546,7 @@ private theorem accept_shape {source : NodeID} {request : AppendEntriesRequest}
     obtain ⟨b, cb, lb, eb⟩ := (c.inv.copyLog canon).anchor j positive right
     rw [same] at ca
     rw [ea, eb]
-    exact take_eq_take_of_comparable
-      (c.inv.chains _ _ _ (ca) cb) la lb
+    exact c.inv.chains _ _ _ ca cb j la lb
   have prevAgree : c.pre.log.take request.prevLogIndex = leaderLog.take request.prevLogIndex := by
     split_rel eq_zero_or_pos :=
         (rcases Nat.eq_zero_or_pos request.prevLogIndex with zero | positive) with
@@ -6045,10 +6045,9 @@ private theorem core {g : LogFacts.Ghost} {v n t b i later commit bound k l log}
     | inr =>
       have indexLeJ : i ≤ j := rank.2 same
       rw [← same] at canon
-      have comparable := chain _ _ _ canon step.canon
       have anchoredIndex := Nat.le_trans indexLeJ anchoredLength
       exact viaAnchor indexLeJ
-        (take_eq_take_of_comparable comparable anchoredIndex step.indexLe).symm
+        (chain _ _ _ canon step.canon i anchoredIndex step.indexLe).symm
 
 end Consensus.Proofs.Safety
 
@@ -6064,7 +6063,8 @@ variable [Config.InitialConfiguration]
 
 /--
 The committed part is in `log`: it is already there, or the two logs agree on a prefix
-covering both commit indices, which is what quorum intersection (`agreed`) needs.
+covering both commit indices, which is what quorum intersection (`agreed`) needs. Above
+the base, both lie along one committed `part`.
 -/
 private theorem contained_of_agree {α : Type} {state log : List α}
     {base index commit : Nat} (baseLe : base <= index) (indexLe : index <= state.length)
@@ -6073,7 +6073,8 @@ private theorem contained_of_agree {α : Type} {state log : List α}
       : base < commit
         -> exists part,
             log.take commit <+: part
-            /\ (state.take index <+: part \/ part <+: state.take index))
+            /\ forall n, n <= (state.take index).length -> n <= part.length
+                -> (state.take index).take n = part.take n)
     (agreed
       : forall k, state.take k = log.take k -> base <= k -> commit <= k
         -> state.take index <+: log)
@@ -6082,7 +6083,7 @@ private theorem contained_of_agree {α : Type} {state log : List α}
   | inl => exact agreed base (take_of_prefix_length (low le)
       (List.length_take_of_le (Nat.le_trans baseLe indexLe))) Nat.le.refl le
   | inr =>
-    obtain ⟨part, inPart, comparable⟩ := high lt
+    obtain ⟨part, inPart, along⟩ := high lt
     have commitLength : (log.take commit).length = commit := List.length_take_of_le frontier
     have partLong : commit <= part.length := commitLength ▸ inPart.length_le
     have indexLength : (state.take index).length = index := List.length_take_of_le indexLe
@@ -6093,25 +6094,19 @@ private theorem contained_of_agree {α : Type} {state log : List α}
         state.take commit = (state.take index).take commit := by
           rw [List.take_take, Nat.min_eq_left le]
         _ = part.take commit :=
-          take_eq_take_of_comparable comparable
-            (Nat.le_trans le (Nat.le_of_eq indexLength.symm)) partLong
+          along commit (Nat.le_trans le (Nat.le_of_eq indexLength.symm)) partLong
         _ = log.take commit := by
           rw [take_eq_of_prefix inPart (Nat.le_of_eq commitLength.symm), List.take_take,
             Nat.min_self]
     | inr =>
-      have sub : state.take index <+: part := by
-        split_rel comparable := (rcases comparable with sub | sub) with
-        | inl => exact sub
-        | inr => exact (Nat.lt_irrefl index (Nat.lt_of_lt_of_le short (Nat.le_trans partLong
-            (Nat.le_trans sub.length_le (Nat.le_of_eq indexLength))))).elim
-      have : state.take index <+: log.take commit := by
-        split_rel prefix_or_prefix_of_prefix :=
-            (rcases List.prefix_or_prefix_of_prefix sub inPart with inner | outer) with
-        | inl => exact inner
-        | inr => exact (Nat.lt_irrefl index (Nat.lt_of_lt_of_le short
-            (Nat.le_trans (Nat.le_of_eq commitLength.symm)
-              (Nat.le_trans outer.length_le (Nat.le_of_eq indexLength))))).elim
-      exact this.trans (List.take_prefix _ _)
+      -- The whole part lies below the commit index, where `log` follows `part`.
+      have eq := along index (Nat.le_of_eq indexLength.symm)
+        (Nat.le_trans (Nat.le_of_lt short) partLong)
+      rw [List.take_take, Nat.min_self,
+        take_eq_of_prefix inPart (Nat.le_trans (Nat.le_of_lt short) (Nat.le_of_eq commitLength.symm)),
+        List.take_take, Nat.min_eq_left (Nat.le_of_lt short)] at eq
+      rw [eq]
+      exact List.take_prefix _ _
 
 private theorem termAt_append_right {front back : List Entry} {index : Nat}
     (above : front.length < index) (bound : index <= (front ++ back).length)
@@ -6189,9 +6184,10 @@ private theorem carried_of_chain {g : LogFacts.Ghost} {v n later log commit boun
     have low : commit ≤ b → l.take b <+: log :=
       fun _ => within.trans (ih (Nat.lt_of_le_of_lt le lt))
     have high (_ : b < commit) :
-        ∃ q, log.take commit <+: q ∧ (l.take i <+: q ∨ q <+: l.take i) := by
+        ∃ q, log.take commit <+: q
+          ∧ ∀ n, n ≤ (l.take i).length → n ≤ q.length → (l.take i).take n = q.take n := by
       obtain ⟨_, q, held, below, sub⟩ := backing
-      exact ⟨q, sub, comparable_upto chains prior floor mem held
+      exact ⟨q, sub, agree_upto chains prior floor mem held
         (Nat.le_trans (Nat.le_sub_one_of_lt lt) window) (Nat.le_trans below window)⟩
     exact contained_of_agree facts.baseLe facts.indexLe campaign.frontier low high
       fun k agree baseLe commitLe =>
@@ -7091,19 +7087,19 @@ private theorem accept_persist {source : NodeID} {request : AppendEntriesRequest
           exact this.symm.trans (Nat.le_antisymm termLe upper)
         rw [termEq] at logCanon
         have partLog : part = log.take part.length := partEq.symm.trans take
-        have comparable := canon_chain c.inv.chains logCanon senderCanon
+        have agree := c.inv.chains _ _ _ logCanon senderCanon
         split_rel lt_or_ge :=
             (rcases (Nat.lt_or_ge leaderLog.length part.length).symm with fits | long) with
         | inl =>
           apply inSender
-          rw [partLog, take_eq_take_of_comparable comparable length fits]
+          rw [partLog, agree _ length fits]
           exact List.take_prefix _ _
         | inr =>
           have short := Nat.lt_of_le_of_lt batchBound long
           apply beyond short
           rw [partLog, List.take_take, Nat.min_eq_left (Nat.le_of_lt short)]
-          exact take_eq_take_of_comparable comparable
-            (Nat.le_trans batchBound (Nat.le_trans (Nat.le_of_lt long) length)) batchBound
+          exact agree _ (Nat.le_trans batchBound (Nat.le_trans (Nat.le_of_lt long) length))
+            batchBound
 
 /-- A signed prefix of the actor's log survives the step, unless a leader log
 of a later term lacks it. -/

@@ -69,7 +69,8 @@ def advance (bootstrap : NodeID) (g : Ghost) (prev : Option Model.State) (s : Mo
     ∃ n st, g.canonNow bootstrap s n st k ∧ st.log = l }
 
 def Chain (g : Ghost) : Prop :=
-  ∀ k a b, g.canon k a → g.canon k b → a <+: b ∨ b <+: a
+  ∀ k a b, g.canon k a → g.canon k b →
+    ∀ n, n ≤ a.length → n ≤ b.length → a.take n = b.take n
 
 /-- A non-bootstrap leader log carries the winning committable prefix. This is what
 the original proof used to recover by visiting the instant the leader log was seen. -/
