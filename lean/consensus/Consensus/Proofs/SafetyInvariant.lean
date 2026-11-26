@@ -821,16 +821,20 @@ private structure CopyLog (g : LogFacts.Ghost) (term : Nat) (log : List Entry) :
 private def CopyLogs (g : LogFacts.Ghost) : Prop :=
   ∀ k l, g.canon k l → CopyLog g k l
 
+/-- A ghost update keeps what a follower can rely on. -/
+private theorem CopyLog.advance {g bootstrap prev s k l} (copy : CopyLog g k l) :
+    CopyLog (LogFacts.advance bootstrap g prev s) k l := by
+  obtain ⟨rooted, terms, sorted, anchors⟩ := copy
+  refine ⟨rooted, terms, sorted, fun i pos bound => ?_⟩
+  obtain ⟨a, ca, le, eq⟩ := anchors i pos bound
+  exact ⟨a, .inl ca, le, eq⟩
+
 private theorem copyLogs_step {g bootstrap prev s} (old : CopyLogs g)
     (current : ∀ n st, (n, st) ∈ s.nodes → CopyLog (LogFacts.advance bootstrap g prev s)
       st.currentTerm st.log) : CopyLogs (LogFacts.advance bootstrap g prev s) := by
   intro k l canon
   split_rel canon := (rcases canon with past | ⟨n, st, now, rfl⟩) with
-  | inl =>
-    obtain ⟨rooted, terms, sorted, anchors⟩ := old k l past
-    refine ⟨rooted, terms, sorted, fun i pos bound => ?_⟩
-    obtain ⟨a, ca, le, eq⟩ := anchors i pos bound
-    exact ⟨a, .inl ca, le, eq⟩
+  | inl => exact (old k l past).advance
   | inr => exact now.2.1 ▸ current n st now.1
 
 private def Completeness (frame : Frame) : Prop :=
@@ -881,6 +885,15 @@ private theorem currentCopyLog {f : Frame} (rooted : RootedLogs f) (terms : Term
     (sorted : Sorted f) (anchor : Anchor f) (n st) (mem : Now f n st) :
     CopyLog f.logs st.currentTerm st.log :=
   ⟨rooted n st mem, terms n st mem, sorted n st mem, fun i pos bound => anchor n st i mem pos bound⟩
+
+/-- Every node's log is one a follower may copy: rooted, within the node's term, sorted
+by term, and anchored in leader logs. -/
+private def NodeLogs (frame : Frame) : Prop :=
+  forall node state, Now frame node state -> CopyLog frame.logs state.currentTerm state.log
+
+private theorem CopyLog.mono {f : Frame} {k l} (copy : CopyLog f.logs k l) (s : Model.State) :
+    CopyLog (f.advance s).logs k l :=
+  copy.advance
 
 private def LeaderLogs (frame : Frame) : Prop :=
   forall node state, Now frame node state -> state.role = .primary -> state.log ≠ []
@@ -950,8 +963,7 @@ private theorem commitChains_step {g bootstrap prev} {s : Model.State} (old : Co
     | inr => exact .backed facts (.inl prior) (old e p prior).advance le sub
 
 private structure Inv (frame : Frame) : Prop where
-  terms : Terms frame
-  sorted : Sorted frame
+  node_logs : NodeLogs frame
   active : Active frame
   ballots : Ballots frame
   grantFacts : GrantFacts frame.logs frame.votes frame.logs.canon
@@ -964,14 +976,12 @@ private structure Inv (frame : Frame) : Prop where
   canon_mono : CanonMono frame
   chains : LogFacts.Chain frame.logs
   winningPrefix : LogFacts.WinningPrefix frame.logs
-  anchor : Anchor frame
   completeness : Completeness frame
   commit_backed : CommitBacked frame
   persist : Persist frame
   match_ack : MatchAck frame
   messages : Messages frame
   message_terms : MessageTerms frame
-  rooted : RootedLogs frame
   leader_logs : LeaderLogs frame
   commitChains : CommitChains frame.logs
   copyLogs : CopyLogs frame.logs
@@ -980,6 +990,19 @@ private structure Inv (frame : Frame) : Prop where
   owners : LogFacts.Owners INITIAL_PRIMARY frame.logs
   observed : ∀ n st, Now frame n st → Seen frame n (observe st)
   term_mono : TermMono frame
+
+private theorem Inv.terms {h : Frame} (inv : Inv h) : Terms h :=
+  fun node state now => (inv.node_logs node state now).terms
+
+private theorem Inv.sorted {h : Frame} (inv : Inv h) : Sorted h :=
+  fun node state now => (inv.node_logs node state now).sorted
+
+private theorem Inv.anchor {h : Frame} (inv : Inv h) : Anchor h :=
+  fun node state index now positive bound =>
+    (inv.node_logs node state now).anchor index positive bound
+
+private theorem Inv.rooted {h : Frame} (inv : Inv h) : RootedLogs h :=
+  fun node state now => (inv.node_logs node state now).rooted
 
 private theorem Inv.copyLog {h : Frame} (i : Inv h) {k l} (canon : Canon h k l) :
     CopyLog h.logs k l := i.copyLogs k l canon
@@ -2601,11 +2624,6 @@ private theorem Rooted.prefix {root : Entry} {small large : List Entry}
     split_rel rooted := (rcases rooted with empty | head) with
     | inl => simp at empty
     | inr => simpa using head
-
-private theorem Rooted.take {root : Entry} {log : List Entry} (rooted : Rooted root log)
-    (n : Nat)
-    : Rooted root (log.take n) :=
-  rooted.prefix (List.take_prefix n log)
 
 private theorem Rooted.append {root : Entry} {log : List Entry} (rooted : Rooted root log)
     (nonempty : log ≠ []) (entries : List Entry)
@@ -4759,8 +4777,7 @@ private theorem inv_initial : Inv (Frame.start initial) := by
       simp [initialLocal, isLeader] at bound
       exact absurd (Nat.lt_of_lt_of_le positive (Nat.le_of_eq bound)) (Nat.lt_irrefl 0)
   constructor
-  · exact terms
-  · exact sorted
+  · exact currentCopyLog rooted terms sorted anchor
   · intro node state now active
     rw [stateOf now] at active ⊢
     simp only [Engaged, initialLocal] at active ⊢
@@ -4825,7 +4842,6 @@ private theorem inv_initial : Inv (Frame.start initial) := by
   · intro k l canon gt
     have boot := (initial_canon initialized (canon)).1
     exact (Nat.not_lt_of_ge (Nat.le_of_eq boot) gt).elim
-  · exact anchor
   · intro term part node later log commit _ elected
     exact absurd elected not_elected_single
   · intro node state now
@@ -4844,7 +4860,6 @@ private theorem inv_initial : Inv (Frame.start initial) := by
   · intro envelope pending
     change envelope ∈ initial.network at pending
     simp [initialized.2.2.2.1] at pending
-  · exact rooted
   · intro node state now leader
     rw [stateOf now] at leader ⊢
     split_rel isLeader := (by_cases isLeader : node = INITIAL_PRIMARY) with
@@ -5525,69 +5540,6 @@ private theorem post_log
       · rw [log]
         exact List.prefix_iff_eq_take.mp inLog
 
-/-- Every log stays empty or rooted at the bootstrap configuration. -/
-private theorem rooted : RootedLogs (f.advance after) := by
-  intro node state now
-  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨other, old⟩) with
-  | inl =>
-    subst nodeEq stateEq
-    have preRooted := c.inv.rooted c.actor c.pre c.pre_now
-    split_rel post_log := (rcases c.post_log with sub | ⟨entries, log, _, leader, _, _⟩
-        | ⟨_, n, copy, _, log⟩) with
-    | inl => exact preRooted.prefix sub
-    | inr_inl =>
-      rw [log]
-      exact preRooted.append (c.inv.leader_logs c.actor c.pre c.pre_now leader) entries
-    | inr_inr =>
-      rw [log]
-      exact copy.rooted.take n
-  | inr => exact c.inv.rooted node state old
-
-private theorem terms : Terms (f.advance after) := by
-  intro node state now entry mem
-  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨other, old⟩) with
-  | inl =>
-    subst nodeEq stateEq
-    have le := c.term_le
-    have preTerms := c.inv.terms c.actor c.pre c.pre_now
-    split_rel post_log := (rcases c.post_log with sub | ⟨entries, log, terms, _, term, _⟩
-        | ⟨_, _, copy, _, log⟩) with
-    | inl => exact Nat.le_trans (preTerms entry (sub.subset mem)) le
-    | inr_inl =>
-      rw [log] at mem
-      split_rel mem_append := (rcases List.mem_append.mp mem with old | new) with
-      | inl => exact Nat.le_trans (preTerms entry old) le
-      | inr =>
-        rw [terms entry new]
-        exact le
-    | inr_inr =>
-      rw [log] at mem
-      exact copy.terms entry (List.mem_of_mem_take mem)
-  | inr => exact c.inv.terms node state old entry mem
-
-private theorem sorted : Sorted (f.advance after) := by
-  intro node state now
-  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨other, old⟩) with
-  | inl =>
-    subst nodeEq stateEq
-    have preTerms := c.inv.terms c.actor c.pre c.pre_now
-    split_rel post_log := (rcases c.post_log with sub | ⟨entries, log, terms, _, _, _⟩
-        | ⟨_, _, copy, _, log⟩) with
-    | inl => exact c.pre_sorted.sublist sub.sublist
-    | inr_inl =>
-      rw [log, List.pairwise_append]
-      refine ⟨c.pre_sorted, ?_, ?_⟩
-      · exact List.pairwise_of_forall_mem_list fun first firstMem second secondMem => by
-          rw [terms first firstMem, terms second secondMem]
-          exact Nat.le_refl _
-      · intro first firstMem second secondMem
-        rw [terms second secondMem]
-        exact preTerms first firstMem
-    | inr_inr =>
-      rw [log]
-      exact copy.sorted.sublist (List.take_sublist _ _)
-  | inr => exact c.inv.sorted node state old
-
 private theorem active : Active (f.advance after) := by
   intro node state now role
   split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨other, old⟩) with
@@ -6177,6 +6129,57 @@ private theorem termAt_append_right {front back : List Entry} {index : Nat}
     List.getElem_append_right (Nat.le_sub_one_of_lt above)]
   exact ⟨_, List.getElem_mem _, rfl⟩
 
+/-- A prefix of a copyable log is copyable, at its term or any later one. -/
+private theorem CopyLog.prefix {g : LogFacts.Ghost} {term later : Nat}
+    {log small : List Entry} (copy : CopyLog g term log) (sub : small <+: log)
+    (le : term <= later)
+    : CopyLog g later small := by
+  refine ⟨copy.rooted.prefix sub,
+    fun entry mem => Nat.le_trans (copy.terms entry (sub.subset mem)) le,
+    copy.sorted.sublist sub.sublist, fun index positive bound => ?_⟩
+  obtain ⟨anchored, canon, length, take⟩ :=
+    copy.anchor index positive (Nat.le_trans bound sub.length_le)
+  refine ⟨anchored, ?_, length, ?_⟩
+  · rw [← termAt_of_prefix sub bound]
+    exact canon
+  · rw [← take_eq_of_prefix sub bound]
+    exact take
+
+/-- A leader extends a copyable log by entries of its term; the extended log, being a
+leader log of that term, anchors the new positions. -/
+private theorem CopyLog.append {g : LogFacts.Ghost} {term : Nat} {log entries : List Entry}
+    (copy : CopyLog g term log) (nonempty : log ≠ [])
+    (terms : forall entry, entry ∈ entries -> entry.term = term)
+    (canon : g.canon term (log ++ entries))
+    : CopyLog g term (log ++ entries) := by
+  refine ⟨copy.rooted.append nonempty entries, fun entry mem => ?_, ?_,
+    fun index positive bound => ?_⟩
+  · split_rel mem_append := (rcases List.mem_append.mp mem with old | new) with
+    | inl => exact copy.terms entry old
+    | inr => exact Nat.le_of_eq (terms entry new)
+  · rw [List.pairwise_append]
+    refine ⟨copy.sorted, ?_, ?_⟩
+    · exact List.pairwise_of_forall_mem_list fun first firstMem second secondMem => by
+        rw [terms first firstMem, terms second secondMem]
+        exact Nat.le_refl _
+    · intro first firstMem second secondMem
+      rw [terms second secondMem]
+      exact copy.terms first firstMem
+  · split_rel lt_or_ge :=
+        (rcases (Nat.lt_or_ge log.length index).symm with within | above) with
+    | inl =>
+      obtain ⟨anchored, anchoredCanon, length, take⟩ := copy.anchor index positive within
+      refine ⟨anchored, ?_, length, ?_⟩
+      · rw [termAt_of_prefix (List.prefix_append log entries) within]
+        exact anchoredCanon
+      · rw [take_eq_of_prefix (List.prefix_append log entries) within]
+        exact take
+    | inr =>
+      obtain ⟨entry, mem, eq⟩ := termAt_append_right above bound
+      refine ⟨log ++ entries, ?_, bound, rfl⟩
+      rw [eq, terms entry mem]
+      exact canon
+
 end Consensus.Proofs.Safety
 
 namespace Consensus.Proofs.Safety.Ctx
@@ -6497,55 +6500,33 @@ private theorem winningPrefix : LogFacts.WinningPrefix (f.advance after).logs :=
     have e := elect
     exact ⟨l, i, elect, (c.canon_mono n st now role (.inr ⟨l, i, e⟩)).2 l i e⟩
 
-private theorem anchor : Anchor (f.advance after) := by
-  intro node state index now positive bound
+/-- Every log stays one a follower may copy: a prefix of the old log, the leader's own
+extension of it, or a prefix of a leader log. -/
+private theorem node_logs : NodeLogs (f.advance after) := by
+  intro node state now
   split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨other, old⟩) with
   | inl =>
     subst nodeEq stateEq
-    have viaPre : c.pre.log <+: c.post.log \/ c.post.log <+: c.pre.log
-        -> index <= c.pre.log.length
-        -> exists log,
-            Canon (f.advance after) (termAt c.post.log index) log
-            /\ index <= log.length
-            /\ c.post.log.take index = log.take index := by
-      intro comparable within
-      obtain ⟨log, canon, length, take⟩ :=
-        c.inv.anchor c.actor c.pre index c.pre_now positive within
-      have same := take_eq_take_of_comparable comparable within bound
-      have termSame : termAt c.post.log index = termAt c.pre.log index := by
-        rw [← termAt_take (n := index) Nat.le.refl, ← same, termAt_take Nat.le.refl]
-      rw [termSame, ← same]
-      exact ⟨log, canon.mono after, length, take⟩
+    have pre := c.inv.node_logs c.actor c.pre c.pre_now
     split_rel post_log :=
         (rcases c.post_log with sub | ⟨entries, log, terms, leader, term, notCandidate⟩
-          | ⟨_, n, copy, _, log⟩) with
-    | inl => exact viaPre (Or.inr sub) (Nat.le_trans bound sub.length_le)
+          | ⟨leaderLog, n, copy, _, log⟩) with
+    | inl => exact (pre.prefix sub c.term_le).mono after
     | inr_inl =>
-      split_rel lt_or_ge := (rcases (Nat.lt_or_ge c.pre.log.length index).symm with within | above) with
-      | inl => exact viaPre (Or.inl (log ▸ List.prefix_append _ _)) within
-      | inr =>
-        have termEq : termAt c.post.log index = c.post.currentTerm := by
-          rw [log] at bound ⊢
-          obtain ⟨entry, mem, eq⟩ := termAt_append_right above bound
-          rw [eq, terms entry mem, term]
-        refine ⟨c.post.log, ?_, bound, rfl⟩
-        rw [termEq]
-        refine .inr ⟨c.actor, c.post,
-          ⟨c.post_now, rfl, notCandidate, ?_⟩, rfl⟩
-        rw [term]
-        exact (c.inv.leader_led c.actor c.pre c.pre_now leader).mono after
+      rw [log, term]
+      refine (pre.mono after).append (c.inv.leader_logs c.actor c.pre c.pre_now leader) terms ?_
+      exact .inr ⟨c.actor, c.post, ⟨c.post_now, term, notCandidate,
+        (c.inv.leader_led c.actor c.pre c.pre_now leader).mono after⟩, log⟩
     | inr_inr =>
-      rw [log] at bound ⊢
-      have short : index <= n := Nat.le_trans bound (List.length_take_le _ _)
-      obtain ⟨anchored, anchoredCanon, length, take⟩ :=
-        copy.anchor index positive (Nat.le_trans bound (by simp [Nat.min_le_right]))
-      refine ⟨anchored, ?_, length, ?_⟩
-      · rw [termAt_take short]
-        exact (.inl anchoredCanon)
-      · rw [List.take_take, Nat.min_eq_left short, take]
-  | inr =>
-    obtain ⟨log, canon, length, take⟩ := c.inv.anchor node state index old positive bound
-    exact ⟨log, canon.mono after, length, take⟩
+      rw [log]
+      exact (copy.prefix (List.take_prefix n leaderLog) (Nat.le_refl _)).mono after
+  | inr => exact (c.inv.node_logs node state old).mono after
+
+private theorem rooted : RootedLogs (f.advance after) :=
+  fun node state now => (c.node_logs node state now).rooted
+
+private theorem sorted : Sorted (f.advance after) :=
+  fun node state now => (c.node_logs node state now).sorted
 
 /-- A part committed at the step is in every later elected log. -/
 private theorem new_in_elected {leader : NodeID} {state : NodeState}
@@ -7326,8 +7307,7 @@ private theorem message_terms : MessageTerms (f.advance after) := by
 
 private theorem inv_step : Inv (f.advance after) :=
   {
-    terms := c.terms
-    sorted := c.sorted
+    node_logs := c.node_logs
     active := c.active
     ballots := c.ballots
     grantFacts := c.grantFacts
@@ -7340,18 +7320,16 @@ private theorem inv_step : Inv (f.advance after) :=
     canon_mono := c.canon_mono
     chains := c.chains
     winningPrefix := c.winningPrefix
-    anchor := c.anchor
     completeness := c.completeness
     commit_backed := c.commit_backed
     persist := c.persist
     match_ack := c.match_ack
     messages := c.messages
     message_terms := c.message_terms
-    rooted := c.rooted
     leader_logs := c.leader_logs
     commitChains := commitChains_step c.inv.commitChains c.rooted c.sorted
       (fun n k l i e => Nat.le_trans (by decide : 2 ≤ 3) (c.electionCerts n k l i e).above)
-    copyLogs := copyLogs_step c.inv.copyLogs (currentCopyLog c.rooted c.terms c.sorted c.anchor)
+    copyLogs := copyLogs_step c.inv.copyLogs c.node_logs
     owners := LogFacts.owners_step c.inv.owners
     distinct := c.keys_after
     observed := fun _ st mem => .inr ⟨st, mem, rfl, rfl⟩
