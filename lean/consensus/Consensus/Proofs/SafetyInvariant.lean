@@ -1468,45 +1468,32 @@ private theorem select_max_step (P : Nat -> Prop) [DecidablePred P] (best index 
     rw [ite_eq_right chosen]
     exact ⟨Nat.le.refl, fun lt => (Nat.lt_irrefl _ lt).elim, fun holds => (chosen holds).elim⟩
 
-/-- The conditional-maximum fold does not go below its start and bounds every selected
-value. -/
-private theorem foldl_select_max_bound (P : Nat -> Prop) [DecidablePred P]
-    (values : List Nat) (init : Nat)
-    : let result :=
-        values.foldl (fun best index => if P index then max best index else best) init
-      init <= result /\ forall index, index ∈ values -> P index -> index <= result := by
-  split_rel values := (induction values generalizing init) with
-  | nil => exact ⟨Nat.le.refl, fun _ member => nomatch member⟩
-  | cons =>
-    rename_i head tail ih
-    simp only [List.foldl_cons]
-    obtain ⟨start, _, reached⟩ := select_max_step P init head
-    obtain ⟨le, bound⟩ := ih (if P head then max init head else init)
-    refine ⟨Nat.le_trans start le, fun index member holds => ?_⟩
-    split_rel mem_cons := (rcases List.mem_cons.mp member with rfl | later) with
-    | inl => exact Nat.le_trans (reached holds) le
-    | inr => exact bound index later holds
-
-/-- The conditional-maximum fold moves only to a selected value. -/
+/-- The conditional-maximum fold does not go below its start, moves only to a selected
+value, and bounds every selected value. -/
 private theorem foldl_select_max (P : Nat -> Prop) [DecidablePred P] (values : List Nat)
     (init : Nat)
     : let result :=
         values.foldl (fun best index => if P index then max best index else best) init
-      init < result -> P result := by
+      init <= result /\ (init < result -> P result)
+        /\ forall index, index ∈ values -> P index -> index <= result := by
   split_rel values := (induction values generalizing init) with
-  | nil => exact fun lt => (Nat.lt_irrefl _ lt).elim
+  | nil => exact ⟨Nat.le.refl, fun lt => (Nat.lt_irrefl _ lt).elim, fun _ member => nomatch member⟩
   | cons =>
     rename_i head tail ih
     simp only [List.foldl_cons]
-    obtain ⟨start, moved, _⟩ := select_max_step P init head
-    have le := (foldl_select_max_bound P tail (if P head then max init head else init)).1
-    generalize (if P head then max init head else init) = next at start moved le ⊢
-    intro lt
-    split_rel later := (rcases Nat.eq_or_lt_of_le le with same | ahead) with
-    | inl =>
-      rw [← same] at lt ⊢
-      exact moved lt
-    | inr => exact ih next ahead
+    obtain ⟨start, moved, reached⟩ := select_max_step P init head
+    obtain ⟨le, selected, bound⟩ := ih (if P head then max init head else init)
+    generalize (if P head then max init head else init) = next
+      at start moved reached le selected bound ⊢
+    refine ⟨Nat.le_trans start le, fun lt => ?_, fun index member holds => ?_⟩
+    · split_rel later := (rcases Nat.eq_or_lt_of_le le with same | ahead) with
+      | inl =>
+        rw [← same] at lt ⊢
+        exact moved lt
+      | inr => exact selected ahead
+    · split_rel mem_cons := (rcases List.mem_cons.mp member with rfl | later) with
+      | inl => exact Nat.le_trans (reached holds) le
+      | inr => exact bound index later holds
 
 /-- A positive latest committable index points to a signature. -/
 private theorem maxCommittableIndexPositiveIsSignature
@@ -1514,7 +1501,7 @@ private theorem maxCommittableIndexPositiveIsSignature
     (positive : 0 < maxCommittableIndex log)
     : isSignatureAt log (maxCommittableIndex log) = true := by
   unfold maxCommittableIndex at positive ⊢
-  exact foldl_select_max (fun index => isSignatureAt log index = true) _ 0 positive
+  exact (foldl_select_max (fun index => isSignatureAt log index = true) _ 0).2.1 positive
 
 /-- The latest signature index lies within the log. -/
 private theorem maxCommittableIndexBounded (log : List Entry)
@@ -1534,7 +1521,7 @@ private theorem signatureIndex_le_maxCommittableIndex
     rcases isSignatureAtTrue signature with ⟨entry, found, _⟩
     exact entryAtSomeIndexBound found
   unfold maxCommittableIndex
-  exact (foldl_select_max_bound (fun index => isSignatureAt log index = true) _ 0).2 index
+  exact (foldl_select_max (fun index => isSignatureAt log index = true) _ 0).2.2 index
     (List.mem_range.mpr (Nat.lt_succ_of_le indexBound)) signature
 
 /-- Extending a log preserves every earlier signature lookup. -/
