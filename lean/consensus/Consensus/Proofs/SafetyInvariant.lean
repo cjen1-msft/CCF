@@ -5636,15 +5636,22 @@ private theorem active : Active (f.advance after) := by
   | inr => exact c.inv.active node state old role
 
 omit c in
-private theorem ballot_step {before after : Model.State} {g : VoteFacts.Ghost}
-    (tr : LocalTransition before after) (distinct : (after.nodes.map Prod.fst).Nodup)
-    (prior : VoteFacts.Inv before g) : VoteFacts.Inv after (VoteFacts.advance g after) := by
-  apply VoteFacts.preserve prior (fun _ _ _ => state_unique distinct)
-  intro n st now
+/-- Every node after a step had a state before it, in a term no later, and keeps its vote
+if the term is unchanged. -/
+private theorem vote_step {before after : Model.State} (tr : LocalTransition before after)
+    {n : NodeID} {st : NodeState} (now : (n, st) ∈ after.nodes)
+    : ∃ a, (n, a) ∈ before.nodes ∧ a.currentTerm ≤ st.currentTerm ∧
+        (a.currentTerm = st.currentTerm → ∀ c, a.votedFor = some c → st.votedFor = some c) := by
   split_rel mem_after := (rcases tr.mem_after now with ⟨rfl, rfl⟩ | ⟨_, old⟩) with
   | inl => exact ⟨tr.pre, tr.pre_mem, Summary.term_le tr.summary,
       fun same => Summary.vote_keep tr.summary same.symm⟩
   | inr => exact ⟨st, old, Nat.le_refl _, fun _ _ h => h⟩
+
+omit c in
+private theorem ballot_step {before after : Model.State} {g : VoteFacts.Ghost}
+    (tr : LocalTransition before after) (distinct : (after.nodes.map Prod.fst).Nodup)
+    (prior : VoteFacts.Inv before g) : VoteFacts.Inv after (VoteFacts.advance g after) :=
+  VoteFacts.preserve prior (fun _ _ _ => state_unique distinct) fun _ _ now => vote_step tr now
 
 private theorem ballots : Ballots (f.advance after) :=
   ballot_step c.tr c.keys_after c.inv.ballots
