@@ -1,0 +1,14 @@
+{
+  "endpoints": {
+    "/custom_auth": {
+      "get": {
+        "js_module": "custom_authorization.js",
+        "js_function": "compare_bearer",
+        "redirection_strategy": "none",
+        "authn_policies": ["user_cert"],
+        "mode": "readonly",
+        "openapi": {}
+      }
+    }
+  }
+}

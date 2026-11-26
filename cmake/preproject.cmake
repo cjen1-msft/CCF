@@ -1,0 +1,87 @@
+# Copyright (c) Microsoft Corporation. All rights reserved.
+# Licensed under the Apache 2.0 License.
+
+# Note: this needs to be done before project(), otherwise CMAKE_*_COMPILER is
+# already set by CMake. If the user has not expressed any choice, we attempt to
+# set a default Clang choice. If they have expressed even a partial choice, the
+# usual CMake selection logic applies. If we cannot find both a suitable clang
+# and a suitable clang++, the usual CMake selection logic applies
+if(
+  (NOT CMAKE_C_COMPILER)
+  AND (NOT CMAKE_CXX_COMPILER)
+  AND "$ENV{CC}" STREQUAL ""
+  AND "$ENV{CXX}" STREQUAL ""
+)
+  find_program(FOUND_CMAKE_C_COMPILER NAMES clang)
+  find_program(FOUND_CMAKE_CXX_COMPILER NAMES clang++)
+
+  if(NOT (FOUND_CMAKE_C_COMPILER AND FOUND_CMAKE_CXX_COMPILER))
+    message(
+      WARNING
+      "Clang not found, will use default compiler. "
+      "Override the compiler by setting CC and CXX environment variables."
+    )
+  else()
+    # CMAKE_*_COMPILER can only be set once, and cannot be unset, we either want
+    # both, or none at all.
+    set(CMAKE_C_COMPILER "${FOUND_CMAKE_C_COMPILER}")
+    set(CMAKE_CXX_COMPILER "${FOUND_CMAKE_CXX_COMPILER}")
+  endif()
+endif()
+
+# Build Release by default, with debug info
+set(default_build_type "RelWithDebInfo")
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  message(
+    STATUS
+    "Setting build type to '${default_build_type}' as none was specified."
+  )
+  set(
+    CMAKE_BUILD_TYPE
+    "${default_build_type}"
+    CACHE STRING
+    "Choose the type of build."
+    FORCE
+  )
+  set_property(
+    CACHE CMAKE_BUILD_TYPE
+    PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo"
+  )
+endif()
+
+option(TSAN "Enable Thread Sanitizers" OFF)
+option(FUZZING "Enable libFuzzer fuzz testing" OFF)
+
+if(FUZZING AND TSAN)
+  message(FATAL_ERROR "FUZZING and TSAN cannot be enabled together")
+endif()
+
+add_compile_options(
+  $<$<COMPILE_LANG_AND_ID:C,Clang>:-fcolor-diagnostics>
+  $<$<COMPILE_LANG_AND_ID:CXX,Clang>:-fcolor-diagnostics>
+  $<$<COMPILE_LANG_AND_ID:C,GNU>:-fdiagnostics-color=always>
+  $<$<COMPILE_LANG_AND_ID:CXX,GNU>:-fdiagnostics-color=always>
+)
+
+function(add_warning_checks name)
+  target_compile_options(
+    ${name}
+    PRIVATE
+      -Wall
+      -Wextra
+      -Werror
+      ${CCF_WARNING_ERROR_EXCEPTIONS}
+      -Wundef
+      -Wpedantic
+      -Wno-unused-parameter
+      -Wno-unused-function
+      -Wshadow
+      -Wswitch-enum
+      # GCC does not implement Clang's capability-based thread safety analysis.
+      # https://clang.llvm.org/docs/ThreadSafetyAnalysis.html
+      $<$<COMPILE_LANG_AND_ID:CXX,Clang>:-Wthread-safety>
+  )
+endfunction()
+
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)

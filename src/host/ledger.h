@@ -1,0 +1,2178 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the Apache 2.0 License.
+#pragma once
+
+#include "ccf/crypto/symmetric_key.h"
+#include "ccf/ds/locking.h"
+#include "ccf/ds/nonstd.h"
+#include "ds/files.h"
+#include "ds/internal_logger.h"
+#include "ds/serialized.h"
+#include "ds/time_bound_logger.h"
+#include "kv/kv_types.h"
+#include "kv/serialised_entry_format.h"
+#include "ledger/filenames.h"
+
+#include <algorithm>
+#include <cerrno>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <exception>
+#include <filesystem>
+#include <format>
+#include <limits>
+#include <list>
+#include <map>
+#include <memory>
+#include <string>
+#include <sys/types.h>
+#include <tuple>
+#include <unistd.h>
+#include <utility>
+#include <vector>
+
+namespace fs = std::filesystem;
+
+namespace asynchost
+{
+  static constexpr size_t ledger_max_read_cache_files_default = 5;
+
+  static std::optional<std::string> get_file_name_with_idx(
+    const std::string& dir, size_t idx, bool allow_recovery_files)
+  {
+    std::optional<std::string> match = std::nullopt;
+    for (auto const& f : fs::directory_iterator(dir))
+    {
+      // If any file, based on its name, contains idx. Only committed
+      // (i.e. those with a last idx) are considered here.
+      auto f_name = f.path().filename();
+      if (
+        ccf::ledger::is_ledger_file_name_ignored(f_name) ||
+        ccf::ledger::is_ledger_file_name_committed_prefix(f_name) ||
+        (!allow_recovery_files &&
+         ccf::ledger::is_ledger_file_name_recovery(f_name)))
+      {
+        continue;
+      }
+
+      size_t start_idx = 0;
+      std::optional<size_t> last_idx = std::nullopt;
+      try
+      {
+        start_idx = ccf::ledger::get_start_idx_from_file_name(f_name);
+        last_idx = ccf::ledger::get_last_idx_from_file_name(f_name);
+      }
+      catch (const std::exception& e)
+      {
+        // Ignoring invalid ledger file
+        continue;
+      }
+      if (idx >= start_idx && last_idx.has_value() && idx <= last_idx.value())
+      {
+        match = f_name;
+        break;
+      }
+    }
+
+    return match;
+  }
+
+  struct LedgerReadResult
+  {
+    std::vector<uint8_t> data;
+    size_t end_idx{};
+    bool limit_exceeded = false;
+  };
+
+  // Owns a file descriptor, and closes it on destruction
+  class UniqueFd
+  {
+  private:
+    int fd = -1;
+
+    void reset() noexcept
+    {
+      if (fd >= 0)
+      {
+        if (::close(fd) != 0)
+        {
+          const auto err = errno;
+          LOG_FAIL_FMT(
+            "Failed to close ledger prefix descriptor {}: {}",
+            fd,
+            ccf::nonstd::strerror(err));
+        }
+        fd = -1;
+      }
+    }
+
+  public:
+    explicit UniqueFd(int fd_) : fd(fd_) {}
+
+    UniqueFd(const UniqueFd&) = delete;
+    UniqueFd& operator=(const UniqueFd&) = delete;
+
+    UniqueFd(UniqueFd&& other) noexcept : fd(std::exchange(other.fd, -1)) {}
+
+    UniqueFd& operator=(UniqueFd&& other) noexcept
+    {
+      if (this != &other)
+      {
+        reset();
+        fd = std::exchange(other.fd, -1);
+      }
+      return *this;
+    }
+
+    ~UniqueFd()
+    {
+      reset();
+    }
+
+    [[nodiscard]] int get() const
+    {
+      return fd;
+    }
+  };
+
+  // A single ledger chunk on disk. LedgerFile is not internally synchronised:
+  // all access, including reads, is serialised by the owning Ledger's
+  // state_lock.
+  class LedgerFile
+  {
+  private:
+    class FileGuardOnException
+    {
+    public:
+      explicit FileGuardOnException(FILE* file) noexcept : file(file, fclose) {}
+
+      FileGuardOnException(const FileGuardOnException&) = delete;
+      FileGuardOnException& operator=(const FileGuardOnException&) = delete;
+      FileGuardOnException(FileGuardOnException&&) = delete;
+      FileGuardOnException& operator=(FileGuardOnException&&) = delete;
+
+      ~FileGuardOnException() noexcept
+      {
+        if (std::uncaught_exceptions() <= exception_count)
+        {
+          // The enclosing LedgerFile owns the stream on normal return.
+          std::ignore = file.release();
+        }
+      }
+
+    private:
+      std::unique_ptr<FILE, decltype(&fclose)> file;
+      const int exception_count = std::uncaught_exceptions();
+    };
+
+    using positions_offset_header_t = size_t;
+    static constexpr auto file_name_prefix = "ledger";
+
+    const fs::path dir;
+    fs::path file_name;
+
+    // This uses C stdio instead of fstream because an fstream
+    // cannot be truncated.
+    FILE* file = nullptr;
+
+    size_t start_idx = 1;
+    size_t total_len = 0; // Points to end of last written entry
+    std::vector<uint32_t> positions;
+
+    bool completed = false;
+    bool committed = false;
+
+    bool recovery = false;
+
+    // This flag is set when an existing ledger is recovered and started (init)
+    // from an old idx. In this case, further ledger files (i.e. those which
+    // contain entries later than init idx), remain on disk and new entries are
+    // checked against the existing ones, until a divergence is found.
+    bool from_existing_file = false;
+
+    void checked_seek(off_t offset, int whence)
+    {
+      if (fseeko(file, offset, whence) != 0)
+      {
+        const auto seek_errno = errno;
+        throw std::logic_error(std::format(
+          "Failed to seek ledger file {} to offset {} (whence {}): {} (errno "
+          "{})",
+          (dir / file_name).string(),
+          offset,
+          whence,
+          ccf::nonstd::strerror(seek_errno),
+          seek_errno));
+      }
+    }
+
+    size_t checked_tell()
+    {
+      const auto offset = ftello(file);
+      if (offset < 0)
+      {
+        const auto tell_errno = errno;
+        throw std::logic_error(std::format(
+          "Failed to get current offset in ledger file {}: {} (errno {})",
+          (dir / file_name).string(),
+          ccf::nonstd::strerror(tell_errno),
+          tell_errno));
+      }
+      return static_cast<size_t>(offset);
+    }
+
+    int close()
+    {
+      if (file == nullptr)
+      {
+        return 0;
+      }
+
+      ccf::ds::TimeBoundLogger log_if_slow(
+        std::format("Closing ledger file - fclose({})", file_name.string()));
+      errno = 0;
+      auto* file_to_close = file;
+      file = nullptr;
+      // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
+      const auto close_rc = fclose(file_to_close);
+      const auto close_errno = errno;
+      return close_rc == 0 ? 0 : (close_errno != 0 ? close_errno : EIO);
+    }
+
+  public:
+    // Used when creating a new (empty) ledger file
+    LedgerFile(const fs::path& dir, size_t start_idx, bool recovery = false) :
+      dir(dir),
+      file_name(std::format("{}_{}", file_name_prefix, start_idx)),
+      start_idx(start_idx),
+      recovery(recovery)
+    {
+      if (recovery)
+      {
+        file_name = std::format(
+          "{}{}", file_name.string(), ccf::ledger::ledger_recovery_file_suffix);
+      }
+
+      auto file_path = dir / file_name;
+
+      // Use O_EXCL to atomically fail if the file already exists, and create
+      // with restrictive permissions (0600) rather than relying on umask.
+      {
+        ccf::ds::TimeBoundLogger log_if_slow(
+          std::format("Creating ledger file - open({})", file_path.string()));
+        file = files::open_file(file_path, O_RDWR | O_CREAT | O_EXCL, "w+b");
+      }
+      if (file == nullptr)
+      {
+        if (errno == EEXIST)
+        {
+          throw std::logic_error(std::format(
+            "Cannot create new ledger file {} in main ledger directory {} as "
+            "it already exists",
+            file_name.string(),
+            dir.string()));
+        }
+        throw std::logic_error(std::format(
+          "Unable to open ledger file {}: {}",
+          file_path.string(),
+          ccf::nonstd::strerror(errno)));
+      }
+      FileGuardOnException file_guard(file);
+
+      // Header reserved for the offset to the position table
+      checked_seek(sizeof(positions_offset_header_t), SEEK_SET);
+      total_len = sizeof(positions_offset_header_t);
+    }
+
+    // Used when recovering an existing ledger file
+    LedgerFile(
+      const std::string& dir,
+      const std::string& file_name_,
+      bool from_existing_file_ = false) :
+      dir(dir),
+      file_name(file_name_),
+      from_existing_file(from_existing_file_)
+    {
+      auto file_path = (fs::path(dir) / fs::path(file_name));
+
+      committed = ccf::ledger::is_ledger_file_name_committed(file_name);
+      start_idx = ccf::ledger::get_start_idx_from_file_name(file_name);
+
+      const auto* const mode = committed ? "rb" : "r+b";
+
+      {
+        ccf::ds::TimeBoundLogger log_if_slow(
+          std::format("Opening ledger file - fopen({})", file_path.string()));
+        // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
+        file = fopen(file_path.c_str(), mode);
+      }
+
+      if (file == nullptr)
+      {
+        throw std::logic_error(std::format(
+          "Unable to open ledger file {}: {}",
+          file_path.string(),
+          ccf::nonstd::strerror(errno)));
+      }
+      FileGuardOnException file_guard(file);
+
+      // First, get full size of file
+      checked_seek(0, SEEK_END);
+      const size_t total_file_size = checked_tell();
+
+      // Second, read offset to header table
+      checked_seek(0, SEEK_SET);
+      positions_offset_header_t table_offset = 0;
+      {
+        ccf::ds::TimeBoundLogger log_if_slow(std::format(
+          "Reading positions offset - fread({})", file_path.string()));
+        if (
+          fread(&table_offset, sizeof(positions_offset_header_t), 1, file) != 1)
+        {
+          throw std::logic_error(std::format(
+            "Failed to read positions offset from ledger file {}",
+            file_path.string()));
+        }
+      }
+
+      if (committed && table_offset == 0)
+      {
+        throw std::logic_error(std::format(
+          "Committed ledger file {} cannot be read: invalid table offset (0)",
+          file_path.string()));
+      }
+
+      total_len = sizeof(positions_offset_header_t);
+
+      if (from_existing_file)
+      {
+        // When recovering a file from persistence, do not recover entries to
+        // start with as these are expected to be written again at a later
+        // point.
+        return;
+      }
+
+      if (table_offset != 0)
+      {
+        // If the chunk was completed, read positions table from file directly
+        total_len = table_offset;
+
+        if (table_offset > total_file_size)
+        {
+          throw std::logic_error(std::format(
+            "Invalid table offset {} greater than total file size {}",
+            table_offset,
+            total_file_size));
+        }
+
+        checked_seek(table_offset, SEEK_SET);
+
+        positions.resize(
+          (total_file_size - table_offset) / sizeof(positions.at(0)));
+
+        {
+          ccf::ds::TimeBoundLogger log_if_slow(std::format(
+            "Reading positions table ({} entries) - fread({})",
+            positions.size(),
+            file_path.string()));
+          if (
+            fread(
+              positions.data(),
+              sizeof(positions.at(0)),
+              positions.size(),
+              file) != positions.size())
+          {
+            throw std::logic_error(std::format(
+              "Failed to read positions table from ledger file {}",
+              file_path.string()));
+          }
+        }
+        completed = true;
+      }
+      else
+      {
+        // If the chunk was not completed, read all entries to reconstruct
+        // positions table
+        total_len = sizeof(positions_offset_header_t);
+        auto len = total_file_size - total_len;
+
+        ccf::ds::TimeBoundLogger log_if_slow(std::format(
+          "Recovering entries from incomplete ledger file {} ({} bytes)",
+          file_path.string(),
+          len));
+
+        ccf::kv::SerialisedEntryHeader entry_header = {};
+        size_t current_idx = start_idx;
+        while (len >= ccf::kv::serialised_entry_header_size)
+        {
+          if (
+            fread(
+              &entry_header, ccf::kv::serialised_entry_header_size, 1, file) !=
+            1)
+          {
+            LOG_FAIL_FMT(
+              "Failed to read entry header from ledger file {} at seqno {}",
+              file_path.string(),
+              current_idx);
+            return;
+          }
+
+          len -= ccf::kv::serialised_entry_header_size;
+
+          const auto& entry_size = entry_header.size;
+          if (len < entry_size)
+          {
+            LOG_FAIL_FMT(
+              "Malformed incomplete ledger file {} at seqno {} (expecting "
+              "entry of size {}, remaining {})",
+              file_path.string(),
+              current_idx,
+              entry_size,
+              len);
+            return;
+          }
+
+          checked_seek(entry_size, SEEK_CUR);
+          len -= entry_size;
+
+          LOG_TRACE_FMT(
+            "Recovered one entry of size {} at seqno {}",
+            entry_size,
+            current_idx);
+
+          current_idx++;
+          positions.push_back(total_len);
+          total_len += (ccf::kv::serialised_entry_header_size + entry_size);
+        }
+        completed = false;
+      }
+    }
+
+    ~LedgerFile()
+    {
+      std::ignore = close();
+    }
+
+    [[nodiscard]] size_t get_start_idx() const
+    {
+      return start_idx;
+    }
+
+    [[nodiscard]] size_t get_last_idx() const
+    {
+      return start_idx + positions.size() - 1;
+    }
+
+    [[nodiscard]] size_t get_current_size() const
+    {
+      return total_len;
+    }
+
+    [[nodiscard]] bool is_committed() const
+    {
+      return committed;
+    }
+
+    [[nodiscard]] bool is_complete() const
+    {
+      return completed;
+    }
+
+    [[nodiscard]] bool is_recovery() const
+    {
+      return recovery;
+    }
+
+    // Returns idx of new entry, and boolean to indicate that file was truncated
+    // before writing the entry
+    std::pair<size_t, bool> write_entry(
+      const uint8_t* data, size_t size, bool committable)
+    {
+      checked_seek(total_len, SEEK_SET);
+
+      bool should_write = true;
+      bool has_truncated = false;
+      if (from_existing_file)
+      {
+        std::vector<uint8_t> entry(size);
+        bool read_mismatch = false;
+        {
+          ccf::ds::TimeBoundLogger log_if_slow(std::format(
+            "Reading existing entry for comparison ({} bytes) - fread({})",
+            size,
+            file_name.string()));
+          read_mismatch = fread(entry.data(), size, 1, file) != 1 ||
+            memcmp(entry.data(), data, size) != 0;
+        }
+        if (read_mismatch)
+        {
+          // Divergence between existing and new entry. Truncate this file,
+          // write the new entry and notify the caller for further cleanup.
+          // Note that even if the truncation results in an empty file, we keep
+          // it on disk as a new entry is about to be written.
+          truncate(get_last_idx(), false /* remove_file_if_empty */);
+          has_truncated = true;
+          from_existing_file = false;
+        }
+        else
+        {
+          should_write = false;
+        }
+      }
+
+      if (should_write)
+      {
+        {
+          ccf::ds::TimeBoundLogger log_if_slow(std::format(
+            "Writing ledger entry ({} bytes) - fwrite({})",
+            size,
+            file_name.string()));
+          if (fwrite(data, size, 1, file) != 1)
+          {
+            throw std::logic_error("Failed to write entry to ledger");
+          }
+        }
+
+        // Committable entries get flushed straight away
+        if (committable)
+        {
+          ccf::ds::TimeBoundLogger log_if_slow(std::format(
+            "Flushing ledger entry - fflush({})", file_name.string()));
+          if (fflush(file) != 0)
+          {
+            throw std::logic_error(std::format(
+              "Failed to flush entry to ledger: {}",
+              ccf::nonstd::strerror(errno)));
+          }
+        }
+      }
+
+      positions.push_back(total_len);
+      total_len += size;
+
+      return std::make_pair(get_last_idx(), has_truncated);
+    }
+
+    // Return pair containing entries size and index of last entry included
+    [[nodiscard]] std::pair<size_t, size_t> entries_size(
+      size_t from,
+      size_t to,
+      std::optional<size_t> max_size = std::nullopt) const
+    {
+      if ((from < start_idx) || (to < from) || (to > get_last_idx()))
+      {
+        return {0, 0};
+      }
+
+      size_t size = 0;
+
+      // If max_size is set, return entries that fit within it (best effort).
+      while (true)
+      {
+        auto position_to =
+          (to == get_last_idx()) ? total_len : positions.at(to - start_idx + 1);
+        size = position_to - positions.at(from - start_idx);
+
+        if (!max_size.has_value() || size <= max_size.value())
+        {
+          break;
+        }
+
+        if (from == to)
+        {
+          // Request one entry that is too large: no entries are found
+          LOG_TRACE_FMT(
+            "Single ledger entry at {} in file {} is too large for remaining "
+            "space (size {} > max {})",
+            from,
+            file_name.string(),
+            size,
+            max_size.value());
+          return {0, 0};
+        }
+        size_t to_ = from + (to - from) / 2;
+        LOG_TRACE_FMT(
+          "Requesting ledger entries from {} to {} in file {} but size {} > "
+          "max size {}: now requesting up to {}",
+          from,
+          to,
+          file_name.string(),
+          size,
+          max_size.value(),
+          to_);
+        to = to_;
+      }
+
+      return {size, to};
+    }
+
+    std::optional<LedgerReadResult> read_entries(
+      size_t from, size_t to, std::optional<size_t> max_size = std::nullopt)
+    {
+      if ((from < start_idx) || (to > get_last_idx()) || (to < from))
+      {
+        LOG_FAIL_FMT(
+          "Cannot find entries: {} - {} in ledger file {}",
+          from,
+          to,
+          file_name.string());
+        return std::nullopt;
+      }
+
+      LOG_TRACE_FMT(
+        "Read entries from {} to {} in {} [max size: {}]",
+        from,
+        to,
+        file_name.string(),
+        max_size.value_or(0));
+
+      auto [size, to_] = entries_size(from, to, max_size);
+      if (size == 0)
+      {
+        return LedgerReadResult{{}, from, true};
+      }
+      std::vector<uint8_t> entries(size);
+      checked_seek(positions.at(from - start_idx), SEEK_SET);
+
+      {
+        ccf::ds::TimeBoundLogger log_if_slow(std::format(
+          "Reading ledger entries {} to {} ({} bytes) - fread({})",
+          from,
+          to_,
+          size,
+          file_name.string()));
+        if (fread(entries.data(), size, 1, file) != 1)
+        {
+          throw std::logic_error(std::format(
+            "Failed to read entry range {} - {} from file {}",
+            from,
+            to,
+            file_name.string()));
+        }
+      }
+
+      return LedgerReadResult{entries, to_};
+    }
+
+    // Random access to a completed-chunk representation of a range of entries:
+    // header, unchanged entry bytes, and positions table. The header and
+    // positions table are small, and are materialised under the ledger locks
+    // when the reader is created. The entry bytes, potentially many megabytes,
+    // are only read when they fall within a requested byte range, without any
+    // ledger lock held. They are read with pread() on a duplicated descriptor:
+    // this never touches the FILE* position used by the writer, and stays
+    // valid even if the LedgerFile closes or reopens its own stream in the
+    // meantime.
+    class CompletedChunkReader
+    {
+    private:
+      std::vector<uint8_t> header;
+      std::vector<uint8_t> positions_table;
+      UniqueFd fd;
+      off_t file_offset = 0;
+      size_t raw_entries_size = 0;
+      std::string description;
+
+      bool read_entry_bytes(
+        uint8_t* out, size_t size, size_t offset_in_entries) const
+      {
+        ccf::ds::TimeBoundLogger log_if_slow(
+          std::format("{} - pread({} bytes)", description, size));
+
+        auto remaining = size;
+        auto offset = file_offset + static_cast<off_t>(offset_in_entries);
+        while (remaining > 0)
+        {
+          const auto rc = ::pread(fd.get(), out, remaining, offset);
+          if (rc < 0)
+          {
+            if (errno == EINTR)
+            {
+              continue;
+            }
+            LOG_FAIL_FMT("{}: {}", description, ccf::nonstd::strerror(errno));
+            return false;
+          }
+          if (rc == 0)
+          {
+            LOG_FAIL_FMT(
+              "{}: unexpected end of file with {} bytes remaining",
+              description,
+              remaining);
+            return false;
+          }
+          out += rc;
+          remaining -= static_cast<size_t>(rc);
+          offset += rc;
+        }
+        return true;
+      }
+
+    public:
+      CompletedChunkReader(
+        std::vector<uint8_t>&& header_,
+        std::vector<uint8_t>&& positions_table_,
+        UniqueFd&& fd_,
+        off_t file_offset_,
+        size_t raw_entries_size_,
+        std::string description_) :
+        header(std::move(header_)),
+        positions_table(std::move(positions_table_)),
+        fd(std::move(fd_)),
+        file_offset(file_offset_),
+        raw_entries_size(raw_entries_size_),
+        description(std::move(description_))
+      {}
+
+      [[nodiscard]] size_t size() const
+      {
+        return header.size() + raw_entries_size + positions_table.size();
+      }
+
+      // Returns the bytes [start, end) of the chunk, or nullopt if this range
+      // is not within the chunk or its entries could not be read. Only entry
+      // bytes within this range are read.
+      [[nodiscard]] std::optional<std::vector<uint8_t>> read(
+        size_t start, size_t end) const
+      {
+        if (start > end || end > size())
+        {
+          return std::nullopt;
+        }
+
+        std::vector<uint8_t> out(end - start);
+        const auto entries_start = header.size();
+        const auto entries_end = entries_start + raw_entries_size;
+
+        const auto copy_overlap =
+          [&](const std::vector<uint8_t>& region, size_t region_start) {
+            const auto overlap_start = std::max(start, region_start);
+            const auto overlap_end =
+              std::min(end, region_start + region.size());
+            if (overlap_start < overlap_end)
+            {
+              std::memcpy(
+                out.data() + (overlap_start - start),
+                region.data() + (overlap_start - region_start),
+                overlap_end - overlap_start);
+            }
+          };
+        copy_overlap(header, 0);
+        copy_overlap(positions_table, entries_end);
+
+        const auto overlap_start = std::max(start, entries_start);
+        const auto overlap_end = std::min(end, entries_end);
+        if (
+          overlap_start < overlap_end &&
+          !read_entry_bytes(
+            out.data() + (overlap_start - start),
+            overlap_end - overlap_start,
+            overlap_start - entries_start))
+        {
+          return std::nullopt;
+        }
+
+        return out;
+      }
+    };
+
+    // Materialises the header and positions table of a completed chunk
+    // containing exactly the entries [from, to], and duplicates the file
+    // descriptor so that the entry bytes can be read afterwards without any
+    // ledger lock held. Callers must only request committed entries: every
+    // committable entry is flushed as it is written and every completed file
+    // is flushed on completion, so committed bytes are always visible to
+    // later pread() calls regardless of stdio buffering on the writer's FILE*.
+    // A violation of that invariant surfaces as a failed read, never as
+    // incorrect bytes.
+    std::optional<CompletedChunkReader> make_completed_chunk_reader(
+      size_t from, size_t to)
+    {
+      const auto [raw_entries_size, end_idx] = entries_size(from, to);
+      if (raw_entries_size == 0 || end_idx != to)
+      {
+        return std::nullopt;
+      }
+
+      if (file == nullptr)
+      {
+        throw std::logic_error(
+          std::format("Ledger file {} is not open", file_name.string()));
+      }
+
+      const auto entry_count = to - from + 1;
+      if (
+        raw_entries_size >
+        std::numeric_limits<size_t>::max() - sizeof(positions_offset_header_t))
+      {
+        throw std::logic_error(std::format(
+          "Ledger entry range {}-{} is too large to represent as a chunk",
+          from,
+          to));
+      }
+      const auto positions_offset =
+        sizeof(positions_offset_header_t) + raw_entries_size;
+      if (
+        positions_offset > std::numeric_limits<uint32_t>::max() ||
+        entry_count > (std::numeric_limits<size_t>::max() - positions_offset) /
+            sizeof(positions.at(0)))
+      {
+        throw std::logic_error(std::format(
+          "Ledger entry range {}-{} is too large to represent as a chunk",
+          from,
+          to));
+      }
+
+      const auto positions_size = entry_count * sizeof(positions.at(0));
+
+      std::vector<uint8_t> header(sizeof(positions_offset_header_t));
+      {
+        auto* out = header.data();
+        auto remaining = header.size();
+        serialized::write(out, remaining, positions_offset);
+      }
+
+      std::vector<uint8_t> positions_table(positions_size);
+      auto* out = positions_table.data();
+      auto remaining = positions_table.size();
+      const auto first_position = positions.at(from - start_idx);
+      for (size_t idx = from; idx <= to; ++idx)
+      {
+        const auto relative_position = sizeof(positions_offset_header_t) +
+          positions.at(idx - start_idx) - first_position;
+        if (relative_position > std::numeric_limits<uint32_t>::max())
+        {
+          throw std::logic_error(std::format(
+            "Entry {} offset is too large to represent in a ledger chunk",
+            idx));
+        }
+
+        serialized::write(
+          out, remaining, static_cast<uint32_t>(relative_position));
+      }
+
+      UniqueFd fd(::dup(fileno(file)));
+      if (fd.get() < 0)
+      {
+        throw std::logic_error(std::format(
+          "Failed to duplicate descriptor for ledger file {}: {}",
+          file_name.string(),
+          ccf::nonstd::strerror(errno)));
+      }
+
+      return CompletedChunkReader(
+        std::move(header),
+        std::move(positions_table),
+        std::move(fd),
+        static_cast<off_t>(first_position),
+        raw_entries_size,
+        std::format(
+          "Reading committed ledger prefix {} to {} from {}",
+          from,
+          to,
+          file_name.string()));
+    }
+
+    bool truncate(size_t idx, bool remove_file_if_empty = true)
+    {
+      if (
+        committed || (idx < start_idx - 1) ||
+        (completed && idx >= get_last_idx()))
+      {
+        return false;
+      }
+
+      if (remove_file_if_empty && idx == start_idx - 1)
+      {
+        // Truncating everything triggers file deletion
+        {
+          ccf::ds::TimeBoundLogger log_if_slow(std::format(
+            "Removing ledger file on truncation - remove({})",
+            file_name.string()));
+          if (!fs::remove(dir / file_name))
+          {
+            throw std::logic_error(
+              std::format("Could not remove file {}", file_name.string()));
+          }
+        }
+        LOG_TRACE_FMT(
+          "Removed ledger file {} on truncation at {}",
+          file_name.string(),
+          idx);
+        return true;
+      }
+
+      // Reset positions offset header
+      checked_seek(0, SEEK_SET);
+      positions_offset_header_t table_offset = 0;
+      {
+        ccf::ds::TimeBoundLogger log_if_slow(std::format(
+          "Resetting positions offset - fwrite({})", file_name.string()));
+        if (fwrite(&table_offset, sizeof(table_offset), 1, file) != 1)
+        {
+          throw std::logic_error("Failed to reset positions table offset");
+        }
+      }
+
+      completed = false;
+      if (idx != get_last_idx())
+      {
+        total_len = positions.at(idx - start_idx + 1);
+        positions.resize(idx - start_idx + 1);
+      }
+
+      {
+        ccf::ds::TimeBoundLogger log_if_slow(std::format(
+          "Flushing truncated ledger - fflush({})", file_name.string()));
+        if (fflush(file) != 0)
+        {
+          throw std::logic_error(std::format(
+            "Failed to flush ledger file: {}", ccf::nonstd::strerror(errno)));
+        }
+      }
+
+      {
+        ccf::ds::TimeBoundLogger log_if_slow(std::format(
+          "Truncating ledger file - ftruncate({})", file_name.string()));
+        if (ftruncate(fileno(file), total_len) != 0)
+        {
+          throw std::logic_error(std::format(
+            "Failed to truncate ledger: {}", ccf::nonstd::strerror(errno)));
+        }
+      }
+
+      checked_seek(total_len, SEEK_SET);
+      LOG_TRACE_FMT(
+        "Truncated ledger file {} at seqno {}", file_name.string(), idx);
+      return false;
+    }
+
+    void complete()
+    {
+      if (completed)
+      {
+        return;
+      }
+      // It may happen (e.g. during recovery) that the incomplete ledger gets
+      // truncated on the primary, so we have to make sure that whenever we
+      // complete the file it doesn't contain anything past the last_idx, which
+      // can happen on the follower unless explicitly truncated before
+      // completion. This is only necessary when the file was recovered from an
+      // existing file on disk (from_existing_file is true). For fresh files,
+      // total_len always matches the physical file size, so avoid a potentially
+      // expensive truncate.
+      if (from_existing_file)
+      {
+        truncate(get_last_idx(), /* remove_file_if_empty = */ false);
+      }
+
+      checked_seek(total_len, SEEK_SET);
+      const size_t table_offset = checked_tell();
+
+      {
+        ccf::ds::TimeBoundLogger log_if_slow(std::format(
+          "Writing positions table ({} entries) - fwrite({})",
+          positions.size(),
+          file_name.string()));
+        if (
+          fwrite(
+            reinterpret_cast<uint8_t*>(positions.data()),
+            sizeof(positions.at(0)),
+            positions.size(),
+            file) != positions.size())
+        {
+          throw std::logic_error("Failed to write positions table to ledger");
+        }
+      }
+
+      // Write positions table offset at start of file
+      checked_seek(0, SEEK_SET);
+
+      {
+        ccf::ds::TimeBoundLogger log_if_slow(std::format(
+          "Writing positions table offset - fwrite({})", file_name.string()));
+        if (fwrite(&table_offset, sizeof(table_offset), 1, file) != 1)
+        {
+          throw std::logic_error(
+            "Failed to write positions table offset to ledger");
+        }
+      }
+
+      {
+        ccf::ds::TimeBoundLogger log_if_slow(std::format(
+          "Completing ledger file - fflush({})", file_name.string()));
+        if (fflush(file) != 0)
+        {
+          throw std::logic_error(std::format(
+            "Failed to flush ledger file: {}", ccf::nonstd::strerror(errno)));
+        }
+      }
+
+      LOG_TRACE_FMT("Completed ledger file {}", file_name.string());
+
+      completed = true;
+    }
+
+    bool rename(const std::string& new_file_name, bool close_and_reopen = false)
+    {
+      auto file_path = dir / file_name;
+      auto new_file_path = dir / new_file_name;
+      const auto should_close_and_reopen = close_and_reopen && !committed;
+
+      if (should_close_and_reopen)
+      {
+        // Uncommitted files may be truncated and written again after recovery.
+        // Work around a Linux CIFS client bug on Confidential Azure Container
+        // Instances where renaming a file with an open write handle drops its
+        // SMB write-caching lease, making subsequent writes synchronous. Close
+        // before the rename and reopen afterwards to acquire a fresh lease.
+        // Remove this workaround once the platform kernel includes upstream
+        // fix 2c7d399e551c.
+        const auto close_error = close();
+        if (close_error != 0)
+        {
+          throw std::logic_error(std::format(
+            "Failed to close ledger file {}: {}",
+            file_path.string(),
+            ccf::nonstd::strerror(close_error)));
+        }
+      }
+
+      try
+      {
+        ccf::ds::TimeBoundLogger log_if_slow(std::format(
+          "Renaming ledger file {} to {} - rename()",
+          file_name.string(),
+          new_file_name));
+        files::rename(file_path, new_file_path);
+      }
+      catch (const std::exception& e)
+      {
+        if (close_and_reopen)
+        {
+          throw;
+        }
+
+        // If the file cannot be renamed (e.g. file was removed), report an
+        // error and continue
+        LOG_FAIL_FMT("Error renaming ledger file: {}", e.what());
+      }
+      file_name = new_file_name;
+
+      if (should_close_and_reopen)
+      {
+        int open_errno = 0;
+        {
+          ccf::ds::TimeBoundLogger log_if_slow(std::format(
+            "Reopening ledger file - fopen({})", new_file_path.string()));
+          errno = 0;
+          // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
+          file = fopen(new_file_path.c_str(), "r+b");
+          open_errno = errno;
+        }
+        if (file == nullptr)
+        {
+          throw std::logic_error(std::format(
+            "Failed to reopen ledger file {}: {}",
+            new_file_path.string(),
+            ccf::nonstd::strerror(open_errno != 0 ? open_errno : EIO)));
+        }
+      }
+
+      return true;
+    }
+
+    void open()
+    {
+      auto new_file_name =
+        ccf::ledger::remove_recovery_suffix(file_name.c_str());
+      rename(new_file_name, true /* close_and_reopen */);
+      recovery = false;
+      LOG_DEBUG_FMT("Open recovery ledger file {}", new_file_name.string());
+    }
+
+    bool commit(size_t idx)
+    {
+      if (!completed || committed || (idx != get_last_idx()))
+      {
+        // No effect if commit idx is not last idx
+        return false;
+      }
+
+      // Files that are completed and committed are fsync'ed under lock
+      // (acquired in LedgerFiles::commit()) to ensure that any file returned by
+      // committed_ledger_path_with_idx() is complete and can be safely read and
+      // served to other nodes.
+      {
+        ccf::ds::TimeBoundLogger log_if_slow(std::format(
+          "Committing ledger file - fsync({})", file_name.string()));
+        if (fsync(fileno(file)) != 0)
+        {
+          throw std::logic_error(std::format(
+            "Failed to flush ledger file: {}", ccf::nonstd::strerror(errno)));
+        }
+      }
+
+      auto committed_file_name = std::format(
+        "{}_{}-{}{}",
+        file_name_prefix,
+        start_idx,
+        get_last_idx(),
+        ccf::ledger::ledger_committed_suffix);
+
+      if (recovery)
+      {
+        committed_file_name = std::format(
+          "{}{}",
+          committed_file_name,
+          ccf::ledger::ledger_recovery_file_suffix);
+      }
+
+      if (!rename(committed_file_name))
+      {
+        return false;
+      }
+
+      committed = true;
+      LOG_DEBUG_FMT("Committed ledger file {}", file_name.string());
+
+      // Committed recovery files stay in the list of active files until the
+      // ledger is open
+      return !recovery;
+    }
+  };
+
+  class Ledger
+  {
+  private:
+    // Main ledger directory (write and read)
+    const fs::path ledger_dir;
+
+    // Ledger directories (read-only)
+    const std::vector<fs::path> read_ledger_dirs;
+
+    // Guards all mutable ledger state below, and transitively every LedgerFile
+    // reachable from `files`, since LedgerFile is not internally synchronised.
+    // Also guards the on-disk layout of `ledger_dir`: file renames and
+    // removals happen under it, so directory scans under it observe a
+    // consistent set of names.
+    ccf::ds::Mutex state_lock;
+
+    // Keep tracks of all ledger files for writing.
+    // Current ledger file is always the last one
+    std::list<std::shared_ptr<LedgerFile>> files CCF_GUARDED_BY(state_lock);
+
+    // Cache of ledger files for reading
+    const size_t max_read_cache_files;
+    std::list<std::shared_ptr<LedgerFile>> files_read_cache
+      CCF_GUARDED_BY(state_lock);
+
+    size_t last_idx CCF_GUARDED_BY(state_lock) = 0;
+    size_t committed_idx CCF_GUARDED_BY(state_lock) = 0;
+
+    size_t end_of_committed_files_idx CCF_GUARDED_BY(state_lock) = 0;
+
+    // Indicates if the ledger has been initialised at a specific idx and
+    // may still be replaying existing entries.
+    bool use_existing_files CCF_GUARDED_BY(state_lock) = false;
+    // Used to remember the last recovered idx on init so that
+    // use_existing_files can be disabled once this idx is passed
+    std::optional<size_t> last_idx_on_init CCF_GUARDED_BY(state_lock) =
+      std::nullopt;
+
+    // Use to remember the index from which replication started
+    size_t init_idx CCF_GUARDED_BY(state_lock) = 0;
+
+    // Set during recovery to mark files as temporary until the recovery is
+    // complete
+    std::optional<size_t> recovery_start_idx CCF_GUARDED_BY(state_lock) =
+      std::nullopt;
+
+    [[nodiscard]] auto get_it_contains_idx(size_t idx) const
+      CCF_REQUIRES(state_lock)
+    {
+      if (idx == 0)
+      {
+        return files.end();
+      }
+
+      auto f = std::upper_bound(
+        files.begin(),
+        files.end(),
+        idx,
+        [](size_t idx, const std::shared_ptr<LedgerFile>& f) {
+          return (idx <= f->get_last_idx());
+        });
+
+      return f;
+    }
+
+    std::shared_ptr<LedgerFile> get_file_from_cache(size_t idx)
+      CCF_REQUIRES(state_lock)
+    {
+      if (idx == 0)
+      {
+        return nullptr;
+      }
+
+      // First, try to find file from read cache
+      for (auto const& f : files_read_cache)
+      {
+        if (f->get_start_idx() <= idx && idx <= f->get_last_idx())
+        {
+          return f;
+        }
+      }
+
+      // If the file is not in the cache, find the file from the ledger
+      // directories, inspecting the main ledger directory first
+      // Note: reading recovery chunks from main ledger directory is
+      // acceptable and in fact required to complete private recovery.
+      std::string ledger_dir_;
+      auto match = get_file_name_with_idx(ledger_dir, idx, true);
+      if (match.has_value())
+      {
+        ledger_dir_ = ledger_dir;
+      }
+      else
+      {
+        for (auto const& dir : read_ledger_dirs)
+        {
+          match = get_file_name_with_idx(dir, idx, false);
+          if (match.has_value())
+          {
+            ledger_dir_ = dir;
+            break;
+          }
+        }
+      }
+
+      if (!match.has_value())
+      {
+        return nullptr;
+      }
+
+      // Emplace file in the max-sized read cache, replacing the oldest entry if
+      // the read cache is full
+      std::shared_ptr<LedgerFile> match_file = nullptr;
+      try
+      {
+        match_file = std::make_shared<LedgerFile>(
+          ledger_dir_, *match); // NOLINT(bugprone-unchecked-optional-access)
+      }
+      catch (const std::exception& e)
+      {
+        LOG_FAIL_FMT(
+          "Could not open ledger file {} to read seqno {}: {}",
+          match.value(),
+          idx,
+          e.what());
+        return nullptr;
+      }
+
+      files_read_cache.emplace_back(match_file);
+      if (files_read_cache.size() > max_read_cache_files)
+      {
+        files_read_cache.erase(files_read_cache.begin());
+      }
+
+      return match_file;
+    }
+
+    std::shared_ptr<LedgerFile> get_file_from_idx(
+      size_t idx, bool read_cache_only = false) CCF_REQUIRES(state_lock)
+    {
+      if (idx == 0)
+      {
+        return nullptr;
+      }
+
+      if (!read_cache_only)
+      {
+        // First, check if the file is in the list of files open for writing
+        auto f = std::upper_bound(
+          files.rbegin(),
+          files.rend(),
+          idx,
+          [](size_t idx, const std::shared_ptr<LedgerFile>& f) {
+            return idx >= f->get_start_idx();
+          });
+
+        if (f != files.rend() && idx <= (*f)->get_last_idx())
+        {
+          return *f;
+        }
+      }
+
+      // Otherwise, return file from read cache
+      return get_file_from_cache(idx);
+    }
+
+    [[nodiscard]] std::shared_ptr<LedgerFile> get_latest_file(
+      bool incomplete_only = true) const CCF_REQUIRES(state_lock)
+    {
+      if (files.empty())
+      {
+        return nullptr;
+      }
+      const auto& last_file = files.back();
+      if (incomplete_only && last_file->is_complete())
+      {
+        return nullptr;
+      }
+
+      return last_file;
+    }
+
+    std::optional<LedgerReadResult> read_entries_range(
+      size_t from,
+      size_t to,
+      bool read_cache_only = false,
+      std::optional<size_t> max_entries_size = std::nullopt)
+    {
+      ccf::ds::MutexGuard guard(state_lock);
+
+      // Note: if max_entries_size is set, this returns contiguous ledger
+      // entries on a best effort basis, so that the returned entries fit in
+      // max_entries_size but without maximising the number of entries returned.
+      if ((from <= 0) || (to < from))
+      {
+        return std::nullopt;
+      }
+
+      // During recovery or other low-knowledge batch operations, we might
+      // request entries past the end of the ledger - truncate to the true end
+      // here.
+      if (to > last_idx)
+      {
+        to = last_idx;
+      }
+
+      LedgerReadResult rr;
+      rr.end_idx = to;
+
+      size_t idx = from;
+      while (idx <= to)
+      {
+        auto f_from = get_file_from_idx(idx, read_cache_only);
+        if (f_from == nullptr)
+        {
+          LOG_FAIL_FMT("Cannot find ledger file for seqno {}", idx);
+          return std::nullopt;
+        }
+
+        auto to_ = std::min(f_from->get_last_idx(), to);
+        std::optional<size_t> max_size = std::nullopt;
+        if (max_entries_size.has_value())
+        {
+          max_size = max_entries_size.value() - rr.data.size();
+        }
+        auto v = f_from->read_entries(idx, to_, max_size);
+        if (!v.has_value())
+        {
+          break;
+        }
+        if (v->limit_exceeded)
+        {
+          rr.limit_exceeded = rr.data.empty();
+          break;
+        }
+        rr.end_idx = v->end_idx;
+        rr.data.insert(
+          rr.data.end(),
+          std::make_move_iterator(v->data.begin()),
+          std::make_move_iterator(v->data.end()));
+        if (v->end_idx != to_)
+        {
+          // If all the entries requested from a file are not returned (i.e.
+          // because the requested entries are larger than max_entries_size),
+          // return immediately to avoid returning non-contiguous entries from a
+          // subsequent ledger file.
+          break;
+        }
+        idx = to_ + 1;
+      }
+
+      if (!rr.data.empty() || rr.limit_exceeded)
+      {
+        return rr;
+      }
+
+      return std::nullopt;
+    }
+
+    void ignore_ledger_file(const std::string& file_name)
+      CCF_REQUIRES(state_lock)
+    {
+      if (ccf::ledger::is_ledger_file_name_ignored(file_name))
+      {
+        return;
+      }
+
+      auto ignored_file_name =
+        std::format("{}{}", file_name, ccf::ledger::ledger_ignored_file_suffix);
+      {
+        ccf::ds::TimeBoundLogger log_if_slow(std::format(
+          "Ignoring ledger file - rename({} to {})",
+          file_name,
+          ignored_file_name));
+        files::rename(ledger_dir / file_name, ledger_dir / ignored_file_name);
+      }
+    }
+
+    void delete_ledger_files_after_idx(size_t idx) CCF_REQUIRES(state_lock)
+    {
+      // Use with caution! Delete all ledger files later than idx
+      for (auto const& f : fs::directory_iterator(ledger_dir))
+      {
+        auto file_name = f.path().filename();
+        auto start_idx = ccf::ledger::get_start_idx_from_file_name(file_name);
+        if (start_idx > idx)
+        {
+          ccf::ds::TimeBoundLogger log_if_slow(std::format(
+            "Deleting divergent ledger file - remove({})", file_name.string()));
+          if (!fs::remove(ledger_dir / file_name))
+          {
+            throw std::logic_error(
+              std::format("Could not remove file {}", file_name.string()));
+          }
+          LOG_INFO_FMT(
+            "Forcing removal of ledger file {} as start idx {} > {}",
+            file_name.string(),
+            start_idx,
+            idx);
+        }
+      }
+    }
+
+    std::shared_ptr<LedgerFile> get_existing_ledger_file_for_idx(size_t idx)
+      CCF_REQUIRES(state_lock)
+    {
+      if (!use_existing_files)
+      {
+        return nullptr;
+      }
+
+      for (auto const& f : fs::directory_iterator(ledger_dir))
+      {
+        auto file_name = f.path().filename();
+        if (
+          idx == ccf::ledger::get_start_idx_from_file_name(file_name) &&
+          !ccf::ledger::is_ledger_file_ignored(file_name))
+        {
+          return std::make_shared<LedgerFile>(
+            ledger_dir, file_name, true /* from_existing_file */);
+
+          break;
+        }
+      }
+
+      return nullptr;
+    }
+
+  public:
+    Ledger(
+      const fs::path& ledger_dir,
+      size_t max_read_cache_files = ledger_max_read_cache_files_default,
+      const std::vector<std::string>& read_ledger_dirs_ = {}) :
+      ledger_dir(ledger_dir),
+      read_ledger_dirs(read_ledger_dirs_.begin(), read_ledger_dirs_.end()),
+      max_read_cache_files(max_read_cache_files)
+    {
+      // Recover last idx from read-only ledger directories
+      for (const auto& read_dir : read_ledger_dirs_)
+      {
+        LOG_INFO_FMT("Recovering read-only ledger directory \"{}\"", read_dir);
+        if (!fs::is_directory(read_dir))
+        {
+          throw std::logic_error(
+            std::format("{} read-only ledger is not a directory", read_dir));
+        }
+
+        for (auto const& f : fs::directory_iterator(read_dir))
+        {
+          auto file_name = f.path().filename();
+          auto last_idx_ = ccf::ledger::get_last_idx_from_file_name(file_name);
+          if (
+            !last_idx_.has_value() ||
+            !ccf::ledger::is_ledger_file_name_committed(file_name) ||
+            ccf::ledger::is_ledger_file_name_ignored(file_name))
+          {
+            LOG_DEBUG_FMT(
+              "Read-only ledger file {} is ignored as not committed",
+              file_name.string());
+            continue;
+          }
+
+          if (last_idx_.value() > last_idx)
+          {
+            last_idx = last_idx_.value();
+            committed_idx = last_idx;
+            end_of_committed_files_idx = last_idx;
+          }
+
+          LOG_DEBUG_FMT(
+            "Recovering file from read-only ledger directory: {}",
+            file_name.string());
+        }
+      }
+
+      if (last_idx > 0)
+      {
+        LOG_INFO_FMT(
+          "Recovered read-only ledger directories up to {}, committed up to "
+          "{} ",
+          last_idx,
+          committed_idx);
+      }
+
+      if (fs::is_directory(ledger_dir))
+      {
+        LOG_INFO_FMT(
+          "Recovering main ledger directory {}", ledger_dir.string());
+
+        // Establish the final committed frontier before admitting mutable
+        // files, independently of directory iteration order.
+        for (auto const& f : fs::directory_iterator(ledger_dir))
+        {
+          auto file_name = f.path().filename();
+          if (
+            ccf::ledger::is_ledger_file_ignored(file_name) ||
+            !ccf::ledger::is_ledger_file_name_committed(file_name))
+          {
+            continue;
+          }
+
+          const auto file_end_idx =
+            ccf::ledger::get_last_idx_from_file_name(file_name);
+          if (!file_end_idx.has_value())
+          {
+            LOG_FAIL_FMT(
+              "Unexpected file {} in {}: committed but not completed",
+              file_name.string(),
+              ledger_dir.string());
+          }
+          else if (file_end_idx.value() > committed_idx)
+          {
+            committed_idx = file_end_idx.value();
+            end_of_committed_files_idx = file_end_idx.value();
+          }
+        }
+
+        for (auto const& f : fs::directory_iterator(ledger_dir))
+        {
+          auto file_name = f.path().filename();
+
+          if (ccf::ledger::is_ledger_file_ignored(file_name))
+          {
+            LOG_INFO_FMT(
+              "Ignoring ledger file {} in main ledger directory",
+              file_name.string());
+
+            ignore_ledger_file(file_name);
+
+            continue;
+          }
+
+          if (ccf::ledger::is_ledger_file_name_committed(file_name))
+          {
+            continue;
+          }
+
+          std::shared_ptr<LedgerFile> ledger_file = nullptr;
+          try
+          {
+            ledger_file = std::make_shared<LedgerFile>(ledger_dir, file_name);
+
+            // Truncate file to latest recovered index to cleanup entries that
+            // may have been corrupted (no-op if file isn't corrupted)
+            if (ledger_file->truncate(ledger_file->get_last_idx()))
+            {
+              // If truncation of corrupted entries removes file, file is not
+              // recovered
+              LOG_FAIL_FMT("Removed ledger file {}", file_name.string());
+              continue;
+            }
+          }
+          catch (const std::exception& e)
+          {
+            LOG_FAIL_FMT(
+              "Error reading ledger file {}: {}", file_name.string(), e.what());
+            // Ignore file if it cannot be recovered.
+            ignore_ledger_file(file_name);
+            continue;
+          }
+
+          if (ledger_file->get_last_idx() <= committed_idx)
+          {
+            LOG_INFO_FMT(
+              "Ignoring ledger file {} in main ledger directory - already "
+              "discovered commit up to {}",
+              file_name.string(),
+              committed_idx);
+
+            ledger_file.reset();
+            ignore_ledger_file(file_name);
+            continue;
+          }
+
+          LOG_DEBUG_FMT(
+            "Recovering file from main ledger directory: {}",
+            file_name.string());
+          files.emplace_back(std::move(ledger_file));
+        }
+
+        if (files.empty())
+        {
+          LOG_INFO_FMT(
+            "Main ledger directory {} is empty: no ledger file to "
+            "recover",
+            ledger_dir.string());
+
+          // If we had any uncommitted files, we wouldn't be in this path and
+          // we'd populate last_idx below. In this branch, we need to ensure
+          // last_idx is correctly initialised. Since there are no uncommitted
+          // files, it must match the last committed_idx we've discovered.
+          last_idx = committed_idx;
+          return;
+        }
+
+        LOG_INFO_FMT(
+          "Main ledger directory {} contains {} restored (writeable) files",
+          ledger_dir.string(),
+          files.size());
+
+        files.sort([](
+                     const std::shared_ptr<LedgerFile>& a,
+                     const std::shared_ptr<LedgerFile>& b) {
+          return a->get_last_idx() < b->get_last_idx();
+        });
+
+        const auto main_ledger_dir_last_idx =
+          get_latest_file(false)->get_last_idx();
+        if (main_ledger_dir_last_idx > last_idx)
+        {
+          last_idx = main_ledger_dir_last_idx;
+        }
+      }
+      else
+      {
+        ccf::ds::TimeBoundLogger log_if_slow(std::format(
+          "Creating ledger directory - create_directory({})",
+          ledger_dir.string()));
+        if (!fs::create_directory(ledger_dir))
+        {
+          throw std::logic_error(std::format(
+            "Error: Could not create ledger directory: {}",
+            ledger_dir.string()));
+        }
+      }
+
+      LOG_INFO_FMT(
+        "Recovered ledger entries up to {}, committed to {}",
+        last_idx,
+        committed_idx);
+    }
+
+    Ledger(const Ledger& that) = delete;
+
+    ~Ledger() = default;
+
+    void init(size_t idx, size_t recovery_start_idx_ = 0)
+    {
+      ccf::ds::TimeBoundLogger log_if_slow(
+        std::format("Initing ledger - seqno={}", idx));
+
+      ccf::ds::MutexGuard guard(state_lock);
+
+      init_idx = idx;
+
+      // Used by backup nodes to initialise the ledger when starting from a
+      // non-empty state, i.e. snapshot. It is assumed that idx is included in a
+      // committed ledger file.
+
+      // To restart from a snapshot cleanly, in the main ledger directory,
+      // mark all subsequent ledger as non-committed as their contents will be
+      // replayed.
+      for (auto const& f : fs::directory_iterator(ledger_dir))
+      {
+        auto file_name = f.path().filename();
+        if (
+          ccf::ledger::is_ledger_file_name_committed(file_name) &&
+          (ccf::ledger::get_start_idx_from_file_name(file_name) > idx))
+        {
+          auto last_idx_file =
+            ccf::ledger::get_last_idx_from_file_name(file_name);
+          if (!last_idx_file.has_value())
+          {
+            throw std::logic_error(std::format(
+              "Committed ledger file {} does not include last idx in file name",
+              file_name.string()));
+          }
+
+          LOG_INFO_FMT(
+            "Remove committed suffix from ledger file {} after init at {}: "
+            "last_idx {}",
+            file_name.string(),
+            idx,
+            last_idx_file.value());
+
+          {
+            ccf::ds::TimeBoundLogger log_rename_if_slow(std::format(
+              "Removing committed suffix - rename({})", file_name.string()));
+            files::rename(
+              ledger_dir / file_name,
+              ledger_dir /
+                ccf::ledger::remove_suffix(
+                  file_name.string(),
+                  std::format(
+                    "{}{}{}",
+                    ccf::ledger::ledger_last_idx_delimiter,
+                    last_idx_file.value(),
+                    ccf::ledger::ledger_committed_suffix)));
+          }
+        }
+      }
+
+      // Close all open write files as the ledger should
+      // restart cleanly, from a new chunk.
+      files.clear();
+
+      use_existing_files = true;
+      last_idx_on_init = last_idx;
+      last_idx = idx;
+      committed_idx = idx;
+      // Files renamed above are no longer immutable, so they must not be
+      // classified as committed for concurrent readers.
+      end_of_committed_files_idx = std::min(end_of_committed_files_idx, idx);
+      if (recovery_start_idx_ > 0)
+      {
+        // Do not set recovery idx and create recovery chunks
+        // if the ledger is initialised from 0 (i.e. genesis)
+        recovery_start_idx = recovery_start_idx_;
+      }
+
+      LOG_INFO_FMT(
+        "Set last known/commit seqno to {}, recovery seqno to {}",
+        idx,
+        recovery_start_idx_);
+    }
+
+    void complete_recovery()
+    {
+      // When the recovery is completed (i.e. service is open), temporary
+      // recovery ledger chunks are renamed as they can now be recovered.
+      // Note: this operation cannot be rolled back.
+      LOG_INFO_FMT("Ledger complete recovery");
+
+      ccf::ds::MutexGuard guard(state_lock);
+
+      for (auto it = files.begin(); it != files.end();)
+      {
+        auto& f = *it;
+        if (f->is_recovery())
+        {
+          f->open();
+
+          // Recovery files are kept in the list of active files when committed
+          // so that they can be renamed in a stable order when the service is
+          // open. Once this is done, they can be removed from the list of
+          // active files.
+          if (f->is_committed())
+          {
+            it = files.erase(it);
+            continue;
+          }
+        }
+        ++it;
+      }
+
+      recovery_start_idx.reset();
+    }
+
+    [[nodiscard]] size_t get_last_idx()
+    {
+      ccf::ds::MutexGuard guard(state_lock);
+
+      return last_idx;
+    }
+
+    void set_recovery_start_idx(size_t idx)
+    {
+      ccf::ds::MutexGuard guard(state_lock);
+
+      recovery_start_idx = idx;
+    }
+
+    std::optional<LedgerReadResult> read_entry(size_t idx)
+    {
+      ccf::ds::TimeBoundLogger log_if_slow(
+        std::format("Reading ledger entry at {}", idx));
+
+      // Locking is done in read_entries_range
+
+      return read_entries_range(idx, idx);
+    }
+
+    std::optional<LedgerReadResult> read_entries(
+      size_t from,
+      size_t to,
+      std::optional<size_t> max_entries_size = std::nullopt)
+    {
+      ccf::ds::TimeBoundLogger log_if_slow(
+        std::format("Reading ledger entries from {} to {}", from, to));
+
+      // Locking is done in read_entries_range
+
+      auto result = read_entries_range(from, to, false, max_entries_size);
+      if (result.has_value() && result->limit_exceeded)
+      {
+        return std::nullopt;
+      }
+      return result;
+    }
+
+    std::optional<LedgerReadResult> read_entries_with_limit_status(
+      size_t from, size_t to, size_t max_entries_size)
+    {
+      ccf::ds::TimeBoundLogger log_if_slow(
+        std::format("Reading ledger entries from {} to {}", from, to));
+
+      return read_entries_range(from, to, false, max_entries_size);
+    }
+
+    // Reads entries known to lie in committed files. Only the read cache is
+    // consulted, but the state lock is still taken so that init() cannot
+    // un-commit and rewrite a file while it is being read.
+    std::optional<LedgerReadResult> read_committed_entries(
+      size_t from,
+      size_t to,
+      std::optional<size_t> max_entries_size = std::nullopt)
+    {
+      ccf::ds::TimeBoundLogger log_if_slow(std::format(
+        "Reading committed ledger entries from {} to {}", from, to));
+
+      return read_entries_range(
+        from, to, true /* read cache only */, max_entries_size);
+    }
+
+    size_t write_entry(const uint8_t* data, size_t size, bool committable)
+    {
+      ccf::ds::TimeBoundLogger log_if_slow(std::format(
+        "Writing ledger entry - {} bytes, committable={}", size, committable));
+
+      ccf::ds::MutexGuard guard(state_lock);
+
+      auto header =
+        serialized::peek<ccf::kv::SerialisedEntryHeader>(data, size);
+
+      if ((header.flags & ccf::kv::EntryFlags::FORCE_LEDGER_CHUNK_BEFORE) != 0)
+      {
+        LOG_TRACE_FMT(
+          "Forcing ledger chunk before entry as required by the entry header "
+          "flags");
+
+        auto file = get_latest_file();
+        if (file != nullptr)
+        {
+          file->complete();
+          LOG_DEBUG_FMT("Ledger chunk completed at {}", file->get_last_idx());
+        }
+      }
+
+      bool force_chunk_after =
+        (header.flags & ccf::kv::EntryFlags::FORCE_LEDGER_CHUNK_AFTER) != 0;
+      if (force_chunk_after)
+      {
+        if (!committable)
+        {
+          throw std::logic_error(
+            "Ledger chunks cannot end in a non-committable transaction");
+        }
+        LOG_TRACE_FMT(
+          "Forcing ledger chunk after entry as required by the entry header "
+          "flags");
+      }
+
+      auto file = get_latest_file();
+      if (file == nullptr)
+      {
+        // If no file is currently open for writing, create a new one
+        size_t start_idx = last_idx + 1;
+        if (use_existing_files)
+        {
+          // When recovering files from persistence, try to find one on disk
+          // first
+          file = get_existing_ledger_file_for_idx(start_idx);
+        }
+        if (file == nullptr)
+        {
+          bool is_recovery = recovery_start_idx.has_value() &&
+            start_idx > recovery_start_idx.value();
+          file =
+            std::make_shared<LedgerFile>(ledger_dir, start_idx, is_recovery);
+        }
+        files.emplace_back(file);
+      }
+      auto [last_idx_, has_truncated] =
+        file->write_entry(data, size, committable);
+      last_idx = last_idx_;
+
+      if (has_truncated)
+      {
+        // If a divergence was detected when writing the entry, delete all
+        // further ledger files to cleanly continue
+        LOG_INFO_FMT("Found divergent ledger entry at {}", last_idx);
+        delete_ledger_files_after_idx(last_idx);
+        use_existing_files = false;
+      }
+
+      if (
+        use_existing_files && last_idx_on_init.has_value() &&
+        last_idx > last_idx_on_init.value())
+      {
+        use_existing_files = false;
+      }
+
+      LOG_TRACE_FMT(
+        "Wrote entry at {} [committable: {}, force chunk after: {}]",
+        last_idx,
+        committable,
+        force_chunk_after);
+
+      if (committable && force_chunk_after)
+      {
+        file->complete();
+        LOG_DEBUG_FMT("Ledger chunk completed at {}", last_idx);
+      }
+
+      return last_idx;
+    }
+
+    void truncate(size_t idx, bool recovery_mode = false)
+    {
+      ccf::ds::TimeBoundLogger log_if_slow(
+        std::format("Truncating ledger at {}", idx));
+
+      ccf::ds::MutexGuard guard(state_lock);
+
+      LOG_DEBUG_FMT(
+        "Ledger truncate: {}/{} [recovery: {}]", idx, last_idx, recovery_mode);
+
+      // Conservative check to avoid dropping committed entries.
+      if (last_idx != 0 && idx < committed_idx)
+      {
+        LOG_DEBUG_FMT(
+          "Ignoring truncate to {} - last_idx: {}, committed_idx: {}",
+          idx,
+          last_idx,
+          committed_idx);
+        return;
+      }
+
+      // During recovery, a snapshot can be after the current end of the host
+      // ledger. Regular truncation requires that the truncation index is within
+      // the ledger and otherwise skips the truncation. This is a special case
+      // to handle the recovery forward truncation
+      if (recovery_mode && idx >= last_idx)
+      {
+        // Close any open files as the ledger should restart cleanly from a new
+        // chunk.
+        auto file = get_latest_file();
+        if (file != nullptr)
+        {
+          file->complete();
+        }
+        // Don't use any of the files on disk for writing
+        use_existing_files = false;
+        last_idx_on_init.reset();
+        // Set last_idx to the recovery idx, which may be past the current end
+        // of the ledger
+        last_idx = idx;
+        return;
+      }
+
+      // Conservative check to avoid truncating to future indices. If the
+      // ledger is being initialised from a snapshot alone, the first truncation
+      // effectively sets the last index.
+      if (last_idx != 0 && idx >= last_idx)
+      {
+        LOG_DEBUG_FMT(
+          "Ignoring truncate to {} - last_idx: {}, committed_idx: {}",
+          idx,
+          last_idx,
+          committed_idx);
+        return;
+      }
+
+      auto f_from = get_it_contains_idx(idx + 1);
+      auto f_to = get_it_contains_idx(last_idx);
+      // std::next(end()) is undefined behaviour, which libstdc++'s debug
+      // iterators correctly detect; use end() directly when f_to is end().
+      auto f_end = (f_to == files.end()) ? files.end() : std::next(f_to);
+
+      // Note: do not compare iterators against `f_from` inside the loop, as
+      // it may be invalidated by `files.erase(it)` below. Use a flag for the
+      // first iteration instead.
+      bool is_first = true;
+      for (auto it = f_from; it != f_end;)
+      {
+        // Truncate the first file to the truncation index while the more
+        // recent files are deleted entirely
+        auto truncate_idx = is_first ? idx : (*it)->get_start_idx() - 1;
+        is_first = false;
+        if ((*it)->truncate(truncate_idx))
+        {
+          it = files.erase(it);
+        }
+        else
+        {
+          it++;
+        }
+      }
+
+      last_idx = idx;
+    }
+
+    void commit(size_t idx)
+    {
+      ccf::ds::TimeBoundLogger log_if_slow(
+        std::format("Committing ledger entry {}", idx));
+
+      ccf::ds::MutexGuard guard(state_lock);
+
+      LOG_DEBUG_FMT("Ledger commit: {}/{}", idx, last_idx);
+
+      if (idx <= committed_idx || idx > last_idx)
+      {
+        return;
+      }
+
+      auto f_from = (committed_idx == 0) ? get_it_contains_idx(1) :
+                                           get_it_contains_idx(committed_idx);
+      auto f_to = get_it_contains_idx(idx);
+      // std::next(end()) is undefined behaviour, which libstdc++'s debug
+      // iterators correctly detect; use end() directly when f_to is end().
+      auto f_end = (f_to == files.end()) ? files.end() : std::next(f_to);
+
+      for (auto it = f_from; it != f_end;)
+      {
+        // Commit all previous file to their latest index while the latest
+        // file is committed to the committed index
+        const auto last_idx_in_file = (*it)->get_last_idx();
+        auto commit_idx = (it == f_to) ? idx : last_idx_in_file;
+        if (
+          (*it)->commit(commit_idx) &&
+          (it != f_to || (idx == last_idx_in_file)))
+        {
+          end_of_committed_files_idx = last_idx_in_file;
+          it = files.erase(it);
+        }
+        else
+        {
+          it++;
+        }
+      }
+
+      committed_idx = idx;
+    }
+
+    [[nodiscard]] bool is_in_committed_file(size_t idx)
+    {
+      ccf::ds::MutexGuard guard(state_lock);
+
+      return idx <= end_of_committed_files_idx;
+    }
+
+    /**
+     * Returns the path to the committed ledger file containing the given
+     * index, or nullopt if no such file exists. Only returns paths from the
+     * main ledger directory.
+     */
+    [[nodiscard]] std::optional<fs::path> committed_ledger_path_with_idx(
+      size_t idx)
+    {
+      ccf::ds::MutexGuard guard(state_lock);
+
+      if (idx > end_of_committed_files_idx)
+      {
+        LOG_INFO_FMT(
+          "Index {} is beyond end of committed files at {}, cannot get "
+          "committed ledger path",
+          idx,
+          end_of_committed_files_idx);
+        return std::nullopt;
+      }
+
+      auto name = get_file_name_with_idx(
+        ledger_dir, idx, false /* do not allow recovery files */);
+
+      if (!name.has_value())
+      {
+        LOG_INFO_FMT(
+          "Could not find committed ledger file for index {} in {}",
+          idx,
+          ledger_dir.string());
+        return std::nullopt;
+      }
+
+      return ledger_dir / name.value();
+    }
+
+    [[nodiscard]] std::optional<ccf::ledger::CommittedLedgerPrefixRange>
+    committed_ledger_prefix_range_with_idx(size_t idx)
+    {
+      ccf::ds::MutexGuard guard(state_lock);
+
+      if (idx == 0 || idx <= end_of_committed_files_idx || idx > committed_idx)
+      {
+        return std::nullopt;
+      }
+
+      const auto it = get_it_contains_idx(idx);
+      if (
+        it == files.end() || (*it)->get_start_idx() > idx ||
+        (*it)->is_committed() || (*it)->is_recovery())
+      {
+        return std::nullopt;
+      }
+
+      return ccf::ledger::CommittedLedgerPrefixRange{
+        .start_idx = idx,
+        .end_idx = std::min(committed_idx, (*it)->get_last_idx())};
+    }
+
+    // Only the chunk metadata is materialised under the state lock. The entry
+    // bytes, potentially many megabytes, are read on demand afterwards, and
+    // only for the requested byte ranges, so that serving a prefix does not
+    // stall the ledger writer.
+    [[nodiscard]] std::optional<LedgerFile::CompletedChunkReader>
+    open_committed_ledger_prefix(size_t from, size_t to)
+    {
+      ccf::ds::MutexGuard guard(state_lock);
+
+      if (from == 0 || to < from || to > committed_idx)
+      {
+        return std::nullopt;
+      }
+
+      const auto file = get_file_from_idx(from);
+      if (
+        file == nullptr || file->get_start_idx() > from ||
+        file->get_last_idx() < to || file->is_recovery())
+      {
+        return std::nullopt;
+      }
+
+      return file->make_completed_chunk_reader(from, to);
+    }
+
+    [[nodiscard]] size_t get_init_idx()
+    {
+      ccf::ds::MutexGuard guard(state_lock);
+
+      return init_idx;
+    }
+  };
+}

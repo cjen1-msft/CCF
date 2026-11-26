@@ -1,0 +1,72 @@
+Glossary
+========
+
+.. glossary::  
+  Azure Confidential Compute
+    `Azure Confidential Compute <https://azure.microsoft.com/en-us/solutions/confidential-compute/>`_ protects the confidentiality and integrity of your data and code while it's processed in the public cloud.
+
+  Constitution
+    JavaScript module that defines possible governance actions, and how members' proposals are validated, resolved and applied to the service.
+
+  Commit Evidence
+    A :ref:`unique string <use_apps/verify_tx:Commit Evidence>` produced per transaction, and included in the Merkle Tree along with the :term:`Write Set` digest and the `claims_digest`. The reveal of that string guarantees the transaction is committed.
+
+  CFT
+    Crash Fault Tolerance is a type of fault tolerance that allows the system to tolerate network and node failures up to a given limit.
+    CFT however does not account for any nodes behaving maliciously.
+    Read more on CFT :ref:`here <architecture/consensus/index:CCF consensus protocol>`.
+
+  Enclave
+    Historical term from CCF's former Intel SGX support, where application code ran in an SGX enclave loaded by an untrusted host process.
+    CCF no longer supports SGX, and a CCF node now runs as a single process inside its :term:`TEE`.
+    Some code identifiers and older documents still use this term.
+
+  Members
+    Constitute the consortium governing a CCF network. Their public identity should be registered in CCF.
+
+  Merkle Tree
+    `Tree structure <https://en.wikipedia.org/wiki/Merkle_tree>`_ which records the hash of every transaction and guarantees the integrity of the CCF ledger.
+
+  Microsoft Azure
+    `Microsoft Azure <https://azure.microsoft.com/en-us>`_ is a cloud computing service created by Microsoft for building, testing, deploying, and managing applications and services through Microsoft-managed data centers.
+
+  Node identity
+    The public identity of a node in a service, represented as an X.509 certificate containing an endorsement from the :term:`Service Identity`. It is used to issue transaction receipts. See :ref:`here <architecture/cryptography:Node>` for more detail.
+
+  Omission Fault
+    Type of failure where consensus messages exchanged between nodes are lost due to unreliable network. This may cause one or more nodes to be isolated from the rest of the network.
+
+  Operators
+    Are in charge of operating a CCF network (e.g. adding or removing nodes). Their identities are not registered in CCF.
+
+  REST
+    `Representational state transfer <https://en.wikipedia.org/wiki/Representational_state_transfer>`_ is a set of constraints on web APIs, usually implemented over HTTP using JSON as request and response objects exchanged between a requesting client and an implementation server.
+
+  RPC
+    `Remote Procedure Call <https://en.wikipedia.org/wiki/Remote_procedure_call>`_ is a way to execute functions in remote machines. CCF exposes :term:`REST` endpoints that allow clients to execute application and governance operations.
+
+  Service identity
+    The public identity of the CCF service, represented as an X.509 certificate. It is used to authenticate the service to clients and other nodes. See :ref:`here <architecture/cryptography:Service>` for more detail.
+
+  SEV-SNP
+    `AMD Secure Encrypted Virtualisation - Secure Nested Paging <https://www.amd.com/en/developer/sev.html>`_ is a trusted execution environment platform. It is a technology used to isolate virtual machines from the hypervisor with strong memory integrity protection.
+
+  TCP
+    `Transmission Control Protocol <https://en.wikipedia.org/wiki/Transmission_Control_Protocol>`_ is a network protocol over IP that provides sessions and ordered streams, which we use to connect between nodes and external clients.
+
+  TEE
+    `Trusted Execution Environment <https://en.wikipedia.org/wiki/Trusted_execution_environment>`_ is a hardware-isolated environment that protects the confidentiality and integrity of the code and data loaded inside it, and can produce attestation evidence describing that code.
+    CCF nodes use :term:`SEV-SNP` protected utility VMs as their TEE, which protect the node's memory from the host and hypervisor.
+    The :doc:`Insecure Virtual </operations/platforms/virtual>` platform provides no TEE protection and is for development only.
+
+  TLS
+    `Transport Layer Security <https://en.wikipedia.org/wiki/Transport_Layer_Security>`_ is an IETF cryptographic protocol standard designed to secure communications between a client and a server over a computer network.
+
+  Transaction ID
+    Unique transaction identifier in CCF, composed of a View and a Sequence Number separated by a period. Sequence Numbers start from 1, and are contiguous. Views are monotonic. E.g. The transaction ID ``2.15`` indicates the View is ``2`` and the Sequence Number is ``15``. Sequence Numbers are also referred to as a :cpp:type:`ccf::kv::Version` in the context of the Key-Value store.
+
+  Users
+    Directly interact with the application running in CCF. Applications define how users are authenticated and authorised for each endpoint.
+
+  Write Set
+    The keys and values written to during a CCF transaction. The state of the Key Value store at a given :term:`Transaction ID` is logically the successive application of all write sets up to that point.
