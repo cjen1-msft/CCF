@@ -1468,30 +1468,45 @@ private theorem select_max_step (P : Nat -> Prop) [DecidablePred P] (best index 
     rw [ite_eq_right chosen]
     exact ⟨Nat.le.refl, fun lt => (Nat.lt_irrefl _ lt).elim, fun holds => (chosen holds).elim⟩
 
-/-- The conditional-maximum fold does not go below its start, moves only to a selected
-value, and bounds every selected value. -/
+/-- The conditional-maximum fold does not go below its start and bounds every selected
+value. -/
+private theorem foldl_select_max_bound (P : Nat -> Prop) [DecidablePred P]
+    (values : List Nat) (init : Nat)
+    : let result :=
+        values.foldl (fun best index => if P index then max best index else best) init
+      init <= result /\ forall index, index ∈ values -> P index -> index <= result := by
+  split_rel values := (induction values generalizing init) with
+  | nil => exact ⟨Nat.le.refl, fun _ member => nomatch member⟩
+  | cons =>
+    rename_i head tail ih
+    simp only [List.foldl_cons]
+    obtain ⟨start, _, reached⟩ := select_max_step P init head
+    obtain ⟨le, bound⟩ := ih (if P head then max init head else init)
+    refine ⟨Nat.le_trans start le, fun index member holds => ?_⟩
+    split_rel mem_cons := (rcases List.mem_cons.mp member with rfl | later) with
+    | inl => exact Nat.le_trans (reached holds) le
+    | inr => exact bound index later holds
+
+/-- The conditional-maximum fold moves only to a selected value. -/
 private theorem foldl_select_max (P : Nat -> Prop) [DecidablePred P] (values : List Nat)
     (init : Nat)
     : let result :=
         values.foldl (fun best index => if P index then max best index else best) init
-      init <= result /\ (init < result -> P result)
-        /\ forall index, index ∈ values -> P index -> index <= result := by
+      init < result -> P result := by
   split_rel values := (induction values generalizing init) with
-  | nil => exact ⟨Nat.le.refl, fun lt => (Nat.lt_irrefl _ lt).elim, fun _ member => nomatch member⟩
+  | nil => exact fun lt => (Nat.lt_irrefl _ lt).elim
   | cons =>
     rename_i head tail ih
     simp only [List.foldl_cons]
-    obtain ⟨start, moved, reached⟩ := select_max_step P init head
-    obtain ⟨le, selected, bound⟩ := ih (if P head then max init head else init)
-    generalize (if P head then max init head else init) = next
-      at start moved reached le selected bound ⊢
-    refine ⟨Nat.le_trans start le, fun lt => ?_,
-      List.forall_mem_cons.mpr ⟨fun holds => Nat.le_trans (reached holds) le, bound⟩⟩
+    obtain ⟨start, moved, _⟩ := select_max_step P init head
+    have le := (foldl_select_max_bound P tail (if P head then max init head else init)).1
+    generalize (if P head then max init head else init) = next at start moved le ⊢
+    intro lt
     split_rel later := (rcases Nat.eq_or_lt_of_le le with same | ahead) with
     | inl =>
       rw [← same] at lt ⊢
       exact moved lt
-    | inr => exact selected ahead
+    | inr => exact ih next ahead
 
 /-- A positive latest committable index points to a signature. -/
 private theorem maxCommittableIndexPositiveIsSignature
@@ -1499,7 +1514,7 @@ private theorem maxCommittableIndexPositiveIsSignature
     (positive : 0 < maxCommittableIndex log)
     : isSignatureAt log (maxCommittableIndex log) = true := by
   unfold maxCommittableIndex at positive ⊢
-  exact (foldl_select_max (fun index => isSignatureAt log index = true) _ 0).2.1 positive
+  exact foldl_select_max (fun index => isSignatureAt log index = true) _ 0 positive
 
 /-- The latest signature index lies within the log. -/
 private theorem maxCommittableIndexBounded (log : List Entry)
@@ -1519,7 +1534,7 @@ private theorem signatureIndex_le_maxCommittableIndex
     rcases isSignatureAtTrue signature with ⟨entry, found, _⟩
     exact entryAtSomeIndexBound found
   unfold maxCommittableIndex
-  exact (foldl_select_max (fun index => isSignatureAt log index = true) _ 0).2.2 index
+  exact (foldl_select_max_bound (fun index => isSignatureAt log index = true) _ 0).2 index
     (List.mem_range.mpr (Nat.lt_succ_of_le indexBound)) signature
 
 /-- Extending a log preserves every earlier signature lookup. -/
@@ -2037,8 +2052,11 @@ private theorem forIn' {β : Type} {items : List γ} {init : β}
           exact pure' fun e member => first e (by simpa using member)
       | yield =>
           rename_i value
-          exact mono (ih fun item value member => each item value (List.mem_cons_of_mem _ member))
-            fun _ later rest => List.forall_mem_append.mpr ⟨first, rest⟩
+          refine mono (ih fun item value member => each item value (List.mem_cons_of_mem _ member))
+            fun _ later rest e member => ?_
+          split_rel mem_append := (rcases List.mem_append.mp member with old | new) with
+          | inl => exact first e old
+          | inr => exact rest e new
 
 /-- A fold that keeps `I` of its accumulator and everything sent so far. -/
 private theorem foldlM' {I : α -> List (Envelope Node Message) -> Prop}
@@ -2165,7 +2183,9 @@ private theorem LocalTransition.mem_network {before after : Model.State}
     (member : envelope ∈ after.network)
     : envelope ∈ before.network \/ envelope ∈ transition.outputs.outgoing := by
   rw [transition.networkEq] at member
-  exact (List.mem_append.mp member).imp_left (transition.pendingSub _)
+  split_rel mem_append := (rcases List.mem_append.mp member with old | new) with
+  | inl => exact Or.inl (transition.pendingSub _ old)
+  | inr => exact Or.inr new
 
 /-- Two entries of one reachable state for the same node agree. -/
 private theorem state_unique {state : Model.State}
@@ -3508,41 +3528,66 @@ private theorem becomePrimary_sends (candidate : NodeState)
       simp [primaryState]
     refine ⟨rfl, other, _, rfl, rfl, ?_, rfl, ?_, Nat.le.refl⟩ <;>
       simp [makeAppendEntriesRequest, sentEq, messageEntries]
-  · simp only [List.append_nil]
-    exact List.forall_mem_append.mpr
-      ⟨fun e old => Or.inl ⟨(nominated e old).1, by simpa [primaryState] using (nominated e old).2⟩,
-        fun e new => Or.inr (beats e new)⟩
+  · intro e member
+    split_rel mem_append := (rcases List.mem_append.mp (by simpa using member) with old | new) with
+    | inl =>
+      have := nominated e old
+      exact Or.inl ⟨this.1, by simpa [primaryState] using this.2⟩
+    | inr => exact Or.inr (beats e new)
 
-/-- Electing on a quorum leaves the candidate unchanged or makes it the leader. -/
-private theorem electIfQuorum_result (before candidate : NodeState)
-    : Sends (fun state sent => CampaignResult self before candidate state sent)
+private theorem electIfQuorum_sends (candidate : NodeState)
+    : Sends
+        (fun state sent =>
+          (state = candidate /\ sent = [])
+          \/ (candidate.role = .candidate
+              /\ hasQuorum (candidate.activeConfigurations) candidate.votesGranted
+              /\ Advance self (primaryState candidate) state
+              /\ forall e, e ∈ sent -> LeaderStart self candidate.currentTerm state e))
         (electIfQuorum (Capabilities.record self : Caps) self candidate) := by
   unfold electIfQuorum
-  refine Sends.ite' (fun won => ?_) fun _ => Sends.pure' (Or.inl ⟨rfl, by simp⟩)
-  exact Sends.mono (becomePrimary_sends self candidate) fun _ _ ⟨advance, started⟩ =>
-    Or.inr ⟨won.2.1, advance, fun e member => Or.inl (started e member)⟩
+  refine Sends.ite' (fun won => ?_) fun _ => Sends.pure' (Or.inl ⟨rfl, rfl⟩)
+  exact Sends.mono (becomePrimary_sends self candidate) fun _ _ done =>
+    Or.inr ⟨won.1, won.2.1, done⟩
 
-/-- A fresh candidate also broadcasts its vote request. -/
-private theorem becomeCandidate_result (state : NodeState)
-    (before : NodeState) (term : state.currentTerm = before.currentTerm)
+private theorem becomeCandidate_sends (state : NodeState)
     : Sends
         (fun next sent =>
-          CampaignResult self before (freshCandidate self state) next sent)
+          ((next = freshCandidate self state
+              /\ forall e,
+                  e ∈ sent
+                  -> e.source = self
+                      /\ e.payload
+                          = .requestVoteRequest
+                              (makeRequestVoteRequest (freshCandidate self state)))
+            \/ (hasQuorum ((freshCandidate self state).activeConfigurations) {self}
+                /\ Advance self (primaryState (freshCandidate self state)) next
+                /\ forall e,
+                    e ∈ sent
+                    -> LeaderStart self (state.currentTerm + 1) next e
+                        \/ (e.source = self
+                            /\ e.payload
+                                = .requestVoteRequest
+                                    (makeRequestVoteRequest
+                                      (freshCandidate self state))))))
         (becomeCandidate (Capabilities.record self : Caps) state self) := by
   unfold becomeCandidate
-  refine Sends.bind' (electIfQuorum_result self before (freshCandidate self state))
-    fun next sent result => ?_
+  refine Sends.bind' (electIfQuorum_sends self (freshCandidate self state))
+    fun next sent elected => ?_
   refine Sends.bind' (broadcast_sends self _ _) fun _ later requests => Sends.pure' ?_
   simp only [List.append_nil]
-  have lt : before.currentTerm < (freshCandidate self state).currentTerm := by
-    simp [freshCandidate, term]
-  unfold CampaignResult at result ⊢
-  exact result.imp
-    (fun ⟨same, sentRequests⟩ => ⟨same, List.forall_mem_append.mpr
-      ⟨sentRequests, fun e member => ⟨(requests e member).1, (requests e member).2.2, lt⟩⟩⟩)
-    (fun ⟨quorum, advance, started⟩ => ⟨quorum, advance, List.forall_mem_append.mpr
-      ⟨started, fun e member =>
-        Or.inr ⟨(requests e member).1, (requests e member).2.2, lt⟩⟩⟩)
+  split_rel elected := (rcases elected with ⟨nextEq, sentEq⟩ | ⟨_, quorum, advance, started⟩) with
+  | inl =>
+    subst nextEq sentEq
+    exact Or.inl ⟨rfl, fun e member => by
+      have := requests e (by simpa using member)
+      exact ⟨this.1, this.2.2⟩⟩
+  | inr =>
+    refine Or.inr ⟨by simpa [freshCandidate] using quorum, advance, fun e member => ?_⟩
+    split_rel mem_append := (rcases List.mem_append.mp member with old | new) with
+    | inl => exact Or.inl (by simpa [freshCandidate] using started e old)
+    | inr =>
+      have := requests e new
+      exact Or.inr ⟨this.1, this.2.2⟩
 
 end Effects
 end Consensus.Proofs.Safety
@@ -3706,12 +3751,14 @@ private theorem bumped_summary {self : NodeID} {before after : NodeState}
 private theorem observe_bumping (before : NodeState) {message : Message}
     (bumping : observeTerm before message = updateTerm before message.term)
     : (before.currentTerm < message.term
-        -> observeTerm before message = bumpedState before message.term)
-      /\ (message.term <= before.currentTerm -> observeTerm before message = before) := by
+        /\ observeTerm before message = bumpedState before message.term)
+      \/ (message.term <= before.currentTerm /\ observeTerm before message = before) := by
   rw [bumping]
-  exact ⟨fun bump => by
-      simp [updateTerm, bump, becomeAwareOfNewTerm, bumpedState, Nat.ne_of_lt bump],
-    fun le => by simp [updateTerm, Nat.not_lt.mpr le]⟩
+  split_rel bump := (by_cases bump : before.currentTerm < message.term) with
+  | pos =>
+    exact Or.inl ⟨bump, by
+      simp [updateTerm, bump, becomeAwareOfNewTerm, bumpedState, Nat.ne_of_lt bump]⟩
+  | neg => exact Or.inr ⟨Nat.not_lt.mp bump, by simp [updateTerm, bump]⟩
 
 end Consensus.Proofs.Safety
 
@@ -3724,11 +3771,34 @@ open Model.Node
 section Election
 variable (self : NodeID)
 
+private theorem becomeCandidate_result (state : NodeState)
+    (before : NodeState) (term : state.currentTerm = before.currentTerm)
+    : Sends
+        (fun next sent =>
+          CampaignResult self before (freshCandidate self state) next sent)
+        (becomeCandidate (Capabilities.record self : Caps) state self) := by
+  refine Sends.mono (becomeCandidate_sends self state) fun next sent done => ?_
+  have lt : before.currentTerm < (freshCandidate self state).currentTerm := by
+    simp [freshCandidate, term]
+  split_rel done := (rcases done with ⟨same, requests⟩ | ⟨quorum, advance, started⟩) with
+  | inl =>
+    subst same
+    exact Or.inl ⟨rfl, fun e member => ⟨(requests e member).1, (requests e member).2, lt⟩⟩
+  | inr =>
+    refine Or.inr ⟨by simpa [freshCandidate] using quorum, advance, fun e member => ?_⟩
+    split_rel started := (rcases started e member with start | ⟨source, payload⟩) with
+    | inl => exact Or.inl start
+    | inr => exact Or.inr ⟨source, payload, lt⟩
+
 /-- A node that can start an election has a ledger, so it is engaged. -/
 private theorem canStartElection_engaged {state : NodeState} {self : NodeID}
     (can : canStartElection state self)
     : Engaged state := by
-  refine ⟨fun none => by simpa [none] using can.1, fun ⟨_, _, empty⟩ => ?_⟩
+  refine ⟨by
+    split_rel can := (rcases can.1 with eq | eq | eq) with
+    | inl => rw [eq] <;> simp
+    | inr_inl => rw [eq] <;> simp
+    | inr_inr => rw [eq] <;> simp, fun ⟨_, _, empty⟩ => ?_⟩
   split_rel can := (rcases can.2.1 with member | member) with
   | inl =>
     simp [empty, NodeState.signedActiveConfigurations, NodeState.activeConfigurations,
@@ -3831,11 +3901,11 @@ private theorem voteRequest_summary (before : NodeState) (source : NodeID)
         (receive (Capabilities.record self : Caps) self source before
           (.requestVoteRequest request)) := by
   simp only [receive]
-  have observed := observe_bumping before (message := .requestVoteRequest request) rfl
   split_rel observe_bumping :=
-      (rcases Nat.lt_or_ge before.currentTerm (.requestVoteRequest request : Message).term with bump | le) with
+      (rcases observe_bumping before (message := .requestVoteRequest request) rfl
+        with ⟨bump, eq⟩ | ⟨le, eq⟩) with
   | inl =>
-    rw [observed.1 bump]
+    rw [eq]
     simp only [handleRequestVoteRequest]
     refine Sends.bind' (Sends.send _ _ _) fun _ sent eq => Sends.pure' ?_
     subst eq
@@ -3862,7 +3932,7 @@ private theorem voteRequest_summary (before : NodeState) (source : NodeID)
       subst member
       exact ⟨rfl, rfl, fun yes => by simp_all⟩
   | inr =>
-    rw [observed.2 le]
+    rw [eq]
     simp only [handleRequestVoteRequest]
     refine Sends.bind' (Sends.send _ _ _) fun _ sent eq => Sends.pure' ?_
     subst eq
@@ -3880,8 +3950,12 @@ private theorem voteRequest_summary (before : NodeState) (source : NodeID)
           fun voter member => Or.inl member⟩⟩,
         fun leader => Or.inl ⟨leader, rfl⟩, fun _ _ _ _ => Or.inl rfl, Kind.same rfl rfl,
         fun e member => ?_⟩
-      · exact ((votedEq ▸ granted.2.2.2).resolve_left (by simp)).symm
-      · exact granted.2.2.2.symm.imp_left Eq.symm
+      · split_rel granted := (rcases granted.2.2.2 with none | some) with
+        | inl => rw [none] at votedEq; cases votedEq
+        | inr => rw [some] at votedEq; exact votedEq
+      · split_rel granted := (rcases granted.2.2.2 with none | some) with
+        | inl => exact Or.inr none
+        | inr => exact Or.inl some.symm
       · simp at member
         subst member
         exact ⟨rfl, rfl, fun _ => ⟨request, rfl, granted.1, granted.2.1, rfl⟩⟩
@@ -3903,11 +3977,11 @@ private theorem preVoteRequest_summary (before : NodeState) (source : NodeID)
         (receive (Capabilities.record self : Caps) self source before
           (.requestPreVoteRequest request)) := by
   simp only [receive]
-  have observed := observe_bumping before (message := .requestPreVoteRequest request) rfl
   split_rel observe_bumping :=
-      (rcases Nat.lt_or_ge before.currentTerm (.requestPreVoteRequest request : Message).term with bump | le) with
+      (rcases observe_bumping before (message := .requestPreVoteRequest request) rfl
+        with ⟨bump, eq⟩ | ⟨le, eq⟩) with
   | inl =>
-    rw [observed.1 bump]
+    rw [eq]
     simp only [handleRequestPreVoteRequest]
     refine Sends.bind' (Sends.send _ _ _) fun _ sent eq => Sends.pure' ?_
     subst eq
@@ -3917,7 +3991,7 @@ private theorem preVoteRequest_summary (before : NodeState) (source : NodeID)
     subst member
     exact ⟨rfl, rfl⟩
   | inr =>
-    rw [observed.2 le]
+    rw [eq]
     simp only [handleRequestPreVoteRequest]
     refine Sends.bind' (Sends.send _ _ _) fun _ sent eq => Sends.pure' ?_
     subst eq
@@ -3996,6 +4070,21 @@ private theorem initAsBackup_summary (before : NodeState) (entries : List Entry)
     | pos => simpa [becomeAwareOfNewTerm, zero, termZero] using eq
     | neg => simp [becomeAwareOfNewTerm, zero, termZero] at same
 
+private theorem elect_result {before candidate after : NodeState}
+    {sent : List Model.Envelope}
+    (elected
+      : (after = candidate /\ sent = [])
+        \/ (candidate.role = .candidate
+            /\ hasQuorum (candidate.activeConfigurations) candidate.votesGranted
+            /\ Advance self (primaryState candidate) after
+            /\ forall e, e ∈ sent -> LeaderStart self candidate.currentTerm after e))
+    : CampaignResult self before candidate after sent := by
+  split_rel elected := (rcases elected with ⟨stateEq, sentEq⟩ | ⟨_, quorum, advance, started⟩) with
+  | inl =>
+    subst stateEq sentEq
+    exact Or.inl ⟨rfl, by simp⟩
+  | inr => exact Or.inr ⟨quorum, advance, fun e member => Or.inl (started e member)⟩
+
 private theorem voteResponse_summary (before : NodeState) (source : NodeID)
     (response : RequestVoteResponse)
     : Sends
@@ -4009,17 +4098,17 @@ private theorem voteResponse_summary (before : NodeState) (source : NodeID)
     (fun _ =>
       Sends.pure' (quiet_summary rfl rfl rfl rfl rfl rfl rfl no_bumping_sends (by simp)))
     fun _ => ?_
-  have observed := observe_bumping before (message := .requestVoteResponse response) rfl
   split_rel observe_bumping :=
-      (rcases Nat.lt_or_ge before.currentTerm (.requestVoteResponse response : Message).term with bump | le) with
+      (rcases observe_bumping before (message := .requestVoteResponse response) rfl
+        with ⟨bump, eq⟩ | ⟨le, eq⟩) with
   | inl =>
-    rw [observed.1 bump]
+    rw [eq]
     simp only [handleRequestVoteResponse]
     refine Sends.ite' (fun won => absurd won.1 (by simp [bumpedState])) fun _ =>
       Sends.pure' (bumped_summary bump (by simp [bumpedState]) (by simp [bumpedState])
         ⟨source, _, rfl, trivial, Nat.le.refl⟩ (Kind.same rfl rfl) (by simp))
   | inr =>
-    rw [observed.2 le]
+    rw [eq]
     simp only [handleRequestVoteResponse]
     refine Sends.ite' (fun won => ?_) fun _ =>
       Sends.pure' (quiet_summary rfl rfl rfl rfl rfl rfl rfl
@@ -4027,11 +4116,13 @@ private theorem voteResponse_summary (before : NodeState) (source : NodeID)
     have campaign : Campaign self before (.receive source (.requestVoteResponse response))
         { before with votesGranted := insert source before.votesGranted } := by
       refine ⟨won.1, rfl, rfl, Or.inr ⟨won.1, rfl, Or.inl rfl, fun voter member => ?_⟩⟩
-      exact (Finset.mem_insert.mp member).symm.imp_right fun same => by
+      split_rel mem_insert := (rcases Finset.mem_insert.mp member with same | old) with
+      | inl =>
         subst same
-        exact ⟨response, rfl, won.2.1, won.2.2⟩
-    exact Sends.mono (electIfQuorum_result self before _) fun after sent result =>
-      campaign_summary campaign result
+        exact Or.inr ⟨response, rfl, won.2.1, won.2.2⟩
+      | inr => exact Or.inl old
+    exact Sends.mono (electIfQuorum_sends self _) fun after sent elected =>
+      campaign_summary campaign (elect_result self elected)
 
 private theorem preVoteResponse_summary (before : NodeState) (source : NodeID)
     (response : RequestVoteResponse)
@@ -4046,17 +4137,17 @@ private theorem preVoteResponse_summary (before : NodeState) (source : NodeID)
     (fun _ =>
       Sends.pure' (quiet_summary rfl rfl rfl rfl rfl rfl rfl no_bumping_sends (by simp)))
     fun _ => ?_
-  have observed := observe_bumping before (message := .requestPreVoteResponse response) rfl
   split_rel observe_bumping :=
-      (rcases Nat.lt_or_ge before.currentTerm (.requestPreVoteResponse response : Message).term with bump | le) with
+      (rcases observe_bumping before (message := .requestPreVoteResponse response) rfl
+        with ⟨bump, eq⟩ | ⟨le, eq⟩) with
   | inl =>
-    rw [observed.1 bump]
+    rw [eq]
     simp only [handleRequestPreVoteResponse]
     refine Sends.ite' (fun won => absurd won.1 (by simp [bumpedState])) fun _ =>
       Sends.pure' (bumped_summary bump (by simp [bumpedState]) (by simp [bumpedState])
         ⟨source, _, rfl, trivial, Nat.le.refl⟩ (Kind.same rfl rfl) (by simp))
   | inr =>
-    rw [observed.2 le]
+    rw [eq]
     simp only [handleRequestPreVoteResponse]
     refine Sends.ite' (fun won => ?_) fun _ =>
       Sends.pure' (quiet_summary rfl rfl rfl rfl rfl rfl rfl
@@ -4069,16 +4160,20 @@ private theorem preVoteResponse_summary (before : NodeState) (source : NodeID)
       campaign_summary (fresh_campaign engaged rfl rfl rfl) result
 
 private theorem observe_response (before : NodeState) (response : AppendEntriesResponse)
-    : (before.role = .primary -> before.currentTerm < response.term
-        -> observeTerm before (.appendEntriesResponse response)
+    : (before.role = .primary
+        /\ before.currentTerm < response.term
+        /\ observeTerm before (.appendEntriesResponse response)
             = bumpedState before response.term)
-      /\ (Not (before.role = .primary /\ before.currentTerm < response.term)
-          -> observeTerm before (.appendEntriesResponse response) = before) := by
-  refine ⟨fun leader bump => by
-    simp [observeTerm, updateTerm, becomeAwareOfNewTerm, leader, bump, bumpedState,
-      Nat.ne_of_lt bump], fun quiet => ?_⟩
-  simp only [observeTerm, updateTerm, ite_eq_right_iff]
-  exact fun leader bump => absurd ⟨leader, bump⟩ quiet
+      \/ ((before.role = .primary -> response.term <= before.currentTerm)
+          /\ observeTerm before (.appendEntriesResponse response) = before) := by
+  split_rel leader := (by_cases leader : before.role = .primary) with
+  | pos =>
+    split_rel bump := (by_cases bump : before.currentTerm < response.term) with
+    | pos => exact Or.inl ⟨leader, bump, by
+        simp [observeTerm, updateTerm, becomeAwareOfNewTerm, leader, bump, bumpedState,
+          Nat.ne_of_lt bump]⟩
+    | neg => exact Or.inr ⟨fun _ => Nat.not_lt.mp bump, by simp [observeTerm, updateTerm, bump]⟩
+  | neg => exact Or.inr ⟨fun yes => (leader yes).elim, by simp [observeTerm, leader]⟩
 
 private theorem appendEntriesResponse_summary (before : NodeState) (source : NodeID)
     (response : AppendEntriesResponse)
@@ -4093,12 +4188,10 @@ private theorem appendEntriesResponse_summary (before : NodeState) (source : Nod
     (fun _ =>
       Sends.pure' (quiet_summary rfl rfl rfl rfl rfl rfl rfl no_bumping_sends (by simp)))
     fun _ => ?_
-  have observed := observe_response before response
   split_rel observe_response :=
-      (by_cases bumped : before.role = .primary /\ before.currentTerm < response.term) with
-  | pos =>
-    obtain ⟨leader, bump⟩ := bumped
-    rw [observed.1 leader bump]
+      (rcases observe_response before response with ⟨leader, bump, eq⟩ | ⟨le, eq⟩) with
+  | inl =>
+    rw [eq]
     simp only [handleAppendEntriesResponse]
     refine Sends.ite' (fun _ => Sends.pure' ?_) fun notFollower => absurd notFollower
       (by simp [bumpedState])
@@ -4107,8 +4200,8 @@ private theorem appendEntriesResponse_summary (before : NodeState) (source : Nod
       fun _ => Or.inl (by simp [Engaged, leader]), fun c => by simp [bumpedState] at c,
       fun c => by simp [bumpedState] at c, fun c => by simp [bumpedState] at c,
       Kind.same rfl rfl, by simp⟩
-  | neg =>
-    rw [observed.2 bumped]
+  | inr =>
+    rw [eq]
     simp only [handleAppendEntriesResponse]
     have quiet := fun (after : NodeState) (role : after.role = before.role)
         (term : after.currentTerm = before.currentTerm) (log : after.log = before.log)
@@ -4377,11 +4470,11 @@ private theorem appendEntriesRequest_summary (self : NodeID) (before : NodeState
         (receive (Capabilities.record self) self source before
           (.appendEntriesRequest request)) := by
   simp only [receive]
-  have observed := observe_bumping before (message := .appendEntriesRequest request) rfl
   split_rel observe_bumping :=
-      (rcases Nat.lt_or_ge before.currentTerm (.appendEntriesRequest request : Message).term with bump | le) with
+      (rcases observe_bumping before (message := .appendEntriesRequest request) rfl
+        with ⟨bump, eq⟩ | ⟨le, eq⟩) with
   | inl =>
-    rw [observed.1 bump]
+    rw [eq]
     refine Sends.mono (aeReply self source _ request (Nat.le.refl)) fun after sent reply => ?_
     obtain ⟨kind, sends⟩ := aeReply_summary (before := before) (z := bumpedState before request.term) rfl rfl
       (Nat.le_of_lt bump) reply
@@ -4395,7 +4488,7 @@ private theorem appendEntriesRequest_summary (self : NodeID) (before : NodeState
         simp [bumpedState] at this)
       ⟨source, _, rfl, trivial, term ▸ Nat.le.refl⟩ kind sends
   | inr =>
-    rw [observed.2 le]
+    rw [eq]
     refine Sends.mono (aeReply self source _ request le) fun after sent reply => ?_
     obtain ⟨kind, sends⟩ := aeReply_summary (before := before) rfl rfl Nat.le.refl reply
     obtain ⟨term, voted, matchEq, lead, cand, _⟩ := reply
@@ -4418,7 +4511,10 @@ private theorem BatchState.push {self : NodeID} {before state : NodeState}
     ⟨entries ++ [{ term := before.currentTerm, content }], sentIndex, by simp, ?_⟩,
     fun e member => (beats e member).extend (List.prefix_append _ _) Nat.le.refl
   ⟩
-  exact List.forall_mem_append.mpr ⟨terms, fun entry new => by simp at new; rw [new]⟩
+  intro entry member
+  split_rel mem_append := (rcases List.mem_append.mp member with old | new) with
+  | inl => exact terms entry old
+  | inr => simp at new; rw [new]
 
 private theorem appendEntry_batch (self : NodeID) (before : NodeState)
     (state : NodeState) (sent : List Model.Envelope)
@@ -4457,7 +4553,10 @@ private theorem appendEntry_batch (self : NodeID) (before : NodeState)
                       { before with log := before.log ++ entries, sentIndex } self).erase self
                   then (before.log ++ entries).length else sentIndex peer }
             (sent ++ later) :=
-          ⟨⟨entries, _, rfl, terms⟩, List.forall_mem_append.mpr ⟨beats, sentBeats⟩⟩
+          ⟨⟨entries, _, rfl, terms⟩, fun e member => by
+            split_rel mem_append := (rcases List.mem_append.mp member with old | new) with
+            | inl => exact beats e old
+            | inr => exact sentBeats e new⟩
         simpa using batch.push content
 
 private theorem sendEntries_batch (self : NodeID) (before state : NodeState)
@@ -4471,11 +4570,13 @@ private theorem sendEntries_batch (self : NodeID) (before state : NodeState)
   obtain ⟨⟨entries, sentIndex, rfl, terms⟩, packets⟩ := batch
   refine ⟨⟨entries, _, rfl, terms⟩, fun e member => ?_⟩
   simp only [List.append_nil] at member
-  refine List.forall_mem_append.mpr ⟨packets, fun e new => ?_⟩ e member
-  simp only [eq, List.mem_singleton] at new
-  subst e
-  have other : Not (destination = self) := (Finset.mem_erase.mp peer).1
-  exact ⟨rfl, other, _, rfl, rfl, Nat.le_trans le bound, rfl, List.take_prefix _ _, Nat.le.refl⟩
+  split_rel mem_append := (rcases List.mem_append.mp member with old | new) with
+  | inl => exact packets e old
+  | inr =>
+    simp only [eq, List.mem_singleton] at new
+    subst e
+    have other : Not (destination = self) := (Finset.mem_erase.mp peer).1
+    exact ⟨rfl, other, _, rfl, rfl, Nat.le_trans le bound, rfl, List.take_prefix _ _, Nat.le.refl⟩
 
 private theorem appendBatch_summary (self : NodeID) (state : NodeState)
     (contents : List AppendEntryInput)
@@ -4520,14 +4621,16 @@ private theorem appendBatch_summary (self : NodeID) (state : NodeState)
     Kind.append entries sentIndex leader terms (eq ▸ advance),
     fun e member => ?_
   ⟩
-  refine List.forall_mem_append.mpr ⟨fun e old => ?_, fun e new => ?_⟩ e (by simpa using member)
-  · have from_ : AEFrom self after.currentTerm after.commitIndex after.log e :=
+  split_rel mem_append := (rcases List.mem_append.mp (by simpa using member) with old | new) with
+  | inl =>
+    have from_ : AEFrom self after.currentTerm after.commitIndex after.log e :=
       term ▸ (beats e old).extend (log ▸ List.prefix_refl _) commit
     obtain ⟨request, payload, ok⟩ := from_.ok
     refine ⟨from_.1, ?_⟩
     rw [payload]
     exact ⟨ok, notCandidate, Or.inl ⟨leader, term⟩⟩
-  · obtain ⟨source, payload⟩ := nominated e new
+  | inr =>
+    obtain ⟨source, payload⟩ := nominated e new
     refine ⟨source, ?_⟩
     rw [payload]
     show appended.currentTerm = after.currentTerm
@@ -6169,9 +6272,11 @@ private theorem CopyLog.append {g : LogFacts.Ghost} {term : Nat} {log entries : 
     (terms : forall entry, entry ∈ entries -> entry.term = term)
     (canon : g.canon term (log ++ entries))
     : CopyLog g term (log ++ entries) := by
-  refine ⟨copy.rooted.append nonempty entries,
-    List.forall_mem_append.mpr ⟨copy.terms, fun entry new => Nat.le_of_eq (terms entry new)⟩, ?_,
+  refine ⟨copy.rooted.append nonempty entries, fun entry mem => ?_, ?_,
     fun index positive bound => ?_⟩
+  · split_rel mem_append := (rcases List.mem_append.mp mem with old | new) with
+    | inl => exact copy.terms entry old
+    | inr => exact Nat.le_of_eq (terms entry new)
   · rw [List.pairwise_append]
     refine ⟨copy.sorted, ?_, ?_⟩
     · exact List.pairwise_of_forall_mem_list fun first firstMem second secondMem => by
