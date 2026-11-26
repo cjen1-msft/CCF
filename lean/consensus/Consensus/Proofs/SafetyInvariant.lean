@@ -255,18 +255,20 @@ private def AEOk (self target : NodeID) (state : NodeState)
   /\ request.entries <+: state.log.drop request.prevLogIndex
   /\ request.primaryCommit <= state.commitIndex
 
-/-- The state change of `advanceCommit`. -/
+/-- The state change of `advanceCommit`: the commit index does not move back, and
+if it moves it reaches the highest committable index. Committing a retirement
+may clear the role. -/
 private def Advance (self : NodeID) (middle state : NodeState) : Prop :=
-  state = middle
-  \/ (state.log = middle.log
-      /\ state.currentTerm = middle.currentTerm
-      /\ state.votedFor = middle.votedFor
-      /\ state.matchIndex = middle.matchIndex
-      /\ state.sentIndex = middle.sentIndex
-      /\ state.votesGranted = middle.votesGranted
-      /\ middle.commitIndex < state.commitIndex
-      /\ state.commitIndex = highestCommittableIndex middle self
-      /\ (state.role = middle.role \/ state.role = .none))
+  state.log = middle.log
+  /\ state.currentTerm = middle.currentTerm
+  /\ state.votedFor = middle.votedFor
+  /\ state.matchIndex = middle.matchIndex
+  /\ state.sentIndex = middle.sentIndex
+  /\ state.votesGranted = middle.votesGranted
+  /\ (state.role = middle.role \/ state.role = .none)
+  /\ middle.commitIndex <= state.commitIndex
+  /\ (middle.commitIndex < state.commitIndex
+      -> state.commitIndex = highestCommittableIndex middle self)
 
 /-- Messages whose receipt may raise the receiver's term. -/
 private def Bumping : Message -> Prop
@@ -3763,75 +3765,48 @@ private theorem AEFrom.ok {self : NodeID} {state : NodeState}
 
 private theorem Advance.log {self : NodeID} {middle state : NodeState}
     (advance : Advance self middle state)
-    : state.log = middle.log := by
-  split_rel advance := (rcases advance with same | h) with
-  | inl =>
-    subst same
-    grind
-  | inr => grind
+    : state.log = middle.log :=
+  advance.1
 
 private theorem Advance.term {self : NodeID} {middle state : NodeState}
     (advance : Advance self middle state)
-    : state.currentTerm = middle.currentTerm := by
-  split_rel advance := (rcases advance with same | h) with
-  | inl =>
-    subst same
-    grind
-  | inr => grind
+    : state.currentTerm = middle.currentTerm :=
+  advance.2.1
 
 private theorem Advance.votedFor {self : NodeID} {middle state : NodeState}
     (advance : Advance self middle state)
-    : state.votedFor = middle.votedFor := by
-  split_rel advance := (rcases advance with same | h) with
-  | inl =>
-    subst same
-    grind
-  | inr => grind
+    : state.votedFor = middle.votedFor :=
+  advance.2.2.1
 
 private theorem Advance.matchIndex {self : NodeID} {middle state : NodeState}
     (advance : Advance self middle state)
-    : state.matchIndex = middle.matchIndex := by
-  split_rel advance := (rcases advance with same | h) with
-  | inl =>
-    subst same
-    grind
-  | inr => grind
+    : state.matchIndex = middle.matchIndex :=
+  advance.2.2.2.1
 
 private theorem Advance.sentIndex {self : NodeID} {middle state : NodeState}
     (advance : Advance self middle state)
-    : state.sentIndex = middle.sentIndex := by
-  split_rel advance := (rcases advance with same | h) with
-  | inl =>
-    subst same
-    grind
-  | inr => grind
+    : state.sentIndex = middle.sentIndex :=
+  advance.2.2.2.2.1
 
 private theorem Advance.votesGranted {self : NodeID} {middle state : NodeState}
     (advance : Advance self middle state)
-    : state.votesGranted = middle.votesGranted := by
-  split_rel advance := (rcases advance with same | h) with
-  | inl =>
-    subst same
-    grind
-  | inr => grind
-
-private theorem Advance.commit_le {self : NodeID} {middle state : NodeState}
-    (advance : Advance self middle state)
-    : middle.commitIndex <= state.commitIndex := by
-  split_rel advance := (rcases advance with same | h) with
-  | inl =>
-    subst same
-    grind
-  | inr => grind
+    : state.votesGranted = middle.votesGranted :=
+  advance.2.2.2.2.2.1
 
 private theorem Advance.role {self : NodeID} {middle state : NodeState}
     (advance : Advance self middle state)
-    : state.role = middle.role \/ state.role = .none := by
-  split_rel advance := (rcases advance with same | h) with
-  | inl =>
-    subst same
-    grind
-  | inr => grind
+    : state.role = middle.role \/ state.role = .none :=
+  advance.2.2.2.2.2.2.1
+
+private theorem Advance.commit_le {self : NodeID} {middle state : NodeState}
+    (advance : Advance self middle state)
+    : middle.commitIndex <= state.commitIndex :=
+  advance.2.2.2.2.2.2.2.1
+
+private theorem Advance.commit_eq {self : NodeID} {middle state : NodeState}
+    (advance : Advance self middle state) (ahead : middle.commitIndex < state.commitIndex)
+    : state.commitIndex = highestCommittableIndex middle self :=
+  advance.2.2.2.2.2.2.2.2 ahead
 
 end Consensus.Proofs.Safety
 
@@ -3874,14 +3849,18 @@ private theorem advanceCommit_sends (middle : NodeState)
         (advanceCommit (Capabilities.record self : Caps) middle self) := by
   unfold advanceCommit
   dsimp only
-  refine Sends.ite' (fun _ => Sends.pure' ⟨Or.inl rfl, by simp⟩) fun ahead => ?_
+  refine Sends.ite'
+    (fun _ => Sends.pure'
+      ⟨⟨rfl, rfl, rfl, rfl, rfl, rfl, Or.inl rfl, Nat.le.refl, fun lt => (Nat.lt_irrefl _ lt).elim⟩,
+        by simp⟩)
+    fun ahead => ?_
   have advanced : Advance self middle
       (middle.recordCommit self (highestCommittableIndex middle self)) := by
     obtain ⟨_, _, _, eq, roleCase⟩ :=
       NodeState.recordCommit_eq self middle (highestCommittableIndex middle self)
     rw [eq]
-    exact Or.inr ⟨rfl, rfl, rfl, rfl, rfl, rfl, by simp only; exact Nat.lt_of_not_le ahead, rfl,
-      roleCase⟩
+    exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, roleCase, Nat.le_of_lt (Nat.lt_of_not_le ahead),
+      fun _ => rfl⟩
   refine Sends.ite'
     (fun _ => Sends.ite' (fun _ => ?_) fun _ => Sends.pure' ⟨advanced, by simp⟩)
     fun _ => Sends.pure' ⟨advanced, by simp⟩
@@ -5597,16 +5576,8 @@ private theorem Wins.facts {self : NodeID} {before' : NodeState} {event : Event}
       rfl
     rw [← this]
     exact quorum
-  split_rel advance := (rcases advance with same | ⟨log, term, voted, matchEq, _, _, lt, _, role⟩) with
-  | inl =>
-    subst same
-    exact ⟨rfl, rfl, rfl, fun _ => rfl, Or.inl rfl, Nat.le.refl⟩
-  | inr =>
-    refine ⟨log, term, voted, fun peer => by rw [matchEq]; rfl, ?_, ?_⟩
-    · split_rel role := (rcases role with role | role) with
-      | inl => exact Or.inl role
-      | inr => exact Or.inr role
-    · exact Nat.le_of_lt lt
+  exact ⟨advance.log, advance.term, advance.votedFor,
+    fun peer => by rw [advance.matchIndex]; rfl, advance.role, advance.commit_le⟩
 
 end Consensus.Proofs.Safety
 
@@ -5836,12 +5807,8 @@ private theorem Advance.facts {self : NodeID} {middle state : NodeState}
     (advance : Advance self middle state)
     : state.log = middle.log
       /\ state.currentTerm = middle.currentTerm
-      /\ (state.role = middle.role \/ state.role = .none) := by
-  split_rel advance := (rcases advance with same | ⟨log, term, _, _, _, _, _, _, role⟩) with
-  | inl =>
-    subst same
-    exact ⟨rfl, rfl, Or.inl rfl⟩
-  | inr => exact ⟨log, term, role⟩
+      /\ (state.role = middle.role \/ state.role = .none) :=
+  ⟨advance.log, advance.term, advance.role⟩
 
 private theorem makeRequestVoteRequest_eq (state : NodeState)
     : makeRequestVoteRequest state = vals state.currentTerm state.log state.commitIndex :=
@@ -7176,12 +7143,16 @@ private theorem advance_backed {middle : NodeState}
               /\ c.post.log.take (middle.matchIndex voter) <+: acker.log)
     : Backed (f.advance after) c.post.log c.post.commitIndex
         c.post.currentTerm := by
+  have log := advance.log
+  have term := advance.term
+  have postRole := advance.role
   split_rel advance :=
-      (rcases advance with same | ⟨log, term, _, _, _, _, lt, eq, postRole⟩) with
+      (rcases Nat.eq_or_lt_of_le advance.commit_le with same | lt) with
   | inl =>
-    subst same
+    rw [← same]
     exact old.mono after
   | inr =>
+    have eq := advance.commit_eq lt
     have ahead : middle.commitIndex < highestCommittableIndex middle c.actor :=
       eq ▸ lt
     obtain ⟨bound, signature, termEq, quorum⟩ := highestCommittableIndex_spec middle c.actor ahead
