@@ -2550,14 +2550,10 @@ private theorem length_filter_le (configurations : List Configuration) (bound : 
 
 private theorem zipIdx_sorted {α : Type} (log : List α) (start : Nat)
     : (log.zipIdx start).Pairwise fun first second => first.2 < second.2 := by
-  split_rel log := (induction log generalizing start) with
-  | nil => simp
-  | cons =>
-      rename_i head tail ih
-      rw [List.zipIdx_cons, List.pairwise_cons]
-      refine ⟨fun pair member => ?_, ih (start + 1)⟩
-      have := List.mem_zipIdx member
-      exact this.1
+  rw [List.pairwise_iff_getElem]
+  intro i j _ _ lt
+  rw [List.getElem_zipIdx, List.getElem_zipIdx]
+  exact Nat.add_lt_add_left lt start
 
 /-- Configuration histories are ordered by index. -/
 private theorem configurationHistory_sorted (log : List Entry)
@@ -2581,25 +2577,33 @@ private theorem getElem_le_of_lt_length_filter {configurations : List Configurat
             fun configuration => configuration.index <= bound).length)
     : (configurations[i]'(Nat.lt_of_lt_of_le lt (List.length_filter_le _ _))).index
       <= bound := by
-  split_rel configurations := (induction configurations generalizing i) with
-  | nil => simp at lt
-  | cons =>
-      rename_i head tail ih
-      rw [List.pairwise_cons] at sorted
-      split_rel within := (by_cases within : head.index <= bound) with
-      | pos =>
-        rw [List.filter_cons_of_pos (by simpa using within)] at lt
-        split_rel i := (rcases i with _ | i) with
-        | inl => exact within
-        | inr => exact ih sorted.2 (by simpa using lt)
-      | neg =>
-        have empty : (tail.filter fun configuration => configuration.index <= bound) = [] := by
-          refine List.filter_eq_nil_iff.mpr fun configuration member => ?_
-          have := sorted.1 configuration member
-          simp
-          exact Nat.lt_trans (Nat.lt_of_not_le within) this
-        rw [List.filter_cons_of_neg (by simpa using within), empty] at lt
-        simp at lt
+  have inRange : i < configurations.length :=
+    Nat.lt_of_lt_of_le lt (List.length_filter_le _ _)
+  refine Nat.le_of_not_lt fun above => ?_
+  -- Otherwise every configuration from position `i` on is beyond the bound, and at most
+  -- the `i` before it are within it.
+  have later : ((configurations.drop (i + 1)).filter
+      fun configuration => configuration.index <= bound) = [] := by
+    refine List.filter_eq_nil_iff.mpr fun configuration member => ?_
+    obtain ⟨j, inDrop, rfl⟩ := List.mem_iff_getElem.mp member
+    rw [List.length_drop] at inDrop
+    have ordered := List.pairwise_iff_getElem.mp sorted i (i + 1 + j) inRange
+      (Nat.add_lt_of_lt_sub' inDrop)
+      (Nat.lt_of_lt_of_le (Nat.lt_succ_self i) (Nat.le_add_right _ _))
+    simp only [List.getElem_drop, decide_eq_true_eq, Nat.not_le]
+    exact Nat.lt_trans above ordered
+  have count : (configurations.filter fun configuration => configuration.index <= bound).length
+      <= i := by
+    calc (configurations.filter fun configuration => configuration.index <= bound).length
+        = ((configurations.take i ++ configurations.drop i).filter
+            fun configuration => configuration.index <= bound).length := by
+          rw [List.take_append_drop]
+      _ = ((configurations.take i).filter
+            fun configuration => configuration.index <= bound).length := by
+          rw [List.drop_eq_getElem_cons inRange, List.filter_append,
+            List.filter_cons_of_neg (by simpa using above), later, List.append_nil]
+      _ <= i := Nat.le_trans (List.length_filter_le _ _) (List.length_take_le _ _)
+  exact Nat.lt_irrefl _ (Nat.lt_of_lt_of_le lt count)
 
 /-- The configuration chosen by an index bound is within it, or is the first: so its index
 is within any limit that covers the bound and the index of some configuration. -/
