@@ -175,9 +175,9 @@ private def acceptLog (log : List Entry) (request : AppendEntriesRequest) : List
     | none => log
   kept ++ request.entries.drop (kept.length - request.prevLogIndex)
 
-/-- A log is empty or starts with `root`. -/
+/-- A nonempty log starts with `root`. -/
 private def Rooted (root : Entry) (log : List Entry) : Prop :=
-  log = [] \/ log.take 1 = [root]
+  log ≠ [] -> log.take 1 = [root]
 
 end Consensus.Proofs.Safety
 
@@ -349,8 +349,7 @@ private inductive Kind (self : NodeID) (before : NodeState) (event : Event)
   | elect (elected : Wins self before event after)
   | install (entries : List Entry)
     (initialized : event = .internal (.initAsBackup entries))
-    (positive : 0 < entries.length)
-    (signature : isSignatureAt entries entries.length = true)
+    (signed : 0 < entries.length -> isSignatureAt entries entries.length = true)
     (fresh : before.isFresh) (log : after.log = entries)
     (commit : after.commitIndex = entries.length)
     (term : after.currentTerm = termAt entries entries.length)
@@ -882,6 +881,11 @@ private structure CampaignFacts (g : LogFacts.Ghost) (v : VoteFacts.Ghost)
 private def RankedElections (g : LogFacts.Ghost) (v : VoteFacts.Ghost) : Prop :=
   ∀ n t l i, g.elected n t l i → CampaignFacts g v g.canon n t l i (t - 1)
 
+/-- Every recorded election has its certificate and the ranks certified by its voters. -/
+private def Elections (g : LogFacts.Ghost) (v : VoteFacts.Ghost) : Prop :=
+  ∀ n t l i, g.elected n t l i →
+    ElectionCert g v n t l i ∧ CampaignFacts g v g.canon n t l i (t - 1)
+
 private theorem CampaignFacts.transport {g g' : LogFacts.Ghost} {v v' : VoteFacts.Ghost}
     {a b : Nat → List Entry → Prop} {n t l i j j'} (c : CampaignFacts g v a n t l i j)
     (votes : ∀ x ∈ v, x ∈ v') (canon : ∀ k p, a k p → b k p)
@@ -1097,9 +1101,8 @@ private structure Inv (frame : Frame) : Prop where
   led_cur : LedCur frame
   leader_led : LeaderLed frame
   candidate : Candidate frame
-  electionCerts : ElectionCerts frame.logs frame.votes
+  elections : Elections frame.logs frame.votes
   election_safety : ElectionSafety frame
-  rankedElections : RankedElections frame.logs frame.votes
   canon_mono : CanonMono frame
   chains : LogFacts.Chain frame.logs
   canonLogs : CanonLogs frame.logs
@@ -1114,6 +1117,13 @@ private structure Inv (frame : Frame) : Prop where
   frontier : ∀ n st, Now frame n st → Direct.CommitFrontier st
   observed : ∀ n st, Now frame n st → Seen frame n (observe st)
   term_mono : TermMono frame
+
+private theorem Inv.electionCerts {h : Frame} (inv : Inv h) : ElectionCerts h.logs h.votes :=
+  fun n k l i e => (inv.elections n k l i e).1
+
+private theorem Inv.rankedElections {h : Frame} (inv : Inv h)
+    : RankedElections h.logs h.votes :=
+  fun n t l i e => (inv.elections n t l i e).2
 
 private theorem Inv.terms {h : Frame} (inv : Inv h) : Terms h :=
   fun node state now => (inv.node_logs node state now).terms
@@ -2540,14 +2550,10 @@ private theorem length_filter_le (configurations : List Configuration) (bound : 
 
 private theorem zipIdx_sorted {α : Type} (log : List α) (start : Nat)
     : (log.zipIdx start).Pairwise fun first second => first.2 < second.2 := by
-  split_rel log := (induction log generalizing start) with
-  | nil => simp
-  | cons =>
-      rename_i head tail ih
-      rw [List.zipIdx_cons, List.pairwise_cons]
-      refine ⟨fun pair member => ?_, ih (start + 1)⟩
-      have := List.mem_zipIdx member
-      exact this.1
+  rw [List.pairwise_iff_getElem]
+  intro i j _ _ lt
+  rw [List.getElem_zipIdx, List.getElem_zipIdx]
+  exact Nat.add_lt_add_left lt start
 
 /-- Configuration histories are ordered by index. -/
 private theorem configurationHistory_sorted (log : List Entry)
@@ -2571,25 +2577,33 @@ private theorem getElem_le_of_lt_length_filter {configurations : List Configurat
             fun configuration => configuration.index <= bound).length)
     : (configurations[i]'(Nat.lt_of_lt_of_le lt (List.length_filter_le _ _))).index
       <= bound := by
-  split_rel configurations := (induction configurations generalizing i) with
-  | nil => simp at lt
-  | cons =>
-      rename_i head tail ih
-      rw [List.pairwise_cons] at sorted
-      split_rel within := (by_cases within : head.index <= bound) with
-      | pos =>
-        rw [List.filter_cons_of_pos (by simpa using within)] at lt
-        split_rel i := (rcases i with _ | i) with
-        | inl => exact within
-        | inr => exact ih sorted.2 (by simpa using lt)
-      | neg =>
-        have empty : (tail.filter fun configuration => configuration.index <= bound) = [] := by
-          refine List.filter_eq_nil_iff.mpr fun configuration member => ?_
-          have := sorted.1 configuration member
-          simp
-          exact Nat.lt_trans (Nat.lt_of_not_le within) this
-        rw [List.filter_cons_of_neg (by simpa using within), empty] at lt
-        simp at lt
+  have inRange : i < configurations.length :=
+    Nat.lt_of_lt_of_le lt (List.length_filter_le _ _)
+  refine Nat.le_of_not_lt fun above => ?_
+  -- Otherwise every configuration from position `i` on is beyond the bound, and at most
+  -- the `i` before it are within it.
+  have later : ((configurations.drop (i + 1)).filter
+      fun configuration => configuration.index <= bound) = [] := by
+    refine List.filter_eq_nil_iff.mpr fun configuration member => ?_
+    obtain ⟨j, inDrop, rfl⟩ := List.mem_iff_getElem.mp member
+    rw [List.length_drop] at inDrop
+    have ordered := List.pairwise_iff_getElem.mp sorted i (i + 1 + j) inRange
+      (Nat.add_lt_of_lt_sub' inDrop)
+      (Nat.lt_of_lt_of_le (Nat.lt_succ_self i) (Nat.le_add_right _ _))
+    simp only [List.getElem_drop, decide_eq_true_eq, Nat.not_le]
+    exact Nat.lt_trans above ordered
+  have count : (configurations.filter fun configuration => configuration.index <= bound).length
+      <= i := by
+    calc (configurations.filter fun configuration => configuration.index <= bound).length
+        = ((configurations.take i ++ configurations.drop i).filter
+            fun configuration => configuration.index <= bound).length := by
+          rw [List.take_append_drop]
+      _ = ((configurations.take i).filter
+            fun configuration => configuration.index <= bound).length := by
+          rw [List.drop_eq_getElem_cons inRange, List.filter_append,
+            List.filter_cons_of_neg (by simpa using above), later, List.append_nil]
+      _ <= i := Nat.le_trans (List.length_filter_le _ _) (List.length_take_le _ _)
+  exact Nat.lt_irrefl _ (Nat.lt_of_lt_of_le lt count)
 
 /-- The configuration chosen by an index bound is within it, or is the first: so its index
 is within any limit that covers the bound and the index of some configuration. -/
@@ -2722,31 +2736,22 @@ private theorem hasQuorum_majority {configurations : List Configuration}
 private theorem Rooted.prefix {root : Entry} {small large : List Entry}
     (rooted : Rooted root large) (sub : small <+: large)
     : Rooted root small := by
-  split_rel small := (rcases small with _ | ⟨first, rest⟩) with
-  | inl => exact Or.inl rfl
-  | inr =>
-    refine Or.inr ?_
-    obtain ⟨suffix, rfl⟩ := sub
-    split_rel rooted := (rcases rooted with empty | head) with
-    | inl => simp at empty
-    | inr => simpa using head
+  intro nonempty
+  have positive := List.length_pos_iff.mpr nonempty
+  rw [← take_eq_of_prefix sub (Nat.succ_le_of_lt positive)]
+  exact rooted fun empty => nonempty (List.prefix_nil.mp (empty ▸ sub))
 
 private theorem Rooted.append {root : Entry} {log : List Entry} (rooted : Rooted root log)
     (nonempty : log ≠ []) (entries : List Entry)
     : Rooted root (log ++ entries) := by
-  split_rel rooted := (rcases rooted with empty | head) with
-  | inl => exact absurd empty nonempty
-  | inr =>
-    refine Or.inr ?_
-    have := List.length_pos_iff.mpr nonempty
-    rw [List.take_append_of_le_length (Nat.succ_le_of_lt this), head]
+  intro _
+  have := List.length_pos_iff.mpr nonempty
+  rw [List.take_append_of_le_length (Nat.succ_le_of_lt this), rooted nonempty]
 
 private theorem Rooted.head {root : Entry} {log : List Entry} (rooted : Rooted root log)
     (nonempty : log ≠ [])
-    : log.take 1 = [root] := by
-  split_rel rooted := (rcases rooted with empty | head) with
-  | inl => exact absurd empty nonempty
-  | inr => exact head
+    : log.take 1 = [root] :=
+  rooted nonempty
 
 private theorem hasQuorum_nonempty {log : List Entry} {commit : Nat}
     {voters : Finset NodeID} (quorum : hasQuorum (activeConfigurations log commit) voters)
@@ -3968,7 +3973,7 @@ private theorem proposeVote_summary (before : NodeState) (source : NodeID) (term
       campaign_summary (fresh_campaign engaged rfl rfl rfl) (fresh_start engaged rfl) result
         trivial
 
-/-- A fresh node follows from an empty prefix in term zero, or installs a snapshot. -/
+/-- A fresh node installs a snapshot, which may be empty. -/
 private theorem initAsBackup_summary (before : NodeState) (entries : List Entry)
     : Sends
         (fun after sent =>
@@ -3978,43 +3983,32 @@ private theorem initAsBackup_summary (before : NodeState) (entries : List Entry)
   refine Sends.bind' Sends.guard' fun _ sent ⟨⟨fresh, signed⟩, empty⟩ => Sends.pure' ?_
   subst empty
   obtain ⟨none, zero, emptyLog, noCommit⟩ := fresh
-  split_rel eq_zero_or_pos := (rcases Nat.eq_zero_or_pos entries.length with length | positive) with
-  | inl =>
-    have nil : entries = [] := List.eq_nil_of_length_eq_zero length
-    subst nil
-    refine ⟨
-      by simp [becomeAwareOfNewTerm, zero, termAt, entryAt?],
-      fun _ voted eq => by simpa [becomeAwareOfNewTerm, zero, termAt, entryAt?] using eq,
-      fun engaged => (engaged.2 ⟨by simp [becomeAwareOfNewTerm], by simp [becomeAwareOfNewTerm,
-        termAt, entryAt?], by simp [becomeAwareOfNewTerm]⟩).elim,
-      no_bumping_sends,
-      fun c => by simp [becomeAwareOfNewTerm] at c,
-      fun c => by simp [becomeAwareOfNewTerm] at c,
-      fun c => by simp [becomeAwareOfNewTerm] at c,
-      Kind.same (by simp [becomeAwareOfNewTerm, emptyLog])
-        (by simp [becomeAwareOfNewTerm, noCommit]),
-      by simp
-    ⟩
-  | inr =>
-    have signature : isSignatureAt entries entries.length = true := by
-      split_rel signed := (rcases signed with nil | signature) with
-      | inl =>
-        subst nil
-        simp at positive
-      | inr => exact signature
-    refine ⟨by simp [becomeAwareOfNewTerm, zero], fun same voted eq => ?_,
-      fun _ => Or.inr (Or.inr (Or.inr ⟨entries, rfl, positive, signature,
-        by simp [becomeAwareOfNewTerm]⟩)),
-      fun _ => Or.inr (Or.inr (Or.inr ⟨entries, rfl, positive, signature,
-        by simp [becomeAwareOfNewTerm]⟩)),
-      fun c => by simp [becomeAwareOfNewTerm] at c, fun c => by simp [becomeAwareOfNewTerm] at c,
-      fun c => by simp [becomeAwareOfNewTerm] at c,
-      Kind.install entries rfl positive signature ⟨none, zero, emptyLog, noCommit⟩
-        (by simp [becomeAwareOfNewTerm]) (by simp [becomeAwareOfNewTerm])
-        (by simp [becomeAwareOfNewTerm]) (by simp [becomeAwareOfNewTerm]), by simp⟩
-    split_rel termZero := (by_cases termZero : termAt entries entries.length = 0) with
-    | pos => simpa [becomeAwareOfNewTerm, zero, termZero] using eq
-    | neg => simp [becomeAwareOfNewTerm, zero, termZero] at same
+  have signature (positive : 0 < entries.length)
+      : isSignatureAt entries entries.length = true := by
+    split_rel signed := (rcases signed with nil | signature) with
+    | inl =>
+      subst nil
+      simp at positive
+    | inr => exact signature
+  refine ⟨by simp [becomeAwareOfNewTerm, zero], fun same voted eq => ?_, fun engaged => ?_,
+    no_bumping_sends,
+    fun c => by simp [becomeAwareOfNewTerm] at c, fun c => by simp [becomeAwareOfNewTerm] at c,
+    fun c => by simp [becomeAwareOfNewTerm] at c,
+    Kind.install entries rfl signature ⟨none, zero, emptyLog, noCommit⟩
+      (by simp [becomeAwareOfNewTerm]) (by simp [becomeAwareOfNewTerm])
+      (by simp [becomeAwareOfNewTerm]) (by simp [becomeAwareOfNewTerm]), by simp⟩
+  · -- The term is unchanged, so the vote is.
+    have kept : before.currentTerm = termAt entries entries.length := by
+      simpa [becomeAwareOfNewTerm] using same.symm
+    simpa [becomeAwareOfNewTerm, kept] using eq
+  · -- A node engaged after an empty snapshot would still be a follower in term zero.
+    have positive : 0 < entries.length := Nat.pos_of_ne_zero fun length => by
+      have nil : entries = [] := List.eq_nil_of_length_eq_zero length
+      subst nil
+      exact engaged.2 ⟨by simp [becomeAwareOfNewTerm],
+        by simp [becomeAwareOfNewTerm, termAt, entryAt?], by simp [becomeAwareOfNewTerm]⟩
+    exact Or.inr (Or.inr (Or.inr ⟨entries, rfl, positive, signature positive,
+      by simp [becomeAwareOfNewTerm]⟩))
 
 private theorem voteResponse_summary (before : NodeState) (source : NodeID)
     (response : RequestVoteResponse)
@@ -4743,8 +4737,8 @@ private theorem inv_initial : Inv (Frame.start initial) := by
     split_rel isLeader := (by_cases isLeader : node = INITIAL_PRIMARY) with
     | pos =>
       subst isLeader
-      exact Or.inr (by simp [initialLocal])
-    | neg => exact Or.inl (by simp [initialLocal, isLeader])
+      exact fun _ => by simp [initialLocal]
+    | neg => exact fun nonempty => absurd (by simp [initialLocal, isLeader]) nonempty
   have terms : Terms (Frame.start initial) := by
     intro node state now entry member
     rw [stateOf now] at member ⊢
@@ -4828,8 +4822,6 @@ private theorem inv_initial : Inv (Frame.start initial) := by
     exact (not_elected_single (e)).elim
   · intro node other term left right
     rw [(led_single left).2, (led_single right).2]
-  · intro n t l i e
-    exact (not_elected_single (e)).elim
   · intro node state now role led
     refine ⟨.inr ⟨node, state, ⟨now, rfl, role, led⟩, rfl⟩, fun log canon => ?_⟩
     obtain ⟨-, rfl⟩ := led_single led
@@ -5151,6 +5143,18 @@ private theorem Wins.facts {self : NodeID} {before' : NodeState} {event : Event}
   exact ⟨advance.log, advance.term, advance.votedFor,
     fun peer => by rw [advance.matchIndex]; rfl, advance.role, advance.commit_le⟩
 
+/-- A node that keeps its term and was not a candidate of it does not win it. -/
+private theorem Wins.fresh {self : NodeID} {before after : NodeState} {event : Event}
+    (wins : Wins self before event after)
+    (sameTerm : after.currentTerm = before.currentTerm)
+    (role : Not (before.role = .candidate))
+    : False := by
+  obtain ⟨candidate, ⟨_, _, _, campaign⟩, _, advance, _⟩ := wins
+  have term : after.currentTerm = candidate.currentTerm := advance.term
+  split_rel campaign := (rcases campaign with ⟨_, fresh, _⟩ | ⟨kept, _⟩) with
+  | inl => exact Nat.succ_ne_self _ ((fresh.symm.trans term.symm).trans sameTerm)
+  | inr => exact role kept
+
 /-- A commit frontier survives `advanceCommit`. -/
 private theorem Advance.frontier {self : NodeID} {middle state : NodeState}
     (advance : Advance self middle state) (frontier : Direct.CommitFrontier middle)
@@ -5228,9 +5232,12 @@ private theorem Kind.frontier {self : NodeID} {before after : NodeState} {event 
     obtain ⟨candidate, ⟨_, logEq, commitEq, _⟩, _, advance, _⟩ := wins
     exact advance.frontier (primaryState_frontier (frontier.of_log logEq commitEq))
   | install =>
-    rename_i entries _ _ signature _ log commit _ _
+    rename_i entries _ signed _ log commit _ _
     exact ⟨by rw [log, commit]; exact Nat.le.refl,
-      fun _ => by rw [log, commit]; exact signature⟩
+      fun positive => by
+        rw [commit] at positive
+        rw [log, commit]
+        exact signed positive⟩
 
 end Consensus.Proofs.Safety
 
@@ -5366,6 +5373,16 @@ private theorem snap_available {entries : List Entry}
   have sub : entries <+: state.log := prefixEq ▸ List.take_prefix _ _
   have ok := c.snap_of_committed member positive le (isSignatureAt_of_prefix sub signature)
   rwa [prefixEq] at ok
+
+/-- An installed snapshot is empty, or a committed, signed prefix of a leader log. -/
+private theorem snap_cases {motive : Prop} {entries : List Entry}
+    (eq : c.event = .internal (.initAsBackup entries))
+    (signed : 0 < entries.length -> isSignatureAt entries entries.length = true)
+    (empty : entries = [] -> motive) (snap : SnapOK f entries -> motive)
+    : motive := by
+  split_rel empty := (rcases Nat.eq_zero_or_pos entries.length with zero | positive) with
+  | inl => exact empty (List.eq_nil_of_length_eq_zero zero)
+  | inr => exact snap (c.snap_available eq positive (signed positive))
 
 private theorem pre_two (active : Engaged c.pre) : 2 <= c.pre.currentTerm :=
   c.inv.active c.actor c.pre c.pre_now active
@@ -6263,18 +6280,6 @@ private theorem freshCert {node : NodeID} {term commit : Nat} {log : List Entry}
     ⟨voters, quorum, fun v m =>
       (c.grantFactsBefore v node term _ ((granted v m))).1.1⟩⟩
 
-private theorem previousBacking {n k l i} (e : (f.advance after).logs.elected n k l i) :
-    ElectionCert f.logs (f.advance after).votes n k l i := by
-  split_rel elected := (rcases c.elected_after e with old | new) with
-  | inl =>
-    exact (c.inv.electionCerts n k l i old).weaken
-      (fun _ _ h => h) (fun _ h => VoteFacts.mem_advance.2 (.inr h))
-  | inr => exact c.freshCert new
-
-private theorem electionCerts : ElectionCerts (f.advance after).logs
-    (f.advance after).votes := fun _ _ _ _ e =>
-  (c.previousBacking e).weaken (fun _ _ h => Commit.advance h) (fun _ h => h)
-
 omit c in
 private theorem certificates_agree {g : LogFacts.Ghost} {v : VoteFacts.Ghost}
     {s : Model.State} {n m k l i l' i'} (a : ElectionCert g v n k l i)
@@ -6323,13 +6328,16 @@ private theorem election_safety : ElectionSafety (f.advance after) := by
     · exact c.new_old_unique leftStep right
     · exact (c.electStep leftStep).1.trans (c.electStep rightStep).1.symm
 
-private theorem rankedElections : RankedElections (f.advance after).logs
-    (f.advance after).votes := by
+/-- Every election keeps its certificate and ranks; the election of the step has those of
+its campaign. -/
+private theorem elections : Elections (f.advance after).logs (f.advance after).votes := by
   intro n t l i e
   split_rel elected := (rcases c.elected_after (e) with old | new) with
   | inl =>
-    have cert := c.inv.rankedElections n t l i (old)
-    apply cert.transport (fun _ m => VoteFacts.mem_advance.2 (.inr m))
+    obtain ⟨cert, ranked⟩ := c.inv.elections n t l i old
+    refine ⟨cert.weaken (fun _ _ h => Commit.advance h)
+      (fun _ h => VoteFacts.mem_advance.2 (.inr h)), ?_⟩
+    apply ranked.transport (fun _ m => VoteFacts.mem_advance.2 (.inr m))
       (fun _ _ m => .inl m) (fun _ _ _ le => le)
     intro x stamp k p seen lt
     split_rel seen := (rcases seen with past | ⟨st, now, term, _⟩) with
@@ -6339,6 +6347,7 @@ private theorem rankedElections : RankedElections (f.advance after).logs
         (VoteFacts.mem_advance.2 (.inr stamp)) st now
       omega
   | inr =>
+    refine ⟨(c.freshCert new).weaken (fun _ _ h => Commit.advance h) (fun _ h => h), ?_⟩
     apply (c.freshCampaign new).transport (fun _ m => m) (fun _ _ m => .inl m) ?_
       (fun _ _ _ _ obs _ => obs)
     intro k p witnessed le
@@ -6357,6 +6366,14 @@ private theorem rankedElections : RankedElections (f.advance after).logs
       split_rel term_when_equal := (rcases termCase with lt' | ⟨_, role⟩) with
       | inl => exact (Nat.not_lt_of_ge (Nat.le_of_eq eq)) lt'
       | inr => exact notCandidate role
+
+private theorem electionCerts : ElectionCerts (f.advance after).logs
+    (f.advance after).votes :=
+  fun n k l i e => (c.elections n k l i e).1
+
+private theorem rankedElections : RankedElections (f.advance after).logs
+    (f.advance after).votes :=
+  fun n t l i e => (c.elections n t l i e).2
 
 /-- A leader continuing in its term keeps its log. -/
 private theorem keep_log (sameTerm : c.post.currentTerm = c.pre.currentTerm)
@@ -6384,12 +6401,9 @@ private theorem keep_log (sameTerm : c.post.currentTerm = c.pre.currentTerm)
     exact evidence.different this.symm
   | elect =>
     rename_i wins
-    have ⟨_, _, _, termCase, _⟩ := c.electStep (c.wins_elect wins)
-    split_rel termCase := (rcases termCase with lt | ⟨_, candidate⟩) with
-    | inl => exact (Nat.lt_irrefl _ (Nat.lt_of_lt_of_le lt (Nat.le_of_eq sameTerm))).elim
-    | inr => exact (role candidate).elim
+    exact (wins.fresh sameTerm role).elim
   | install =>
-    rename_i _ _ _ _ fresh _ _ _ _
+    rename_i _ _ _ fresh _ _ _ _
     have := c.inv.leader_floor led
     rw [fresh.2.1] at this
     omega
@@ -6469,7 +6483,7 @@ private theorem leader_cases {motive : NodeID -> NodeState -> Prop} {node : Node
       rename_i won
       exact wins won
     | install =>
-      rename_i _ _ _ _ fresh _ _ _ role
+      rename_i _ _ _ fresh _ _ _ role
       exfalso
       refine c.led_after led (fun old => ?_) fun _ _ step => ?_
       · have floor := c.inv.leader_floor old
@@ -6508,12 +6522,8 @@ private theorem continuing {node : NodeID} {state : NodeState}
       extends_ (by rw [(Advance.facts advance).1]; exact List.prefix_append _ _) led)
     (fun won _ led => ?_) role led
   -- A node that led the term before the step does not win it again.
-  exfalso
   obtain ⟨eq, preRole⟩ := c.old_led_actor led
-  have ⟨_, _, _, termCase, _⟩ := c.electStep (c.wins_elect won)
-  split_rel termCase := (rcases termCase with lt | ⟨_, candidate⟩) with
-  | inl => exact Nat.lt_irrefl _ (Nat.lt_of_lt_of_le lt (Nat.le_of_eq eq.symm))
-  | inr => exact preRole candidate
+  exact (won.fresh eq.symm preRole).elim
 
 private theorem canon_mono : CanonMono (f.advance after) := by
   intro node state now role led
@@ -6618,9 +6628,10 @@ private theorem node_logs : NodeLogs (f.advance after) := by
       obtain ⟨_, ⟨_, candidateLog, _⟩, _, log, _⟩ := Wins.facts wins
       exact shorter (by rw [log, ← candidateLog]; exact primaryState_log_prefix _)
     | install =>
-      rename_i entries initialized positive signature _ log _ term _
-      obtain ⟨_, _, ⟨leaderLog, canon, inLog⟩, _⟩ :=
-        c.snap_available initialized positive signature
+      rename_i entries initialized signed _ log _ term _
+      refine c.snap_cases initialized signed
+        (fun nil => shorter (by rw [log, nil]; exact List.nil_prefix))
+        fun ⟨_, _, ⟨leaderLog, canon, inLog⟩, _⟩ => ?_
       exact copied (by rw [term]; exact c.inv.copyLog canon)
         (by rw [log]; exact List.prefix_iff_eq_take.mp inLog)
   | inr => exact (c.inv.node_logs node state old).mono after
@@ -6884,143 +6895,194 @@ private theorem accept_backed {source : NodeID} {request : AppendEntriesRequest}
     have eq := congrArg (List.take k) postTake
     simpa only [List.take_take, Nat.min_eq_left (Nat.le_trans kLe (Nat.min_le_right ..))] using eq
 
-/-- The actor's commit index is backed, and within its term when it continues or begins
-to lead. -/
-private theorem post_backing
-    : (exists term, Backed (f.advance after) c.post.log c.post.commitIndex term)
-      /\ (((c.pre.role = .primary /\ c.post.currentTerm = c.pre.currentTerm)
-            \/ Wins c.actor c.pre c.event c.post)
-          -> Backed (f.advance after) c.post.log c.post.commitIndex c.post.currentTerm) := by
-  have strong : Backed (f.advance after) c.post.log c.post.commitIndex
-        c.post.currentTerm
-      -> (exists term, Backed (f.advance after) c.post.log c.post.commitIndex term)
-        /\ (((c.pre.role = .primary /\ c.post.currentTerm = c.pre.currentTerm)
-              \/ Wins c.actor c.pre c.event c.post)
-            -> Backed (f.advance after) c.post.log c.post.commitIndex
-                c.post.currentTerm) :=
-    fun backed => ⟨⟨_, backed⟩, fun _ => backed⟩
+/-- A leader that appends entries keeps its commit index backed within its term. -/
+private theorem append_backing {entries : List Entry} {sent : NodeID -> Nat}
+    (leader : c.pre.role = .primary)
+    (advance
+      : Advance c.actor { c.pre with log := c.pre.log ++ entries, sentIndex := sent } c.post)
+    : Backed (f.advance after) c.post.log c.post.commitIndex c.post.currentTerm := by
+  have logEq : c.post.log = c.pre.log ++ entries := (Advance.facts advance).1
+  have termEq : c.post.currentTerm = c.pre.currentTerm := (Advance.facts advance).2.1
+  refine c.advance_backed advance (c.pre_backed ?_ leader) ?_ leader ?_
+  · rw [logEq]
+    exact List.take_append_of_le_length c.frontier_pre
+  · rw [termEq]
+    exact (c.pre_led leader).mono after
+  · intro voter different positive
+    obtain ⟨acker, seen, ackerTerm, bound, sub⟩ := c.match_pre leader different positive
+    refine ⟨acker, seen, by rw [ackerTerm, termEq], ?_⟩
+    dsimp only
+    rw [logEq, List.take_append_of_le_length bound]
+    exact sub
+
+/-- A leader that counts an acknowledgement keeps its commit index backed within its
+term. -/
+private theorem ack_backing {source : NodeID} {response : AppendEntriesResponse}
+    (received : c.event = .receive source (.appendEntriesResponse response))
+    (leader : c.pre.role = .primary) (success : response.success = true)
+    (responseTerm : response.term = c.pre.currentTerm)
+    (advance
+      : Advance c.actor
+          {
+            c.pre with
+              matchIndex :=
+                Function.update c.pre.matchIndex source
+                  (max (c.pre.matchIndex source) response.lastLogIndex)
+          }
+          c.post)
+    : Backed (f.advance after) c.post.log c.post.commitIndex c.post.currentTerm := by
+  have logEq : c.post.log = c.pre.log := (Advance.facts advance).1
+  have termEq : c.post.currentTerm = c.pre.currentTerm := (Advance.facts advance).2.1
+  refine c.advance_backed advance (c.pre_backed (by rw [logEq]) leader) ?_ leader ?_
+  · rw [termEq]
+    exact (c.pre_led leader).mono after
+  · intro voter different positive
+    dsimp only at positive ⊢
+    rw [logEq, termEq]
+    split_rel fromSource := (by_cases fromSource : voter = source) with
+    | pos =>
+      subst fromSource
+      rw [Function.update_self] at positive ⊢
+      split_rel max_eq_or :=
+          (rcases Std.max_eq_or (a := c.pre.matchIndex voter) (b := response.lastLogIndex) with
+            choice | choice) with
+      | inl =>
+        rw [choice] at positive ⊢
+        obtain ⟨acker, seen, ackerTerm, _, sub⟩ := c.match_pre leader different positive
+        exact ⟨acker, seen, ackerTerm, sub⟩
+      | inr =>
+        rw [choice] at positive ⊢
+        obtain ⟨envelope, ok, sourceEq, _, payload⟩ := c.received_ok received
+        simp only [MessageOK, payload] at ok
+        have acked := ok success
+        rw [sourceEq, responseTerm] at acked
+        obtain ⟨acker, seen, ackerTerm, _, sub⟩ := c.acked_pre leader acked
+        exact ⟨acker, seen, ackerTerm, sub⟩
+    | neg =>
+      rw [Function.update_of_ne fromSource] at positive ⊢
+      obtain ⟨acker, seen, ackerTerm, _, sub⟩ := c.match_pre leader different positive
+      exact ⟨acker, seen, ackerTerm, sub⟩
+
+/-- A new leader's commit index is backed within its term: its log keeps the committed
+prefix it campaigned with. -/
+private theorem wins_backing (wins : Wins c.actor c.pre c.event c.post)
+    : Backed (f.advance after) c.post.log c.post.commitIndex c.post.currentTerm := by
+  have elect := c.wins_elect wins
+  have winning := (c.electStep elect).2.2.2.2.2.2.1
+  obtain ⟨candidate, ⟨_, candidateLog, candidateCommit, _⟩, _, advance, _⟩ := wins
+  have committable : c.pre.commitIndex <= maxCommittableIndex c.pre.log := by
+    split_rel eq_zero_or_pos := (rcases Nat.eq_zero_or_pos c.pre.commitIndex with zero | positive) with
+    | inl => exact Nat.le_trans (Nat.le_of_eq zero) (Nat.zero_le _)
+    | inr =>
+      exact signatureIndex_le_maxCommittableIndex
+        ((c.inv.frontier _ _ c.pre_now).2 positive)
+  have agree : c.post.log.take c.pre.commitIndex = c.pre.log.take c.pre.commitIndex := by
+    rw [take_eq_of_prefix winning
+        (by rw [List.length_take]; exact Nat.le_min.mpr ⟨committable, c.frontier_pre⟩),
+      List.take_take, Nat.min_eq_left committable]
+  refine c.advance_backed advance ?_ (Or.inr ⟨_, _, .inr ⟨f.current, rfl, elect⟩⟩) rfl ?_
+  · show Backed _ _ candidate.commitIndex _
+    rw [candidateCommit]
+    exact ((c.elect_backed elect).weaken (Nat.sub_le _ _)).transfer agree
+  · intro voter _ positive
+    exact absurd positive (Nat.lt_irrefl 0)
+
+/-- The cases of a step for the backing of the actor's commit index. A step that appends,
+counts an acknowledgement or wins an election backs the commit index within the new
+term; the other steps keep the log and commit index, accept a request, or install a
+snapshot. -/
+private theorem backing_cases {motive : Prop}
+    (keeps : c.post.log = c.pre.log -> c.post.commitIndex = c.pre.commitIndex -> motive)
+    (leads
+      : Backed (f.advance after) c.post.log c.post.commitIndex c.post.currentTerm -> motive)
+    (accepts
+      : forall (source : NodeID) (request : AppendEntriesRequest),
+          c.event = .receive source (.appendEntriesRequest request)
+          -> Accepted c.pre request c.post -> motive)
+    (installs
+      : forall entries : List Entry,
+          c.event = .internal (.initAsBackup entries)
+          -> (0 < entries.length -> isSignatureAt entries entries.length = true)
+          -> c.pre.isFresh -> c.post.log = entries -> c.post.commitIndex = entries.length
+          -> motive)
+    : motive := by
   split_rel kind := (cases Summary.kind c.sum) with
   | same =>
       rename_i log commit
-      have agree : c.post.log.take c.pre.commitIndex = c.pre.log.take c.pre.commitIndex := by
-        rw [log]
-      refine ⟨?_, c.keep_backed agree commit⟩
-      rw [commit]
-      exact c.pre_backed_any agree
+      exact keeps log commit
   | append =>
       rename_i entries sent leader _ advance
-      have logEq : c.post.log = c.pre.log ++ entries := (Advance.facts advance).1
-      have termEq : c.post.currentTerm = c.pre.currentTerm := (Advance.facts advance).2.1
-      refine strong
-        (c.advance_backed advance
-          (c.pre_backed ?_ leader) ?_ leader ?_)
-      · rw [logEq]
-        exact List.take_append_of_le_length c.frontier_pre
-      · rw [termEq]
-        exact (c.pre_led leader).mono after
-      · intro voter different positive
-        obtain ⟨acker, seen, ackerTerm, bound, sub⟩ := c.match_pre leader different positive
-        refine ⟨acker, seen, by rw [ackerTerm, termEq], ?_⟩
-        dsimp only
-        rw [logEq, List.take_append_of_le_length bound]
-        exact sub
+      exact leads (c.append_backing leader advance)
   | ack =>
       rename_i source response received leader success responseTerm advance
-      have logEq : c.post.log = c.pre.log := (Advance.facts advance).1
-      have termEq : c.post.currentTerm = c.pre.currentTerm := (Advance.facts advance).2.1
-      refine strong
-        (c.advance_backed advance
-          (c.pre_backed (by rw [logEq]) leader) ?_ leader ?_)
-      · rw [termEq]
-        exact (c.pre_led leader).mono after
-      · intro voter different positive
-        dsimp only at positive ⊢
-        rw [logEq, termEq]
-        split_rel fromSource := (by_cases fromSource : voter = source) with
-        | pos =>
-          subst fromSource
-          rw [Function.update_self] at positive ⊢
-          split_rel max_eq_or :=
-              (rcases Std.max_eq_or (a := c.pre.matchIndex voter) (b := response.lastLogIndex) with
-                choice | choice) with
-          | inl =>
-            rw [choice] at positive ⊢
-            obtain ⟨acker, seen, ackerTerm, _, sub⟩ := c.match_pre leader different positive
-            exact ⟨acker, seen, ackerTerm, sub⟩
-          | inr =>
-            rw [choice] at positive ⊢
-            obtain ⟨envelope, ok, sourceEq, _, payload⟩ := c.received_ok received
-            simp only [MessageOK, payload] at ok
-            have acked := ok success
-            rw [sourceEq, responseTerm] at acked
-            obtain ⟨acker, seen, ackerTerm, _, sub⟩ := c.acked_pre leader acked
-            exact ⟨acker, seen, ackerTerm, sub⟩
-        | neg =>
-          rw [Function.update_of_ne fromSource] at positive ⊢
-          obtain ⟨acker, seen, ackerTerm, _, sub⟩ := c.match_pre leader different positive
-          exact ⟨acker, seen, ackerTerm, sub⟩
+      exact leads (c.ack_backing received leader success responseTerm advance)
   | accept =>
       rename_i source request received accepted
-      refine ⟨c.accept_backed received accepted, fun origin => ?_⟩
-      exfalso
-      split_rel origin := (rcases origin with ⟨leader, termEq⟩ | wins) with
-      | inl =>
-        -- The sender leads the term of the request, so the receiver did not.
-        obtain ⟨_, evidence⟩ := c.accept_evidence received
-        have : source = c.actor :=
-          c.inv.election_safety source c.actor request.term evidence.led
-            (by rw [accepted.1, termEq]; exact c.pre_led leader)
-        exact evidence.different this.symm
-      | inr =>
-        obtain ⟨_, _, _, _, electing⟩ := wins
-        rw [received] at electing
-        exact electing
+      exact accepts source request received accepted
   | elect =>
       rename_i wins
-      have elect := c.wins_elect wins
-      have winning := (c.electStep elect).2.2.2.2.2.2.1
-      obtain ⟨candidate, ⟨_, candidateLog, candidateCommit, _⟩, _, advance, _⟩ := wins
-      have committable : c.pre.commitIndex <= maxCommittableIndex c.pre.log := by
-        split_rel eq_zero_or_pos := (rcases Nat.eq_zero_or_pos c.pre.commitIndex with zero | positive) with
-        | inl => exact Nat.le_trans (Nat.le_of_eq zero) (Nat.zero_le _)
-        | inr =>
-          exact signatureIndex_le_maxCommittableIndex
-            ((c.inv.frontier _ _ c.pre_now).2 positive)
-      have agree : c.post.log.take c.pre.commitIndex = c.pre.log.take c.pre.commitIndex := by
-        rw [take_eq_of_prefix winning
-            (by rw [List.length_take]; exact Nat.le_min.mpr ⟨committable, c.frontier_pre⟩),
-          List.take_take, Nat.min_eq_left committable]
-      refine strong (c.advance_backed advance ?_ (Or.inr ⟨_, _, .inr ⟨f.current, rfl, elect⟩⟩) rfl ?_)
-      · show Backed _ _ candidate.commitIndex _
-        rw [candidateCommit]
-        exact ((c.elect_backed elect).weaken (Nat.sub_le _ _)).transfer agree
-      · intro voter _ positive
-        exact absurd positive (Nat.lt_irrefl 0)
+      exact leads (c.wins_backing wins)
   | install =>
-      rename_i entries initialized positive signature fresh log commit _ _
-      obtain ⟨_, _, _, term, part, committed, inPart⟩ :=
-        c.snap_available initialized positive signature
-      refine ⟨⟨term, term, part, committed.mono after, Nat.le.refl, ?_⟩,
-        fun origin => ?_⟩
-      · rw [log, commit, List.take_length]
-        exact inPart
-      · exfalso
-        split_rel origin := (rcases origin with ⟨leader, _⟩ | wins) with
-        | inl =>
-          -- A fresh node has no role.
-          rw [fresh.1] at leader
-          cases leader
-        | inr =>
-          obtain ⟨_, _, _, _, electing⟩ := wins
-          rw [initialized] at electing
-          exact electing
+      rename_i entries initialized signed fresh log commit _ _
+      exact installs entries initialized signed fresh log commit
+
+/-- The actor's commit index is backed in some term. -/
+private theorem post_backed_any
+    : exists term, Backed (f.advance after) c.post.log c.post.commitIndex term := by
+  refine c.backing_cases (fun log commit => ?_) (fun backed => ⟨_, backed⟩)
+    (fun _ _ received accepted => c.accept_backed received accepted)
+    fun entries initialized signed _ log commit => ?_
+  · rw [commit]
+    exact c.pre_backed_any (by rw [log])
+  · refine c.snap_cases initialized signed
+      (fun nil => ⟨0, 0, [], Commit.base, Nat.le.refl,
+        by rw [log, nil, List.take_nil]; exact List.nil_prefix⟩)
+      fun ⟨_, _, _, term, part, committed, inPart⟩ => ?_
+    refine ⟨term, term, part, committed.mono after, Nat.le.refl, ?_⟩
+    rw [log, commit, List.take_length]
+    exact inPart
+
+/-- The commit index of a node that continues or begins to lead is backed within its
+term. Such a node neither accepts a request, whose sender leads the same term, nor
+installs a snapshot. -/
+private theorem origin_backing
+    (origin
+      : (c.pre.role = .primary /\ c.post.currentTerm = c.pre.currentTerm)
+        \/ Wins c.actor c.pre c.event c.post)
+    : Backed (f.advance after) c.post.log c.post.commitIndex c.post.currentTerm := by
+  refine c.backing_cases (fun log commit => c.keep_backed (by rw [log]) commit origin) id
+    (fun source request received accepted => ?_)
+    fun entries initialized _ fresh _ _ => ?_
+  · exfalso
+    split_rel origin := (rcases origin with ⟨leader, termEq⟩ | wins) with
+    | inl =>
+      -- The sender leads the term of the request, so the receiver did not.
+      obtain ⟨_, evidence⟩ := c.accept_evidence received
+      have : source = c.actor :=
+        c.inv.election_safety source c.actor request.term evidence.led
+          (by rw [accepted.1, termEq]; exact c.pre_led leader)
+      exact evidence.different this.symm
+    | inr =>
+      obtain ⟨_, _, _, _, electing⟩ := wins
+      rw [received] at electing
+      exact electing
+  · exfalso
+    split_rel origin := (rcases origin with ⟨leader, _⟩ | wins) with
+    | inl =>
+      -- A fresh node has no role.
+      rw [fresh.1] at leader
+      cases leader
+    | inr =>
+      obtain ⟨_, _, _, _, electing⟩ := wins
+      rw [initialized] at electing
+      exact electing
 
 private theorem commit_backed : CommitBacked (f.advance after) := by
   intro node state now
   split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨_, old⟩) with
   | inl =>
     subst nodeEq stateEq
-    exact ⟨c.post_backing.1, fun role => c.post_backing.2 (Summary.leader c.sum role)⟩
+    exact ⟨c.post_backed_any, fun role => c.origin_backing (Summary.leader c.sum role)⟩
   | inr =>
     obtain ⟨⟨term, backed⟩, strong⟩ := c.inv.commit_backed node state old
     exact ⟨⟨term, backed.mono after⟩, fun role => (strong role).mono after⟩
@@ -7130,7 +7192,7 @@ private theorem persist_pre {part : List Entry}
         (c.electStep (c.wins_elect wins)).2.2.2.2.2.2.1
       exact (prefix_committable inPre signature).trans winning
   | install =>
-      rename_i _ _ _ _ fresh _ _ _ _
+      rename_i _ _ _ fresh _ _ _ _
       rw [fresh.2.2.1, List.prefix_nil] at inPre
       subst inPre
       simp [isSignatureAt, entryAt?] at signature
@@ -7293,7 +7355,7 @@ private theorem new_message {envelope : Model.Envelope} (new : envelope ∈ c.se
       · exact .inr ⟨c.actor, c.post, ⟨c.post_now, term.symm,
           notCandidate, term ▸ led⟩, rfl⟩
       · rw [term]
-        exact (c.post_backing.2 origin).shorten commitLe
+        exact (c.origin_backing origin).shorten commitLe
   | appendEntriesResponse =>
       simp only [h] at ok
       simp only [MessageOK, h]
@@ -7384,9 +7446,8 @@ private theorem inv_step : Inv (f.advance after) :=
     led_cur := c.led_cur
     leader_led := c.leader_led
     candidate := c.candidate
-    electionCerts := c.electionCerts
+    elections := c.elections
     election_safety := c.election_safety
-    rankedElections := c.rankedElections
     canon_mono := c.canon_mono
     chains := c.chains
     canonLogs := c.canonLogs
