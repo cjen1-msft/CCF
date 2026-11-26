@@ -5116,14 +5116,15 @@ private theorem committed_comparable {frame : Frame} (inv : Inv frame)
 
 /--
 A committed prefix is committed no later than `bound`, or signed quorum evidence of a
-later term covers it from a base within it.
+later term covers it from a base within it; `crossing` says what that evidence yields.
 -/
 private theorem backing_split {g : LogFacts.Ghost} {log : List Entry}
-    {commit term bound : Nat} {part : List Entry}
+    {commit term bound : Nat} {part : List Entry} {crossed : Prop}
     (cert : Commit g term part) (within : log.take commit <+: part)
     (length : commit <= log.length)
-    : (∃ e p, Commit g e p ∧ e ≤ bound ∧ log.take commit <+: p)
-      ∨ ∃ l k b i, CommitFacts g l k b i ∧ bound < k ∧ b ≤ commit ∧ log.take commit <+: l.take i := by
+    (crossing : ∀ l k b i, CommitFacts g l k b i → bound < k → b ≤ commit
+      → log.take commit <+: l.take i → crossed)
+    : (∃ e p, Commit g e p ∧ e ≤ bound ∧ log.take commit <+: p) ∨ crossed := by
   have lengthEq : (log.take commit).length = commit := List.length_take_of_le length
   split_rel cert := (induction cert) with
   | base => exact .inl ⟨0, [], .base, Nat.zero_le _, within⟩
@@ -5133,7 +5134,7 @@ private theorem backing_split {g : LogFacts.Ghost} {log : List Entry}
       | pos => exact .inl ⟨term, _, .link f prior le inBacking, low, within⟩
       | neg =>
         split_rel baseLe := (by_cases baseLe : base <= commit) with
-        | pos => exact .inr ⟨l, term, base, index, f, Nat.lt_of_not_le low, baseLe, within⟩
+        | pos => exact .inr (crossing l term base index f (Nat.lt_of_not_le low) baseLe within)
         | neg =>
           have commitIndex : commit <= index := Nat.le_trans (Nat.le_of_lt (Nat.lt_of_not_le baseLe)) f.baseLe
           have short : log.take commit <+: l.take base := by
@@ -5735,33 +5736,6 @@ private theorem grantFacts : GrantFacts (f.advance after).logs
   exact ⟨⟨stamp, fun k l i obs lt sig atI =>
     (ranked k l i obs lt sig atI).map (fun _ _ le old => ⟨le, .inl old⟩)⟩, seen⟩
 
-private theorem freshCampaign {n t l i} (elect : ElectStep f after n t l i) :
-    CampaignFacts (f.advance after).logs (f.advance after).votes
-      f.logs.canon n t l i t := by
-  obtain ⟨st, _, mem, _, logEq, _, front, termCase, _, _, _, floor, xs, q, grants⟩ := elect
-  refine ⟨logEq ▸ c.inv.rooted n st mem, front, ?_, ⟨xs, q, fun x m =>
-    (c.grantFactsBefore x n t _ ((grants x m))).1⟩⟩
-  dsimp only
-  intro pos
-  let j := max i (maxCommittableIndex l)
-  have jBound : j ≤ l.length := Nat.max_le.mpr ⟨front, maxCommittableIndexBounded _⟩
-  have ⟨a, canon, le, eq⟩ := c.inv.anchor n st j mem pos (logEq ▸ jBound)
-  rw [logEq] at canon eq
-  refine ⟨?_, a, canon, le, eq⟩
-  change termAt l j < t
-  split_rel term := (rcases termCase with lt | ⟨eq, role⟩) with
-  | inl =>
-    have hi := termAt_le_of_mem (c.inv.terms n st mem) j
-    rw [logEq] at hi
-    exact Nat.lt_of_le_of_lt hi lt
-  | inr =>
-    have low := (c.inv.candidate n st mem role).2.2.2.2
-    have floor' : 0 < t := by omega
-    have le' := termAt_le_of_mem (log := st.log) (bound := t - 1)
-      (fun e h => Nat.le_sub_one_of_lt (eq ▸ low e h)) j
-    rw [logEq] at le'
-    exact Nat.lt_of_le_of_lt le' (Nat.sub_one_lt (Nat.ne_of_gt floor'))
-
 /-- The actor's own vote in the step. -/
 private theorem self_granted {term : Nat} (le : c.pre.currentTerm <= term)
     (termEq : c.post.currentTerm = term) (voted : c.post.votedFor = some c.actor)
@@ -5949,37 +5923,33 @@ private theorem pre_split {t : Nat} (fresh : c.pre.currentTerm < t) :
     Backed f c.pre.log c.pre.commitIndex (t - 1) ∨
       Blocked f.logs c.actor t c.pre.log c.pre.commitIndex := by
   obtain ⟨⟨_, e, p, committed, _, sub⟩, _⟩ := c.inv.commit_backed c.actor c.pre c.pre_now
-  have backing := backing_split (bound := t - 1) committed sub c.frontier_pre
-  split_rel backing := (rcases backing with
-      ⟨e', q, prior, le, sub⟩ | ⟨l, k, b, i, f, gt, base, sub⟩) with
-  | inl => exact .inl ⟨e', q, prior, le, sub⟩
-  | inr =>
-    right
-    intro voters quorum
-    have len := List.length_take_of_le c.frontier_pre
-    have len' := List.length_take_of_le f.indexLe
-    have ge := sub.length_le
-    rw [len, len'] at ge
-    have agree := List.prefix_iff_eq_take.mp sub
-    rw [len, List.take_take, Nat.min_eq_left ge] at agree
-    obtain ⟨xs, q, obs⟩ := f.acks
-    obtain ⟨v, ack, vote⟩ := quorums_intersect_bounded Config.GENESIS_configured
-      (c.inv.copyLog f.canon).rooted
-      (c.inv.rooted c.actor c.pre c.pre_now) agree.symm base (Nat.le_refl _) f.baseLe ge
-      (signature_pos f.signature) q quorum
-    obtain ⟨a, seen, held⟩ := obs v ack
-    have low := termAt_le_of_mem (c.inv.terms c.actor c.pre c.pre_now)
-      (max c.pre.commitIndex (maxCommittableIndex c.pre.log))
-    have later : t ≤ k :=
-      Nat.le_of_lt_succ ((Nat.sub_lt_iff_lt_add (Nat.zero_lt_of_lt fresh)).mp gt)
-    refine ⟨v, vote, ?_, k, a, i, seen, later,
-      isSignatureAt_of_prefix held (isSignatureAt_take_of_le Nat.le.refl f.signature), ?_, ?_⟩
-    · intro grant
-      obtain ⟨l', observed⟩ := (c.inv.grantFacts v c.actor t _ grant).2
-      have bound : t ≤ c.pre.currentTerm := c.inv.term_mono c.actor c.pre ⟨t, l'⟩ c.pre_now observed
-      exact (Nat.not_le_of_gt fresh) bound
-    · rw [termAt_of_prefix held (Nat.le_of_eq len'.symm), termAt_take Nat.le.refl, f.termAtIndex]
-    · exact Nat.lt_of_le_of_lt low (Nat.lt_of_lt_of_le fresh later)
+  -- Evidence of a term from `t` on covers the prefix: its quorum blocks the campaign.
+  refine backing_split (bound := t - 1) committed sub c.frontier_pre
+    fun l k b i f gt base sub voters quorum => ?_
+  have len := List.length_take_of_le c.frontier_pre
+  have len' := List.length_take_of_le f.indexLe
+  have ge := sub.length_le
+  rw [len, len'] at ge
+  have agree := List.prefix_iff_eq_take.mp sub
+  rw [len, List.take_take, Nat.min_eq_left ge] at agree
+  obtain ⟨xs, q, obs⟩ := f.acks
+  obtain ⟨v, ack, vote⟩ := quorums_intersect_bounded Config.GENESIS_configured
+    (c.inv.copyLog f.canon).rooted
+    (c.inv.rooted c.actor c.pre c.pre_now) agree.symm base (Nat.le_refl _) f.baseLe ge
+    (signature_pos f.signature) q quorum
+  obtain ⟨a, seen, held⟩ := obs v ack
+  have low := termAt_le_of_mem (c.inv.terms c.actor c.pre c.pre_now)
+    (max c.pre.commitIndex (maxCommittableIndex c.pre.log))
+  have later : t ≤ k :=
+    Nat.le_of_lt_succ ((Nat.sub_lt_iff_lt_add (Nat.zero_lt_of_lt fresh)).mp gt)
+  refine ⟨v, vote, ?_, k, a, i, seen, later,
+    isSignatureAt_of_prefix held (isSignatureAt_take_of_le Nat.le.refl f.signature), ?_, ?_⟩
+  · intro grant
+    obtain ⟨l', observed⟩ := (c.inv.grantFacts v c.actor t _ grant).2
+    have bound : t ≤ c.pre.currentTerm := c.inv.term_mono c.actor c.pre ⟨t, l'⟩ c.pre_now observed
+    exact (Nat.not_le_of_gt fresh) bound
+  · rw [termAt_of_prefix held (Nat.le_of_eq len'.symm), termAt_take Nat.le.refl, f.termAtIndex]
+  · exact Nat.lt_of_le_of_lt low (Nat.lt_of_lt_of_le fresh later)
 
 /-- A fresh campaign's committed prefix is backed, or doomed from the start. -/
 private theorem campaign_backed {state : NodeState} (logEq : state.log = c.pre.log)
@@ -6042,21 +6012,48 @@ private theorem candidate : Candidate (f.advance after) := by
     | inl => exact Or.inl (backed.mono after)
     | inr => exact .inr (c.blocked_step doomed)
 
+/-- The candidate of an election step: its entries are of earlier terms, and its committed
+prefix is backed below the election's term unless the election is blocked. -/
+private theorem elect_candidate {node term log commit}
+    (step : ElectStep f after node term log commit)
+    : (forall entry, entry ∈ log -> entry.term < term)
+      /\ (Backed f log commit (term - 1) ∨ Blocked f.logs node term log commit) := by
+  have ⟨actorEq, logEq, commitEq, termCase, _⟩ := c.electStep step
+  subst actorEq logEq commitEq
+  split_rel termCase := (rcases termCase with lt | ⟨same, preRole⟩) with
+  | inl =>
+    exact ⟨fun entry mem =>
+        Nat.lt_of_le_of_lt (c.inv.terms c.actor c.pre c.pre_now entry mem) lt,
+      c.pre_split lt⟩
+  | inr =>
+    subst same
+    have candidate := c.inv.candidate c.actor c.pre c.pre_now preRole
+    exact ⟨candidate.2.2.2.2, candidate.2.2.2.1⟩
+
 private theorem elect_backed {node term log commit}
     (step : ElectStep f after node term log commit) : Backed f log commit (term - 1) := by
-  have ⟨actorEq, logEq, commitEq, termCase, _, _, _, three⟩ := c.electStep step
-  subst actorEq
-  have choice : Backed f c.pre.log c.pre.commitIndex (term - 1) ∨
-      Blocked f.logs c.actor term c.pre.log c.pre.commitIndex := by
-    split_rel termCase := (rcases termCase with lt | ⟨same, preRole⟩) with
-    | inl => exact c.pre_split lt
-    | inr =>
-      rw [← same]
-      exact (c.inv.candidate c.actor c.pre c.pre_now preRole).2.2.2.1
-  rw [logEq, commitEq] at choice
-  split_rel backed := (rcases choice with backed | blocked) with
+  split_rel backed := (rcases (c.elect_candidate step).2 with backed | blocked) with
   | inl => exact backed
   | inr => exact (c.blocked_no_election blocked step).elim
+
+private theorem freshCampaign {n t l i} (elect : ElectStep f after n t l i) :
+    CampaignFacts (f.advance after).logs (f.advance after).votes
+      f.logs.canon n t l i t := by
+  have earlier := (c.elect_candidate elect).1
+  obtain ⟨st, _, mem, _, logEq, _, front, _, _, _, _, floor, xs, q, grants⟩ := elect
+  refine ⟨logEq ▸ c.inv.rooted n st mem, front, ?_, ⟨xs, q, fun x m =>
+    (c.grantFactsBefore x n t _ ((grants x m))).1⟩⟩
+  dsimp only
+  intro pos
+  let j := max i (maxCommittableIndex l)
+  have jBound : j ≤ l.length := Nat.max_le.mpr ⟨front, maxCommittableIndexBounded _⟩
+  have ⟨a, canon, le, eq⟩ := c.inv.anchor n st j mem pos (logEq ▸ jBound)
+  rw [logEq] at canon eq
+  refine ⟨?_, a, canon, le, eq⟩
+  change termAt l j < t
+  have le' := termAt_le_of_mem (log := l) (bound := t - 1)
+    (fun e h => Nat.le_sub_one_of_lt (earlier e h)) j
+  exact Nat.lt_of_le_of_lt le' (Nat.sub_one_lt (by omega))
 
 end Consensus.Proofs.Safety.Ctx
 
