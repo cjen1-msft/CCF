@@ -123,9 +123,9 @@ at least two branches are live. A dead branch must eliminate a kernel-checked pr
 of `False` in its own context. The script-replay result is diagnostic only: the same
 script can rely on different hypotheses in different branches.
 
-The current generator emits 516 step questions and 16 state questions (548 coordinates
-with both endpoints). The exact family, witness, and support results below are
-checked on this schema. Historical search statistics are indicated separately.
+The current generator emits 397 step questions and 14 state questions (425 coordinates with both endpoints), and `Inv` has 27 clauses.
+The exact family, witness, and support results below were checked on the earlier schema of 516 step questions, 16 state questions (548 coordinates) and 30 clauses; the `ConsensusCoverage` modules that prove them have not yet been ported to the current schema.
+Historical search statistics are indicated separately.
 
 **State denominator during replay: three profiles for nonempty clusters.** All sixteen generated
 state questions reduce to two facts: is any node's commit index zero, and does
