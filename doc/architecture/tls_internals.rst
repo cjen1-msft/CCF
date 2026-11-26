@@ -21,7 +21,7 @@ A single RPC interface is served by these pieces:
   Each TLS connection holds an ``SSL`` object bound to its file descriptor with ``SSL_set_fd``.
   The engine emits decrypted bytes through ``OnData`` and reports teardown through ``OnClose``.
 - :ccf_repo:`OpenSSLSessionManager </src/node/rpc/openssl_session_manager.h>` bridges the transport to the session layer. It lazily creates one ``ccf::Session`` per connection using a caller-supplied factory, and implements :ccf_repo:`ccf::SessionWriter </include/ccf/node/session.h>` so that a session's outbound plaintext is handed back to the transport.
-- :ccf_repo:`ccf::PlaintextSession </src/node/rpc/session.h>` is the base for the protocol sessions (:ccf_repo:`HTTPServerSession </src/node/rpc/http_session.h>`, :ccf_repo:`HTTP2ServerSession </src/node/rpc/http2_session.h>`). It receives plaintext, and emits plaintext through its ``SessionWriter``.
+- :ccf_repo:`ccf::PlaintextSession </src/node/rpc/session.h>` is the base for protocol sessions such as :ccf_repo:`HTTPServerSession </src/node/rpc/http_session.h>`. It receives plaintext, and emits plaintext through its ``SessionWriter``.
 - :ccf_repo:`RPCConnectionManager </src/node/rpc/rpc_connection_manager.h>` owns one of these stacks per configured RPC interface, and holds the cross-interface policy: certificates, session caps, and metrics.
 
 Because TLS lives below the session, there is no separate "encrypted session" type. The difference between a TLS interface and an ``UNSECURED`` one is a flag on the connection layer, not a different session class.
@@ -64,7 +64,7 @@ The context must not be mutated while in use.
 OpenSSL client contexts otherwise default to ``SSL_VERIFY_NONE``, which completes the handshake with any certificate.
 This check cannot detect a verification callback which overrides failures; such a callback remains the owner's responsibility.
 The engine does not impose N2N policy on RPC: RPC retains its existing TLS configuration.
-This foundation does not activate N2N endpoints, route messages, or implement the future N2N TLS 1.3 and record-based KeyUpdate policy.
+This foundation does not activate N2N endpoints or route messages.
 
 ``Config::on_handshake`` is optional and applies to both accepted and initiating TLS connections.
 It runs once on a connection worker after TLS establishment, with a borrowed ``SSL`` and a direction flag.
@@ -88,6 +88,25 @@ An optional ``tcp_user_timeout`` sets Linux ``TCP_USER_TIMEOUT`` on accepted soc
 It bounds how long transmitted data can remain unacknowledged or blocked by a zero receive window, independently of the application's idle timeout.
 Leaving it unset preserves the operating system defaults, including existing RPC behavior.
 
+Sending-key policy
+~~~~~~~~~~~~~~~~~~
+
+The internal ``Config::traffic_key_policy`` option on the engine, server and client requires TLS 1.3 with AES-GCM and enables outgoing record accounting.
+It is unset by default and adds no node configuration or operator option.
+OpenSSL already implements KeyUpdate, but ordinary TLS connections do not automatically initiate updates based on key usage.
+The policy counts outgoing encrypted records, not application messages or write calls, and reserves one old-key record for KeyUpdate itself.
+Application writes are capped at the negotiated record size so that retries cannot construct additional records without another budget check.
+Post-handshake authentication is disabled because its response flight can produce multiple records without an intervening budget check.
+Its internal ``record_budget`` defaults to 2^20 and accepts 2 through 2^24, below the AES-GCM bound in RFC 8446 section 5.5.
+Peer key-usage policy is not enforced; incoming KeyUpdates remain OpenSSL's responsibility.
+
+An update is attempted between completed application writes, only when the socket reports writable.
+If the update does not complete immediately, the connection is closed without further TLS I/O.
+An opted-in read or write which stalls on TLS control output is also closed rather than worked around.
+Ordinary application-write backpressure retains normal retry handling.
+This intentionally trades connection continuity for a small policy: there are no retry deadlines, extra ciphertext buffers or output budgets.
+The owner must reconnect and recover outstanding application work; the engine does not replay it.
+
 Certificates
 ~~~~~~~~~~~~
 
@@ -95,7 +114,7 @@ An interface starts listening before its certificate is necessarily known. A joi
 
 ``set_server_cert()`` may be called from any thread. It does not build the ``SSL_CTX`` inline: it queues the request and wakes the loop, so the context is only ever created or replaced on the loop thread. This avoids locking the context on the hot path. Replacing the context affects only subsequent connections; existing connections keep the context they were created with, which OpenSSL keeps alive by reference counting.
 
-The server context sets a minimum version of TLS 1.2 and, when the interface is configured for HTTP/2, advertises ``h2`` via ALPN.
+The server context sets a minimum version of TLS 1.2 and advertises ``http/1.1`` via ALPN.
 
 Cryptographic policy
 ~~~~~~~~~~~~~~~~~~~~
@@ -157,9 +176,16 @@ Closing
 
 Closing is deferred rather than immediate. A close requested while output is still buffered sets a flag and flushes; the file descriptor is only closed once the buffered bytes have been written.
 
+For TLS connections, the worker then sends ``close_notify`` before closing the socket.
+If ``SSL_shutdown`` reports ``SSL_ERROR_WANT_WRITE`` or ``SSL_ERROR_WANT_READ``, the connection remains open and retries shutdown on socket readiness without re-entering application reads or writes.
+Once the alert has been sent, the connection closes without waiting for the peer's reciprocal alert.
+Existing idle expiry and transport shutdown can still force a close while the alert is backpressured.
+
 This matters because the common pattern is to write a response and immediately close. Closing eagerly truncates any response large enough to have been backpressured, which the client observes as a connection reset partway through the body rather than as a well-formed response.
 
-Server shutdown and idle expiry are exceptions: there the close is forced rather than deferred. Each connection takes exactly one further worker pass, writing whatever the socket will accept, and then goes. Waiting for the flush would let a peer which has stopped reading hold the whole node's shutdown open, or retain an expired connection, indefinitely.
+Server shutdown and idle expiry are exceptions: there the close is forced rather than deferred.
+After any in-flight worker pass finishes, a surviving connection takes one final pass which discards pending application output rather than attempting another application write.
+Waiting for the flush would let a peer which has stopped reading hold the whole node's shutdown open, or retain an expired connection, indefinitely.
 
 Idle connections are closed separately. If an idle timeout is configured, a repeating ``uv_timer_t`` periodically sweeps connections whose last I/O is older than the timeout. This retains the once-per-second scheduling used by the previous RPC transport while comparing actual ``steady_clock`` timestamps rather than counting timer ticks.
 

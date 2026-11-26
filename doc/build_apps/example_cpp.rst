@@ -263,7 +263,17 @@ A :cpp:type:`ccf::indexing::Strategy` may offload partial results to disk to avo
 Since the indexing system and all the strategies it manages run entirely inside the node's TEE, this has the same trust guarantees as any other code running in the node - users can trust that the results are accurate and complete, and the query may process private data.
 
 An example :cpp:type:`ccf::indexing::Strategy` is included in the logging app, to accelerate historical range queries.
-This :cpp:type:`strategy <ccf::indexing::strategies::SeqnosByKey_Bucketed_Untyped>` stores the list of seqnos where every key is written to, offloading completed ranges to disk to cap the total memory usage.
+This :cpp:type:`strategy <ccf::indexing::strategies::SeqnosByKey_Bucketed_Untyped>` records writes to keys in public tables and offloads completed non-empty buckets to authenticated disk storage.
+Late first writes and gaps between writes do not create empty bucket files.
+
+When using this strategy:
+
+- Memory still grows with the number of distinct keys: each retains a current bucket and bucket manifest metadata, including up to 2 KiB of bucket numbers.
+- Disk storage includes one manifest page per 256 completed non-empty buckets; queries for empty ranges may need additional metadata reads.
+- Queries use inclusive ranges, limited by ``max_requestable_range()``.
+  Retry ``nullopt`` results: fetching is asynchronous, and missing or corrupt required files trigger rebuilding rather than partial answers.
+- Each node builds its own index and rebuilds it after restart.
+
 In the endpoint handler, rather than requesting every transaction in the requested range, the node relies on its index to fetch only the `interesting` transactions; those which write to the target key:
 
 .. literalinclude:: ../../samples/apps/logging/logging.cpp
@@ -434,8 +444,6 @@ Because this is a runtime decision made inside the handler, the `same` endpoint 
 The callback receives a ``CommittedTxInfo`` struct containing the ``TxID``, ``FinalTxStatus`` (``Committed`` or ``Invalid``), and — for write transactions — the ``write_set_digest``, ``commit_evidence``, and ``claims_digest`` needed to construct a receipt.
 
 .. note::
-
-    This feature is currently supported on HTTP/1.1 connections only. HTTP/2 sessions send responses immediately regardless of whether a consensus-committed callback is set.
 
     Read-only endpoints may also use this mechanism to confirm that their response reflects committed state. However, attempting to construct a receipt for a read-only transaction will fail with a ``500 Internal Server Error``, since read-only transactions do not produce the write set digest or commit evidence required for receipt construction.
 

@@ -11,7 +11,7 @@
 
 #include <chrono>
 #include <cstdint>
-#include <fmt/format.h>
+#include <format>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -36,7 +36,7 @@ namespace ccf::cose::utils
         chain.emplace_back(bytes.begin(), bytes.end());
       }
     }
-    catch (const tav::cbor::DecodeError&)
+    catch (const tav::Exception&)
     {
       auto bytes = tav::cbor::rethrow_with_msg(
         [&]() { return x5chain_value.as_bytes(); }, "x5chain");
@@ -86,7 +86,7 @@ namespace ccf::cose
       {
         claims.iat = iat.as_signed();
       }
-      catch (const DecodeError&)
+      catch (const tav::Exception&)
       {
         // CWT NumericDate values MUST omit CBOR tags:
         // https://www.rfc-editor.org/rfc/rfc8392.html#section-5
@@ -95,7 +95,7 @@ namespace ccf::cose
         claims.iat = iat.tag_at(ccf::cbor::tag::EPOCH_DATE_TIME).as_signed();
       }
     }
-    catch (const DecodeError& err)
+    catch (const tav::Exception& err)
     {
       std::ignore = err; // optional field
     }
@@ -105,7 +105,7 @@ namespace ccf::cose
         return cwt_claims.map_at(make_signed(ccf::cwt::header::iana::ISS))
           .as_string();
       },
-      fmt::format(
+      std::format(
         "Parse CWT claim iss({}) field", ccf::cwt::header::iana::ISS));
 
     claims.sub = rethrow_with_msg(
@@ -113,7 +113,7 @@ namespace ccf::cose
         return cwt_claims.map_at(make_signed(ccf::cwt::header::iana::SUB))
           .as_string();
       },
-      fmt::format(
+      std::format(
         "Parse CWT claim sub({}) field", ccf::cwt::header::iana::SUB));
 
     try
@@ -121,9 +121,9 @@ namespace ccf::cose
       claims.svn = cwt_claims.map_at(make_string(ccf::cwt::header::custom::SVN))
                      .as_signed();
     }
-    catch (const DecodeError& err)
+    catch (const tav::Exception& err)
     {
-      if (err.error_code() != Error::KEY_NOT_FOUND)
+      if (err.code() != tav::ErrorCode::CBOR_KEY_NOT_FOUND)
       {
         throw;
       }
@@ -143,14 +143,14 @@ namespace ccf::cose
     if (x5chain.empty())
     {
       throw COSEDecodeError(
-        fmt::format("No certificates in {} x5chain", context));
+        std::format("No certificates in {} x5chain", context));
     }
 
     const auto common_validity_period =
       ccf::crypto::OpenSSL::get_x509_chain_common_validity_period(x5chain);
     if (!common_validity_period.has_value())
     {
-      throw COSEDecodeError(fmt::format(
+      throw COSEDecodeError(std::format(
         "Certificates in {} x5chain have no common validity period", context));
     }
 
@@ -160,7 +160,7 @@ namespace ccf::cose
       iat < common_validity_period->not_before ||
       iat > common_validity_period->not_after)
     {
-      throw COSEDecodeError(fmt::format(
+      throw COSEDecodeError(std::format(
         "CWT iat {} in {} is outside x5chain common validity period [{}, {}]",
         claims.iat.value(),
         context,

@@ -1,5 +1,7 @@
 module
 
+import CCF.Proofs.Function
+
 public import Consensus.Model
 import Consensus.Proofs.VoteFacts
 import Consensus.Proofs.LogFacts
@@ -3229,22 +3231,33 @@ open Consensus.Proofs.Config Consensus.Proofs.Ledger
 open CCF
 open Model.Node
 
-private theorem highestCommittableIndex_spec (state : NodeState) (self : NodeID)
+/-- A fold that only moves its accumulator to elements satisfying `P` keeps any
+property those moves keep. -/
+private theorem foldl_select_step (P : Nat -> Nat -> Prop) [forall a b, Decidable (P a b)]
+    (Q : Nat -> Prop) (values : List Nat) (init : Nat) (start : Q init)
+    (step : forall acc value, value ∈ values -> Q acc -> P acc value -> Q value)
+    : Q (values.foldl (fun acc value => if P acc value then value else acc) init) := by
+  split_rel values := (induction values generalizing init) with
+  | nil => exact start
+  | cons =>
+      rename_i head tail ih
+      simp only [List.foldl_cons]
+      refine ih _ ?_ fun acc value mem => step acc value (List.mem_cons_of_mem _ mem)
+      split_rel selected := (split) with
+      | isTrue => exact step init head (List.mem_cons.mpr (Or.inl rfl)) start ‹_›
+      | isFalse => exact start
+
+private theorem highestCommittableIndex_signature (state : NodeState) (self : NodeID)
     (ahead : state.commitIndex < highestCommittableIndex state self)
-    : let index := highestCommittableIndex state self
-      index <= state.log.length
-      /\ isSignatureAt state.log index = true
-      /\ termAt state.log index = state.currentTerm
-      /\ hasQuorum
-          (state.activeConfigurations.filter
-            fun configuration => configuration.index <= index)
-          ((state.activeMembers).filter
-            fun node => node = self \/ state.matchIndex node >= index) := by
-  intro index
-  have holds := (foldl_select_max _ _ 0).2.1 (Nat.lt_of_le_of_lt (Nat.zero_le _) ahead)
-  refine ⟨?_, holds.2.1, holds.2.2.1, holds.2.2.2⟩
-  obtain ⟨entry, found, _⟩ := Ledger.isSignatureAtTrue holds.2.1
-  exact Ledger.entryAtSomeIndexBound found
+    : isSignatureAt state.log (highestCommittableIndex state self) = true := by
+  have holds
+      : highestCommittableIndex state self = state.commitIndex
+        \/ isSignatureAt state.log (highestCommittableIndex state self) = true := by
+    dsimp only [highestCommittableIndex]
+    exact foldl_select_step _
+      (fun index => index = state.commitIndex \/ isSignatureAt state.log index = true) _ _
+      (Or.inl rfl) fun _ _ _ _ selected => Or.inr selected.2.1
+  exact holds.resolve_left (Nat.ne_of_gt ahead)
 
 private theorem AEFrom.extend {self : NodeID} {term commit commit' : Nat}
     {log log' : List Entry} {envelope : Model.Envelope}
@@ -3330,7 +3343,7 @@ open Model.Node
 section Effects
 variable (self : NodeID)
 
-private theorem nominate_sends (state : NodeState)
+private theorem nominate_sends (state : NodeState) (excluded : Finset NodeID := ∅)
     : Sends
         (fun result sent =>
           result = state
@@ -3339,7 +3352,7 @@ private theorem nominate_sends (state : NodeState)
               e ∈ sent
               -> e.source = self
                   /\ e.payload = .proposeRequestVoteRequest state.currentTerm)
-        (nominateSuccessor (Capabilities.record self : Caps) state self) := by
+        (nominateSuccessor (Capabilities.record self : Caps) state self excluded) := by
   unfold nominateSuccessor
   refine Sends.bind' Sends.guard' fun _ _ ⟨leader, empty⟩ => ?_
   subst empty
@@ -3375,7 +3388,7 @@ private theorem advanceCommit_sends (middle : NodeState)
   refine Sends.ite'
     (fun _ => Sends.ite' (fun _ => ?_) fun _ => Sends.pure' ⟨advanced, by simp⟩)
     fun _ => Sends.pure' ⟨advanced, by simp⟩
-  exact Sends.bind' (nominate_sends self middle)
+  exact Sends.bind' (nominate_sends self middle _)
     fun _ sent nominated =>
       Sends.pure' ⟨advanced, by simpa using nominated.2.2⟩
 
@@ -5030,8 +5043,8 @@ private theorem Advance.frontier {self : NodeID} {middle state : NodeState}
   | inl => exact frontier.of_log advance.log same.symm
   | inr =>
     have eq := advance.commit_eq ahead
-    obtain ⟨bound, signature, _⟩ := highestCommittableIndex_spec middle self (eq ▸ ahead)
-    exact ⟨by rw [advance.log, eq]; exact bound,
+    have signature := highestCommittableIndex_signature middle self (eq ▸ ahead)
+    exact ⟨by rw [advance.log, eq]; exact signature_bound signature,
       fun _ => by rw [advance.log, eq]; exact signature⟩
 
 private theorem primaryState_frontier {state : NodeState}
@@ -5347,7 +5360,7 @@ private theorem vals_upToDate {state : NodeState} (term : Nat)
       (Nat.max_le.mpr ⟨frontier, maxCommittableIndexBounded state.log⟩)
   split_rel lt_or_eq_of_le := (rcases Nat.lt_or_eq_of_le mono with lt | eq) with
   | inl => exact Or.inl lt
-  | inr => exact Or.inr ⟨eq.symm, Nat.le_max_right _ _⟩
+  | inr => exact Or.inr ⟨eq, Nat.le_max_right _ _⟩
 
 end Consensus.Proofs.Safety
 
@@ -5511,15 +5524,15 @@ private theorem rankAtGrant {v n t r k l i}
     have rank := termAt_mono (c.inv.sorted v st preMem) index (maxCommittableIndexBounded _)
     rw [termAt_of_prefix sub bound, termAt_take Nat.le.refl, atI] at rank
     change k ≤ maxCommittableTerm st.log at rank
-    simp only [voteLogUpToDate] at up
+    simp only [voteLogUpToDate, CCF.TxID.le] at up
     left
     unfold VoteRank
     split_rel up_to_date := (rcases up with lt | ⟨eq, le⟩) with
     | inl => exact .inl (Nat.lt_of_le_of_lt rank lt)
     | inr =>
       split_rel term := (rcases Nat.lt_or_eq_of_le rank with lt | same) with
-      | inl => exact .inl (Nat.lt_of_lt_of_le lt (Nat.le_of_eq eq.symm))
-      | inr => exact .inr ⟨same.trans eq.symm, Nat.le_trans index le⟩
+      | inl => exact .inl (Nat.lt_of_lt_of_le lt (Nat.le_of_eq eq))
+      | inr => exact .inr ⟨same.trans eq, Nat.le_trans index le⟩
   | inr =>
     obtain ⟨e, l', lo, hi, canon, missing⟩ := lost
     exact .inr ⟨e, l', atI ▸ lo, Nat.le_trans hi le, canon, missing⟩
@@ -6620,35 +6633,36 @@ private theorem advance_backed {middle : NodeState}
     exact old.mono after
   | inr =>
     have eq := advance.commit_eq lt
-    have ahead : middle.commitIndex < highestCommittableIndex middle c.actor :=
-      eq ▸ lt
-    obtain ⟨bound, signature, termEq, quorum⟩ := highestCommittableIndex_spec middle c.actor ahead
-    obtain ⟨voters, quorum, members⟩
-        : exists voters,
-            hasQuorum
-              (middle.activeConfigurations.filter
-                fun configuration =>
-                  configuration.index <= highestCommittableIndex middle c.actor)
-              voters
-            /\ forall voter, voter ∈ voters
-                -> voter = c.actor
-                    \/ middle.matchIndex voter >= highestCommittableIndex middle
-                        c.actor :=
-      ⟨_, quorum, fun _ mem => (Finset.mem_filter.mp mem).2⟩
     have notCandidate : Not (c.post.role = .candidate) := fun candidate => by
       have kept := advance.role_kept (by rw [candidate]; simp)
       rw [candidate, role] at kept
       cases kept
+    rw [eq]
+    dsimp only [highestCommittableIndex]
+    refine foldl_select_step _
+      (fun commit => Backed (f.advance after) c.post.log commit c.post.currentTerm)
+      _ _ (old.mono after) fun commit index member backed selected => ?_
+    obtain ⟨above, signature, termEq, quorum⟩ := selected
+    have bound : index <= middle.log.length := Nat.lt_succ_iff.mp (List.mem_range.mp member)
+    obtain ⟨voters, quorum, members⟩
+        : exists voters,
+            hasQuorum
+              ((activeConfigurations middle.log commit).filter
+                fun configuration => configuration.index <= index)
+              voters
+            /\ forall voter, voter ∈ voters
+                -> voter = c.actor \/ middle.matchIndex voter >= index :=
+      ⟨_, quorum, fun _ mem => (Finset.mem_filter.mp mem).2⟩
     have facts : CommitFacts (f.advance after).logs c.post.log c.post.currentTerm
-        middle.commitIndex c.post.commitIndex := by
+        commit index := by
       refine ⟨.inr ⟨c.actor, c.post, ⟨c.post_now, rfl, notCandidate, led⟩, rfl⟩,
-        Nat.le_of_lt lt, ?_, ?_, ?_, voters, ?_, ?_⟩
-      · rw [log, eq]
+        Nat.le_of_lt above, ?_, ?_, ?_, voters, ?_, ?_⟩
+      · rw [log]
         exact bound
-      · rw [log, eq]
+      · rw [log]
         exact signature
-      · rw [log, eq, termEq, term]
-      · rw [log, eq]
+      · rw [log, termEq, term]
+      · rw [log]
         exact quorum
       · intro voter mem
         split_rel self := (by_cases self : voter = c.actor) with
@@ -6658,11 +6672,11 @@ private theorem advance_backed {middle : NodeState}
         | neg =>
           have ge := (members voter mem).resolve_left self
           obtain ⟨acker, seen, ackerTerm, sub⟩ :=
-            acks voter self (Nat.lt_of_le_of_lt (Nat.zero_le _) (Nat.lt_of_lt_of_le ahead ge))
+            acks voter self (Nat.lt_of_le_of_lt (Nat.zero_le _) (Nat.lt_of_lt_of_le above ge))
           exact ⟨acker.log, ackerTerm ▸ seen,
-            (take_prefix_take _ (Nat.le_trans (Nat.le_of_eq eq) ge)).trans sub⟩
-    obtain ⟨earlier, part, prior, le, within⟩ := old
-    exact ⟨_, _, .link facts (prior.mono after) le within, Nat.le.refl, List.prefix_refl _⟩
+            (take_prefix_take _ ge).trans sub⟩
+    obtain ⟨earlier, part, prior, le, within⟩ := backed
+    exact ⟨_, _, .link facts prior le within, Nat.le.refl, List.prefix_refl _⟩
 
 private theorem pre_backed
     (agree : c.post.log.take c.pre.commitIndex = c.pre.log.take c.pre.commitIndex)

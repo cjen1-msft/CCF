@@ -3,16 +3,18 @@
 #pragma once
 
 #include "ccf/crypto/ec_key_pair.h"
+#include "ccf/crypto/mldsa_key_pair.h"
+#include "ccf/kv/tx.h"
 #include "ccf/service/tables/service.h"
-#include "ccf/tx.h"
 #include "kv/committable_tx.h"
 #include "node/internal_tables_access.h"
 #include "node/ledger_secrets.h"
 #include "node/share_manager.h"
 #include "service/tables/shares.h"
 
-#include <fmt/format.h>
+#include <format>
 #include <stdexcept>
+#include <utility>
 
 namespace ccf
 {
@@ -30,23 +32,26 @@ namespace ccf
   }
 
   // Opens the service: issues recovery shares for the current ledger secret,
-  // marks the service open, endorses the previous service identity with the
-  // current one, and requests a snapshot. Shared by service creation and the
-  // end of recovery; the caller is responsible for checking the node is
-  // entitled to open (it is the primary) and for any state-specific
-  // preconditions. Returns false if the service could not be opened or the
-  // previous identity could not be endorsed (both already logged), leaving
-  // the caller to decide whether that is fatal.
+  // marks the service open, endorses the previous service identity of each
+  // identity type with the current one, and requests a snapshot. Shared by
+  // service creation and the end of recovery; the caller is responsible for
+  // checking the node is entitled to open (it is the primary) and for any
+  // state-specific preconditions. pq_service_key is nullptr for a service
+  // without a PQ identity. Returns false if the service could not be opened or
+  // the previous identities could not be endorsed (both already logged),
+  // leaving the caller to decide whether that is fatal.
   [[nodiscard]] inline bool open_service(
     ccf::kv::Tx& tx,
     ShareManager& share_manager,
-    const ccf::crypto::ECKeyPair_OpenSSL& service_key)
+    const ccf::crypto::ECKeyPair_OpenSSL& service_key,
+    const ccf::crypto::MLDSAKeyPairPtr& pq_service_key)
   {
     share_manager.issue_recovery_shares(tx);
 
     if (
       !InternalTablesAccess::open_service(tx) ||
-      !InternalTablesAccess::endorse_previous_identity(tx, service_key))
+      !InternalTablesAccess::endorse_previous_identity(
+        tx, service_key, pq_service_key))
     {
       return false;
     }
@@ -62,7 +67,8 @@ namespace ccf
   inline void open_recovered_service(
     ccf::kv::Tx& tx,
     ShareManager& share_manager,
-    const ccf::crypto::ECKeyPair_OpenSSL& service_key)
+    const ccf::crypto::ECKeyPair_OpenSSL& service_key,
+    const ccf::crypto::MLDSAKeyPairPtr& pq_service_key)
   {
     {
       auto* service = tx.ro<ccf::Service>(Tables::SERVICE);
@@ -70,16 +76,16 @@ namespace ccf
 
       if (!active_service.has_value())
       {
-        throw std::logic_error(fmt::format(
+        throw std::logic_error(std::format(
           "Error in {}: no value in {}", __func__, Tables::SERVICE));
       }
 
       if (active_service->status != ServiceStatus::WAITING_FOR_RECOVERY_SHARES)
       {
-        throw std::logic_error(fmt::format(
+        throw std::logic_error(std::format(
           "Error in {}: current service status is {}",
           __func__,
-          active_service->status));
+          std::to_underlying(active_service->status)));
       }
     }
 
@@ -88,7 +94,7 @@ namespace ccf
     // the previous ledger secrets have been recovered.
     ShareManager::clear_submitted_recovery_shares(tx);
 
-    if (!open_service(tx, share_manager, service_key))
+    if (!open_service(tx, share_manager, service_key, pq_service_key))
     {
       throw std::logic_error("Service could not be opened");
     }
@@ -112,7 +118,7 @@ namespace ccf
         -> ccf::kv::ConsensusHookPtr {
         if (!w.has_value())
         {
-          throw std::logic_error(fmt::format(
+          throw std::logic_error(std::format(
             "Unexpected removal from {} table",
             Tables::ENCRYPTED_PAST_LEDGER_SECRET));
         }

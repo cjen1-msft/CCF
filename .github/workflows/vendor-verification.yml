@@ -30,7 +30,7 @@ permissions: read-all
 jobs:
   verify:
     name: Verify Vendored Dependencies
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -45,7 +45,7 @@ jobs:
         shell: bash
 
       - name: Test verifier
-        run: python3 scripts/tests/verify_vendored_dependency_test.py
+        run: scripts/tests/verify_vendored_dependency_test.py
 
       - name: Verify vendored dependencies
         run: scripts/verify-vendored-dependency.py cgmanifest.json

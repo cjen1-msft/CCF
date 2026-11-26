@@ -5,6 +5,7 @@ public import Consensus.Model.Messages
 public import Consensus.Model.NodeState
 public import CCF.Capabilities
 public import CCF.Function
+public import CCF.TxID
 
 @[expose] public section
 
@@ -64,11 +65,12 @@ def rankBelow (a b : Nat × Nat × Nat) : Bool :=
   decide (a.1 < b.1 \/ (a.1 = b.1 /\ Prod.lexLt a.2 b.2))
 
 /-- Maximize replication progress, latest active membership, then node ID. -/
-def findSuccessor (state : NodeState) (self : NodeID) : Option NodeID :=
+def findSuccessor (state : NodeState) (self : NodeID) (excluded : Finset NodeID := ∅)
+    : Option NodeID :=
   let configurations := state.activeConfigurations
   let rank node :=
     (state.matchIndex node, latestMembershipIndex configurations node, node)
-  let peers := (eligiblePeers state self).sort
+  let peers := (eligiblePeers state self \ excluded).sort
   peers.foldl
     (fun best candidate =>
       match best with
@@ -81,9 +83,10 @@ def findSuccessor (state : NodeState) (self : NodeID) : Option NodeID :=
     none
 
 def nominateSuccessor (caps : Caps) (state : NodeState) (self : NodeID)
+    (excluded : Finset NodeID := ∅)
     : NodeEffect NodeState := do
   guard (state.role = .primary)
-  if let some successor := findSuccessor state self then
+  if let some successor := findSuccessor state self excluded then
     caps.send (.proposeRequestVoteRequest state.currentTerm) successor
   return state
 
@@ -94,26 +97,27 @@ abbrev canStartElection (state : NodeState) (self : NodeID) : Prop :=
   /\ Not (state.isRetiredCommitted self)
 
 /--
-The highest current-term signature above the primary's commit index which a
-majority of every active configuration at or before that signature has reached,
-or zero when there is none.
+The primary's commit index after trying each current-term signature above it in turn.
+A signature commits if a majority of every configuration active at the commit index
+reached so far, at or before that signature, has reached it; committing it retires the
+configurations its own configuration supersedes for the signatures after it.
 -/
 def highestCommittableIndex (state : NodeState) (self : NodeID) : Nat :=
   let replicatedBy index :=
     state.activeMembers.filter fun node => node = self \/ state.matchIndex node >= index
   (List.range (state.log.length + 1)).foldl
-    (fun highest index =>
-      if index > state.commitIndex
+    (fun commitIndex index =>
+      if index > commitIndex
           /\ isSignatureAt state.log index = true
           /\ termAt state.log index = state.currentTerm
           /\ hasQuorum
-              (state.activeConfigurations.filter
+              ((activeConfigurations state.log commitIndex).filter
                 fun configuration => configuration.index <= index)
               (replicatedBy index) then
-        max highest index
+        index
       else
-        highest)
-    0
+        commitIndex)
+    state.commitIndex
 
 /--
 Record a chosen commit index, latching the original transaction index once this
@@ -138,8 +142,8 @@ def NodeState.recordCommit (node : NodeID) (state : NodeState) (commitIndex : Na
     state
 
 /--
-Retirement nominates using the precommit peer and configuration view, before
-discarding old configurations and clearing the outgoing primary's role.
+Retirement nominates using the precommit configuration view, excluding every peer
+confirmed through the transaction confirming self, before clearing the primary's role.
 -/
 def advanceCommit (caps : Caps) (state : NodeState) (self : NodeID)
     : NodeEffect NodeState := do
@@ -151,7 +155,11 @@ def advanceCommit (caps : Caps) (state : NodeState) (self : NodeID)
     let state := state.recordCommit self commitIndex
     if state.isRetiredCommitted self then
       if preCommitState.role = .primary then
-        let _ ← nominateSuccessor caps preCommitState self
+        -- Keep precommit ranking and leadership, but exclude peers retired by this transaction.
+        let excluded :=
+          retiredCommittedNodes
+            (state.log.take (state.retiredCommittedIndex.getD commitIndex))
+        let _ ← nominateSuccessor caps preCommitState self excluded
       return state
     else
       return state
@@ -217,7 +225,10 @@ def appendEntry (caps : Caps) (self : NodeID) (state : NodeState) (content : Ent
     | some nodes => do
         let previousConfiguration :=
           latestConfigurationMembers (configurationHistory state.log)
-        guard (nodes.Nonempty /\ Not (nodes = previousConfiguration))
+        guard
+          (nodes.Nonempty
+            /\ Not (nodes = previousConfiguration)
+            /\ Finset.Disjoint nodes (removedNodes state.log))
         let addedPeers := (nodes \ eligiblePeers state self).erase self
         let state : NodeState :=
           {
@@ -392,9 +403,9 @@ def handleAppendEntriesResponse
 /-! ## Handling elections -/
 
 abbrev voteLogUpToDate (state : NodeState) (request : RequestVoteRequest) : Prop :=
-  request.lastCommittableTerm > maxCommittableTerm state.log
-  \/ (request.lastCommittableTerm = maxCommittableTerm state.log
-      /\ request.lastCommittableIndex >= maxCommittableIndex state.log)
+  CCF.TxID.le
+    { view := maxCommittableTerm state.log, seqno := maxCommittableIndex state.log }
+    { view := request.lastCommittableTerm, seqno := request.lastCommittableIndex }
 
 def handleRequestVoteRequest
     (caps : Caps)

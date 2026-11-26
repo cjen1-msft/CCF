@@ -1,6 +1,7 @@
 module
 
 public import CCF.TransitionSystem
+public import CCF.TxID
 
 @[expose] public section
 
@@ -11,11 +12,7 @@ A read-write transaction appends its number to a list and reads the resulting li
 a read-only transaction just reads that list. -/
 abbrev TxContent := Nat
 
-/-- Ledger positions use one-based views and sequence numbers; zero is a sentinel. -/
-structure TxID where
-  view : Nat
-  seqno : Nat
-deriving DecidableEq, Repr
+export CCF (TxID)
 
 /-- Only final status observations are modeled.
 Unknown and pending statuses are omitted to reduce the state space. -/
@@ -46,12 +43,14 @@ structure Entry where
 deriving DecidableEq, Repr
 
 /-- Each branch is the append-only ledger of the leader of its one-based view.
+A skipped view has an empty slot and records the commit frontier when it was skipped.
 A concrete node's ledger is represented by one of these branches or a prefix of one.
 The history is shared by all nodes and has no timestamps: its order records the
 order in which clients observe events, according to a global clock. -/
 structure State where
   history : List Event := []
   branches : List (List Entry) := []
+  skipped : List (Nat × Nat) := []
 deriving DecidableEq, Repr
 
 /-- Nondeterministic choices are explicit inputs; all indices are one-based. -/
@@ -63,7 +62,7 @@ inductive Action where
   | commit (responseIndex : Nat)
   | invalidate (responseIndex : Nat)
   | appendOther (branch : Nat)
-  | elect (branch prefixLength : Nat)
+  | elect (view source prefixLength : Nat)
 deriving DecidableEq, Repr
 
 end consistency.Model

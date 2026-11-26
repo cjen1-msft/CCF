@@ -511,7 +511,7 @@ configure_file(
 
 option(BUILD_TESTS "Build tests" ON)
 option(BUILD_UNIT_TESTS "Build unit tests" ON)
-option(CLIENT_PROTOCOLS_TEST "Test client protocols (TLS, HTTP/2)" OFF)
+option(CLIENT_PROTOCOLS_TEST "Test client TLS configuration" OFF)
 
 # Build common library for CCF enclaves
 set(
@@ -532,7 +532,6 @@ add_ccf_static_library(
     ccfcrypto
     ccf_kv
     ccf_tasks
-    nghttp2
     ${CMAKE_THREAD_LIBS_INIT}
     curl
     ccf_pal
@@ -543,9 +542,6 @@ target_include_directories(
   SYSTEM
   PUBLIC
     $<BUILD_INTERFACE:${CCF_GENERATED_DIR}>
-    $<INSTALL_INTERFACE:include/ccf/> #< This contains the private headers
-    #< which are currently under src, and
-    #< should be removed or renamed
     $<INSTALL_INTERFACE:include/>
     $<INSTALL_INTERFACE:include/3rdparty/>
 )
@@ -566,24 +562,15 @@ install(
 
 install(
   FILES
+    ${TAV_INCLUDE_DIR}/tav/byte_buffer.h
+    ${TAV_INCLUDE_DIR}/tav/byte_buffer.hpp
+    ${TAV_INCLUDE_DIR}/tav/cbor.h
     ${TAV_INCLUDE_DIR}/tav/cbor.hpp
+    ${TAV_INCLUDE_DIR}/tav/errors.h
+    ${TAV_INCLUDE_DIR}/tav/errors.hpp
     ${TAV_INCLUDE_DIR}/tav/snp.h
     ${TAV_INCLUDE_DIR}/tav/utils.h
   DESTINATION include/3rdparty/tav
-)
-install(
-  FILES ${TAV_INCLUDE_DIR}/tav/internal/cbor_abi.h
-  DESTINATION include/3rdparty/tav/internal
-)
-
-# Install all private CCF headers, which may still be needed
-install(
-  DIRECTORY src/
-  DESTINATION include/ccf/_private
-  FILES_MATCHING
-  PATTERN "*.h"
-  PATTERN "msgpack/*" EXCLUDE
-  PATTERN "*/test*" EXCLUDE
 )
 
 # Install all public CCF headers
@@ -642,29 +629,6 @@ install(TARGETS verify_attestation DESTINATION bin)
 
 if(BUILD_TESTS)
   enable_testing()
-
-  set(
-    DOCS_PYTHON
-    ""
-    CACHE FILEPATH
-    "Python interpreter for the optional documentation test"
-  )
-  if(DOCS_PYTHON)
-    add_test(
-      NAME docs
-      COMMAND
-        "${DOCS_PYTHON}" -m sphinx --fail-on-warning -b html "${CCF_DIR}/doc"
-        "${CCF_DIR}/doc/html"
-    )
-    # Its runner has no Lean; the Lean workflow checks the trace viewer's dumps.
-    set_tests_properties(
-      docs
-      PROPERTIES
-        LABELS "bucket_a;docs"
-        WORKING_DIRECTORY "${CCF_DIR}"
-        ENVIRONMENT "SKIP_TRACE_VIEWER=ON"
-    )
-  endif()
 
   # Unit tests
   if(BUILD_UNIT_TESTS)
@@ -768,10 +732,10 @@ if(BUILD_TESTS)
       add_test(
         NAME kv_trace_validation
         COMMAND
-          python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/kv_trace_validation.py
-          --binary $<TARGET_FILE:kv_test> --checker ${CCF_KV_TRACE_CHECKER}
-          --output ${CMAKE_CURRENT_BINARY_DIR}/kv-traces --seeds
-          ${CCF_KV_FUZZ_SEEDS} --seed-start ${CCF_KV_FUZZ_SEED_START} --timeout
+          ${CMAKE_CURRENT_SOURCE_DIR}/tests/kv_trace_validation.py --binary
+          $<TARGET_FILE:kv_test> --checker ${CCF_KV_TRACE_CHECKER} --output
+          ${CMAKE_CURRENT_BINARY_DIR}/kv-traces --seeds ${CCF_KV_FUZZ_SEEDS}
+          --seed-start ${CCF_KV_FUZZ_SEED_START} --timeout
           ${CCF_KV_TRACE_TIMEOUT}
       )
       # The Lean checker is built outside CMake and passed in by path.
@@ -844,6 +808,7 @@ if(BUILD_TESTS)
     add_unit_test(
       openssl_server_test
       ${CMAKE_CURRENT_SOURCE_DIR}/src/tls/test/openssl_server_test.cpp
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/tls/test/traffic_keys_test.cpp
     )
     target_link_libraries(openssl_server_test PRIVATE ccf_tasks http_parser uv)
     target_link_options(
@@ -855,6 +820,7 @@ if(BUILD_TESTS)
         "LINKER:--wrap=uv_freeaddrinfo"
         "LINKER:--wrap=socket"
         "LINKER:--wrap=SSL_do_handshake"
+        "LINKER:--wrap=SSL_shutdown"
     )
     add_unit_test(
       node_connections_test
@@ -885,7 +851,11 @@ if(BUILD_TESTS)
     )
     target_link_options(
       tracing_test
-      PRIVATE "LINKER:--wrap=send" "LINKER:--wrap=close" "LINKER:--wrap=_Znwm"
+      PRIVATE
+        "LINKER:--wrap=send"
+        "LINKER:--wrap=connect"
+        "LINKER:--wrap=close"
+        "LINKER:--wrap=_Znwm"
     )
     set_tests_properties(tracing_test PROPERTIES TIMEOUT 30)
 
@@ -1220,24 +1190,83 @@ if(BUILD_TESTS)
       PRIVATE ${CMAKE_THREAD_LIBS_INIT} ccfcrypto
     )
 
-    # Consensus driver and scenario test
-    add_executable(
-      cft_driver
-      ${CMAKE_CURRENT_SOURCE_DIR}/src/consensus/aft/test/driver.cpp
-    )
-    add_san(cft_driver)
-    add_warning_checks(cft_driver)
-    enable_coverage(cft_driver)
-    target_link_libraries(cft_driver PRIVATE ccfcrypto ccf_tasks)
-    target_include_directories(cft_driver PRIVATE src/consensus/aft)
+    # Consensus driver and scenario test. The scenarios are Lean programs,
+    # which lake compiles to a static library defining main. The driver binds
+    # the commands they call, so it can only be built with Lean installed.
+    set(CFT_SCENARIOS_DIR ${CMAKE_SOURCE_DIR}/tests/cft_scenarios)
+    find_program(LAKE lake HINTS $ENV{HOME}/.elan/bin)
+    if(LAKE)
+      execute_process(
+        COMMAND ${LAKE} env printenv LEAN_SYSROOT
+        WORKING_DIRECTORY ${CFT_SCENARIOS_DIR}
+        OUTPUT_VARIABLE LEAN_SYSROOT
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        COMMAND_ERROR_IS_FATAL ANY
+      )
+      set_property(
+        DIRECTORY
+        APPEND
+        PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/lean/lean-toolchain
+      )
+
+      # lake tracks the scenario sources itself, so always run it
+      set(
+        CFT_SCENARIOS_LIBRARY
+        ${CFT_SCENARIOS_DIR}/.lake/build/lib/libcft_Scenarios.a
+      )
+      add_custom_target(
+        cft_scenarios
+        COMMAND ${LAKE} build Scenarios:static
+        WORKING_DIRECTORY ${CFT_SCENARIOS_DIR}
+        BYPRODUCTS ${CFT_SCENARIOS_LIBRARY}
+        COMMENT "Building consensus scenarios"
+        VERBATIM
+      )
+
+      add_executable(
+        cft_driver
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/consensus/aft/test/driver.cpp
+      )
+      add_dependencies(cft_driver cft_scenarios)
+      add_san(cft_driver)
+      add_warning_checks(cft_driver)
+      enable_coverage(cft_driver)
+      # The Lean runtime exports its own unwinder. Unless libgcc_s precedes
+      # it, the C++ exceptions thrown by the driver terminate the process.
+      target_link_libraries(
+        cft_driver
+        PRIVATE
+          ${CFT_SCENARIOS_LIBRARY}
+          ccfcrypto
+          ccf_tasks
+          gcc_s
+          ${LEAN_SYSROOT}/lib/lean/libleanshared.so
+      )
+      target_include_directories(cft_driver PRIVATE src/consensus/aft)
+      target_include_directories(
+        cft_driver
+        SYSTEM
+        PRIVATE ${LEAN_SYSROOT}/include
+      )
+    else()
+      message(
+        WARNING
+        "lake not found: cft_driver will not be built, and cft_scenario_test is disabled. Install Lean (https://lean-lang.org/install/) to enable them."
+      )
+    endif()
 
     add_test(
       NAME cft_scenario_test
       COMMAND
         ${PYTHON} ${CMAKE_SOURCE_DIR}/tests/cft_scenarios_runner.py ./cft_driver
-        ${CMAKE_SOURCE_DIR}/tests/cft_scenarios/
+        ${CFT_SCENARIOS_DIR}/Scenarios/
     )
-    add_test_target(cft_scenario_test cft_driver)
+    if(LAKE)
+      add_test_target(cft_scenario_test cft_driver)
+    else()
+      add_test_target(cft_scenario_test)
+      set_tests_properties(cft_scenario_test PROPERTIES DISABLED TRUE)
+    endif()
     add_test_label(cft_scenario_test cft_scenario bucket_c)
 
     if(COVERAGE)
@@ -1250,6 +1279,68 @@ if(BUILD_TESTS)
         APPEND
         PROPERTY ENVIRONMENT "LLVM_PROFILE_FILE=cft_scenario-%p.profraw"
       )
+    endif()
+
+    # Consensus model driver: the consensus scenarios, with their commands bound
+    # to the Lean model of the protocol, and so without the implementation.
+    # Opt-in, because lake then builds the model, and fetches the formatter
+    # which the package of the model requires.
+    option(
+      CFT_MODEL_DRIVER
+      "Build cft_model_driver, which runs consensus scenarios on the Lean model"
+      OFF
+    )
+    if(CFT_MODEL_DRIVER)
+      if(NOT LAKE)
+        message(
+          FATAL_ERROR
+          "CFT_MODEL_DRIVER needs lake. Install Lean (https://lean-lang.org/install/)."
+        )
+      endif()
+
+      set(CFT_MODEL_DIR ${CMAKE_SOURCE_DIR}/tests/cft_model)
+      set(
+        CFT_MODEL_LIBRARIES
+        ${CFT_MODEL_DIR}/.lake/build/lib/libcft__model_ModelDriver.a
+        ${CMAKE_SOURCE_DIR}/lean/consensus/.lake/build/lib/libconsensus_Consensus.a
+        ${CMAKE_SOURCE_DIR}/lean/common/.lake/build/lib/libccf__common_CCF.a
+      )
+      add_custom_target(
+        cft_model
+        COMMAND
+          ${LAKE} build ModelDriver:static @consensus/Consensus:static
+          @ccf_common/CCF:static
+        WORKING_DIRECTORY ${CFT_MODEL_DIR}
+        BYPRODUCTS ${CFT_MODEL_LIBRARIES}
+        COMMENT "Building consensus model driver"
+        VERBATIM
+      )
+      # lake builds the scenarios for this package too, so never at once
+      add_dependencies(cft_model cft_scenarios)
+
+      add_executable(cft_model_driver ${CFT_MODEL_DIR}/shim.c)
+      add_dependencies(cft_model_driver cft_model)
+      # The model driver library comes first, so that its main is linked, and
+      # not that of the scenario library.
+      target_link_libraries(
+        cft_model_driver
+        PRIVATE
+          ${CFT_MODEL_LIBRARIES}
+          ${CFT_SCENARIOS_LIBRARY}
+          ${LEAN_SYSROOT}/lib/lean/libleanshared.so
+      )
+      target_include_directories(
+        cft_model_driver
+        SYSTEM
+        PRIVATE ${LEAN_SYSROOT}/include
+      )
+
+      # Writes the trace of each scenario to consensus/model/
+      add_test(
+        NAME cft_model_test
+        COMMAND cft_model_driver --all consensus/model
+      )
+      add_test_target(cft_model_test cft_model_driver)
     endif()
 
     add_test(
@@ -1624,17 +1715,6 @@ if(BUILD_TESTS)
   )
 
   add_e2e_test(
-    NAME e2e_logging_http2
-    PYTHON_SCRIPT ${CMAKE_SOURCE_DIR}/tests/e2e_logging.py
-    BUCKET bucket_b
-    BUILD_DEPENDS logging logging_cose_only programmability js_generic
-    ADDITIONAL_ARGS
-      --js-app-bundle
-      ${CMAKE_SOURCE_DIR}/samples/apps/logging/js
-      --http2
-  )
-
-  add_e2e_test(
     NAME partitions
     PYTHON_SCRIPT ${CMAKE_SOURCE_DIR}/tests/partitions_test.py
     LABEL partitions
@@ -1643,11 +1723,14 @@ if(BUILD_TESTS)
     CONFIGURATIONS partitions
   )
 
-  set_property(
-    TEST partitions
-    APPEND
-    PROPERTY ENVIRONMENT "XTABLES_LIBDIR=/usr/lib/iptables"
-  )
+  # Azure Linux 3 installs iptables extensions outside the default search path.
+  if(EXISTS "/usr/lib/iptables")
+    set_property(
+      TEST partitions
+      APPEND
+      PROPERTY ENVIRONMENT "XTABLES_LIBDIR=/usr/lib/iptables"
+    )
+  endif()
 
   add_e2e_test(
     NAME tls_stress_test

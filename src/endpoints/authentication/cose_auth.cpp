@@ -4,6 +4,7 @@
 #include "ccf/endpoints/authentication/cose_auth.h"
 
 #include "ccf/crypto/cose_verifier.h"
+#include "ccf/crypto/did_key.h"
 #include "ccf/crypto/ec_public_key.h"
 #include "ccf/http_consts.h"
 #include "ccf/rpc_context.h"
@@ -13,6 +14,7 @@
 #include "crypto/cbor_tags.h"
 #include "crypto/cose.h"
 
+#include <format>
 #include <tav/cbor.hpp>
 
 namespace
@@ -82,7 +84,8 @@ namespace ccf
             phdr.map_at(make_string(HEADER_PARAM_MSG_CREATED_AT)).as_signed();
           if (value < 0)
           {
-            throw DecodeError(Error::TYPE_MISMATCH, "Must be non-negative");
+            throw tav::Exception(
+              tav::ErrorCode::CBOR_TYPE_MISMATCH, "Must be non-negative");
           }
           return value;
         },
@@ -94,9 +97,9 @@ namespace ccf
           return phdr.map_at(make_string(HEADER_PARAM_MSG_TYPE)).as_string();
         });
       }
-      catch (const DecodeError& err)
+      catch (const tav::Exception& err)
       {
-        if (err.error_code() != Error::KEY_NOT_FOUND)
+        if (err.code() != tav::ErrorCode::CBOR_KEY_NOT_FOUND)
         {
           throw;
         }
@@ -109,9 +112,9 @@ namespace ccf
             .as_string();
         });
       }
-      catch (const DecodeError& err)
+      catch (const tav::Exception& err)
       {
-        if (err.error_code() != Error::KEY_NOT_FOUND)
+        if (err.code() != tav::ErrorCode::CBOR_KEY_NOT_FOUND)
         {
           throw;
         }
@@ -176,9 +179,9 @@ namespace ccf
           },
           "Parse msg type in protected header");
       }
-      catch (const DecodeError& err)
+      catch (const tav::Exception& err)
       {
-        if (err.error_code() != Error::KEY_NOT_FOUND)
+        if (err.code() != tav::ErrorCode::CBOR_KEY_NOT_FOUND)
         {
           throw;
         }
@@ -193,15 +196,15 @@ namespace ccf
           "Parse created_at in protected header");
         if (val < 0)
         {
-          throw DecodeError(
-            Error::TYPE_MISMATCH,
+          throw tav::Exception(
+            tav::ErrorCode::CBOR_TYPE_MISMATCH,
             "Header parameter created_at must be positive");
         }
         parsed.msg_created_at = val;
       }
-      catch (const DecodeError& err)
+      catch (const tav::Exception& err)
       {
-        if (err.error_code() != Error::KEY_NOT_FOUND)
+        if (err.code() != tav::ErrorCode::CBOR_KEY_NOT_FOUND)
         {
           throw;
         }
@@ -238,12 +241,12 @@ namespace ccf
     if (content_type_it == headers.end())
     {
       error_reason =
-        fmt::format("Missing {} header", http::headers::CONTENT_TYPE);
+        std::format("Missing {} header", http::headers::CONTENT_TYPE);
       return nullptr;
     }
     if (content_type_it->second != http::headervalues::contenttype::COSE)
     {
-      error_reason = fmt::format(
+      error_reason = std::format(
         "Content type is not set to {}", http::headervalues::contenttype::COSE);
       return nullptr;
     }
@@ -254,17 +257,27 @@ namespace ccf
 
     if (!cose::is_ecdsa_alg(phdr.alg))
     {
-      error_reason = fmt::format("Unsupported algorithm: {}", phdr.alg);
+      error_reason = std::format("Unsupported algorithm: {}", phdr.alg);
       return nullptr;
     }
 
     MemberCerts members_certs_table(Tables::MEMBER_CERTS);
     auto* member_certs = tx.ro(members_certs_table);
     auto member_cert = member_certs->get(phdr.kid);
-    if (member_cert.has_value())
+    auto member_key =
+      tx.ro<MemberPublicKeys>(Tables::MEMBER_PUBLIC_KEYS)->get(phdr.kid);
+    if (member_cert.has_value() || member_key.has_value())
     {
-      auto verifier =
-        ccf::crypto::make_cose_verifier_from_pem_cert(member_cert.value());
+      if (
+        member_key.has_value() &&
+        crypto::did_key_from_public_key_der(*member_key) != phdr.kid)
+      {
+        error_reason = "Enrolled did:key does not match its public key";
+        return nullptr;
+      }
+      auto verifier = member_key.has_value() ?
+        ccf::crypto::make_cose_verifier_from_key(*member_key) :
+        ccf::crypto::make_cose_verifier_from_pem_cert(*member_cert);
 
       if (!verifier->verify_decomposed(
             decomposed.phdr_bytes,
@@ -272,7 +285,7 @@ namespace ccf
             decomposed.sig,
             decomposed.alg))
       {
-        error_reason = fmt::format("Failed to validate COSE Sign1");
+        error_reason = std::format("Failed to validate COSE Sign1");
         return nullptr;
       }
 
@@ -286,7 +299,7 @@ namespace ccf
       {
         if (!phdr.gov_msg_type.has_value())
         {
-          error_reason = fmt::format(
+          error_reason = std::format(
             "Missing ccf.gov.msg.type, expected ccf.gov.msg.type to be {}",
             gov_msg_type.value());
           return nullptr;
@@ -294,7 +307,7 @@ namespace ccf
 
         if (phdr.gov_msg_type.value() != gov_msg_type.value())
         {
-          error_reason = fmt::format(
+          error_reason = std::format(
             "Found ccf.gov.msg.type set to {}, expected ccf.gov.msg.type to be "
             "{}",
             phdr.gov_msg_type.value(),
@@ -308,10 +321,10 @@ namespace ccf
         body,
         decomposed.sig,
         phdr.kid,
-        member_cert.value(),
+        member_cert.value_or(ccf::crypto::Pem{}),
         phdr);
     }
-    error_reason = fmt::format("Signer is not a known member");
+    error_reason = std::format("Signer is not a known member");
     return nullptr;
   }
 
@@ -383,12 +396,12 @@ namespace ccf
     if (content_type_it == headers.end())
     {
       error_reason =
-        fmt::format("Missing {} header", http::headers::CONTENT_TYPE);
+        std::format("Missing {} header", http::headers::CONTENT_TYPE);
       return nullptr;
     }
     if (content_type_it->second != http::headervalues::contenttype::COSE)
     {
-      error_reason = fmt::format(
+      error_reason = std::format(
         "Content type is not set to {}", http::headervalues::contenttype::COSE);
       return nullptr;
     }
@@ -398,17 +411,27 @@ namespace ccf
 
     if (!cose::is_ecdsa_alg(phdr.alg))
     {
-      error_reason = fmt::format("Unsupported algorithm: {}", phdr.alg);
+      error_reason = std::format("Unsupported algorithm: {}", phdr.alg);
       return nullptr;
     }
 
     UserCerts users_certs_table(Tables::USER_CERTS);
     auto* user_certs = tx.ro(users_certs_table);
     auto user_cert = user_certs->get(phdr.kid);
-    if (user_cert.has_value())
+    auto user_key =
+      tx.ro<UserPublicKeys>(Tables::USER_PUBLIC_KEYS)->get(phdr.kid);
+    if (user_cert.has_value() || user_key.has_value())
     {
-      auto verifier =
-        ccf::crypto::make_cose_verifier_from_pem_cert(user_cert.value());
+      if (
+        user_key.has_value() &&
+        crypto::did_key_from_public_key_der(*user_key) != phdr.kid)
+      {
+        error_reason = "Enrolled did:key does not match its public key";
+        return nullptr;
+      }
+      auto verifier = user_key.has_value() ?
+        ccf::crypto::make_cose_verifier_from_key(*user_key) :
+        ccf::crypto::make_cose_verifier_from_pem_cert(*user_cert);
 
       if (!verifier->verify_decomposed(
             decomposed.phdr_bytes,
@@ -416,7 +439,7 @@ namespace ccf
             decomposed.sig,
             decomposed.alg))
       {
-        error_reason = fmt::format("Failed to validate COSE Sign1");
+        error_reason = std::format("Failed to validate COSE Sign1");
         return nullptr;
       }
 
@@ -431,10 +454,10 @@ namespace ccf
         body,
         decomposed.sig,
         phdr.kid,
-        user_cert.value(),
+        user_cert.value_or(ccf::crypto::Pem{}),
         phdr);
     }
-    error_reason = fmt::format("Signer is not a known user");
+    error_reason = std::format("Signer is not a known user");
     return nullptr;
   }
 
@@ -480,9 +503,9 @@ namespace ccf
       identity != nullptr &&
       identity->protected_header.msg_type != expected_msg_type)
     {
-      error_reason = fmt::format(
+      error_reason = std::format(
         "Unexpected message type: {}, expected: {}",
-        identity->protected_header.msg_type,
+        identity->protected_header.msg_type.value_or("<missing>"),
         expected_msg_type);
       return nullptr;
     }

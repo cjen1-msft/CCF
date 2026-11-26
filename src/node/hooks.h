@@ -8,6 +8,7 @@
 #include "service/tables/config.h"
 #include "service/tables/signatures.h"
 
+#include <format>
 #include <stdexcept>
 
 namespace ccf
@@ -22,6 +23,7 @@ namespace ccf
   {
     ccf::kv::Version version;
     std::map<NodeId, std::optional<NodeAddr>> cfg_delta;
+    std::vector<NodeId> retired_committed;
 
   public:
     ConfigurationChangeHook(ccf::kv::Version version_, const Nodes::Write& w) :
@@ -45,6 +47,10 @@ namespace ccf
         }
 
         const auto& ni = opt_ni.value();
+        if (ni.retired_committed)
+        {
+          retired_committed.push_back(node_id);
+        }
         const auto [host, port] =
           split_net_address(ni.node_to_node_interface.published_address);
         switch (ni.status)
@@ -67,7 +73,7 @@ namespace ccf
           }
           default:
           {
-            throw std::logic_error(fmt::format(
+            throw std::logic_error(std::format(
               "Unknown node status {} for node {} in configuration change hook",
               static_cast<uint8_t>(ni.status),
               node_id));
@@ -76,8 +82,16 @@ namespace ccf
       }
     }
 
+    // Called under the consensus lock when the write is replicated or applied,
+    // and without it when installing a snapshot or recovering a public ledger.
+    // Traces retired_committed nodes before any add_configuration.
     void call(ccf::kv::ConfigurableConsensus* consensus) override
     {
+      if (!retired_committed.empty())
+      {
+        consensus->trace_retired_committed_tx(version, retired_committed);
+      }
+
       auto configuration = consensus->get_latest_configuration_unsafe();
       bool configuration_changed = false;
       for (const auto& [node_id, opt_ni] : cfg_delta)

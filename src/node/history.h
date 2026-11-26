@@ -28,8 +28,10 @@
 #include <array>
 #include <atomic>
 #include <deque>
+#include <format>
 #include <memory>
 #include <string.h>
+#include <utility>
 
 #define HAVE_OPENSSL
 // merklecpp traces are off by default, even when CCF tracing is enabled
@@ -86,7 +88,7 @@ namespace ccf
 
   static inline void log_hash(const ccf::crypto::Sha256Hash& h, HashOp flag)
   {
-    LOG_TRACE_FMT("History [{}] {}", flag, h);
+    LOG_TRACE_FMT("History [{}] {}", std::to_underlying(flag), h);
   }
 
   // Use optimised CCF openssl_sha256 function to avoid performance regression
@@ -165,6 +167,30 @@ namespace ccf
       return v;
     }
   };
+
+  // Encodes the inclusion proof carried by a COSE receipt, for the leaf with
+  // these components and its path in a HistoryTree
+  static inline std::vector<uint8_t> encode_merkle_proof(
+    const ccf::crypto::Sha256Hash& write_set_digest,
+    const std::string& commit_evidence,
+    const ccf::crypto::Sha256Hash& claims_digest,
+    const HistoryTree::Path& path)
+  {
+    cose::MerkleProof proof;
+    proof.leaf.write_set_digest.assign(
+      write_set_digest.h.begin(), write_set_digest.h.end());
+    proof.leaf.commit_evidence = commit_evidence;
+    proof.leaf.claims_digest.assign(
+      claims_digest.h.begin(), claims_digest.h.end());
+    for (const auto& element : path)
+    {
+      proof.path.emplace_back(
+        element.direction == HistoryTree::Path::Direction::PATH_LEFT ? 1 : 0,
+        std::vector<uint8_t>(
+          element.hash.bytes, element.hash.bytes + element.hash.size()));
+    }
+    return cose::encode_merkle_proof(proof);
+  }
 
   template <class T>
   class MerkleTreeHistoryPendingTx : public ccf::kv::PendingTx
@@ -319,7 +345,7 @@ namespace ccf
     {
       if (index < begin_index())
       {
-        throw std::logic_error(fmt::format(
+        throw std::logic_error(std::format(
           "Cannot produce proof for {}: index is older than first index {}, "
           "and has been flushed from memory",
           index,
@@ -327,7 +353,7 @@ namespace ccf
       }
       if (index > end_index())
       {
-        throw std::logic_error(fmt::format(
+        throw std::logic_error(std::format(
           "Cannot produce proof for {}: index is later than last index {}",
           index,
           end_index()));
@@ -802,7 +828,7 @@ namespace ccf
       if (endorsed_cert_ == nullptr)
       {
         throw std::logic_error(
-          fmt::format("No endorsed certificate set to emit signature"));
+          std::format("No endorsed certificate set to emit signature"));
       }
 
       auto txid = store.next_txid();
@@ -812,7 +838,7 @@ namespace ccf
       if (!signing_identity.has_value())
       {
         throw std::logic_error(
-          fmt::format("No service key has been set yet to sign"));
+          std::format("No service key has been set yet to sign"));
       }
 
       store.commit(

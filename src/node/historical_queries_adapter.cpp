@@ -14,56 +14,6 @@
 #include "node/signature_cache_interface.h"
 #include "node/tx_receipt_impl.h"
 
-#include <tav/cbor.hpp>
-
-namespace
-{
-  tav::cbor::Value encode_leaf_cbor(const ccf::TxReceiptImpl& receipt)
-  {
-    using namespace tav::cbor;
-    std::vector<Value> items;
-
-    // 1 WSD
-    if (!receipt.write_set_digest.has_value())
-    {
-      throw std::logic_error("Write set digest is required for COSE receipts");
-    }
-    items.push_back(make_bytes(receipt.write_set_digest->h));
-
-    // 2. CE
-    if (!receipt.commit_evidence.has_value())
-    {
-      throw std::logic_error("Commit evidence is required for COSE receipts");
-    }
-    items.push_back(make_string(receipt.commit_evidence.value()));
-
-    // 3. CD
-    items.push_back(make_bytes(receipt.claims_digest.value().h));
-
-    return make_array(std::move(items));
-  }
-
-  tav::cbor::Value encode_path_cbor(const ccf::HistoryTree::Path& path)
-  {
-    using namespace tav::cbor;
-    std::vector<Value> items;
-
-    for (const auto& node : path)
-    {
-      const bool dir =
-        (node.direction == ccf::HistoryTree::Path::Direction::PATH_LEFT);
-
-      std::span<const uint8_t> hash{node.hash.bytes, node.hash.size()};
-      std::vector<Value> path_element;
-      path_element.push_back(make_simple(boolean_to_simple(dir)));
-      path_element.push_back(make_bytes(hash));
-
-      items.push_back(make_array(std::move(path_element)));
-    }
-    return make_array(std::move(items));
-  }
-}
-
 namespace ccf
 {
   nlohmann::json describe_receipt_v1(const TxReceiptImpl& receipt)
@@ -75,7 +25,7 @@ namespace ccf
     {
       throw std::logic_error("describe_receipt_v1 requires a raw signature TX");
     }
-    out["signature"] = ccf::crypto::b64_from_raw(receipt.signature.value());
+    out["signature"] = ccf::ds::b64_from_raw(receipt.signature.value());
 
     auto proof = nlohmann::json::array();
     if (receipt.path != nullptr)
@@ -247,19 +197,11 @@ namespace ccf
       return std::nullopt;
     }
 
-    using namespace tav::cbor;
-    std::vector<MapItem> proof;
-
-    proof.emplace_back(
-      make_signed(ccf::MerkleProofLabel::MERKLE_PROOF_LEAF_LABEL),
-      encode_leaf_cbor(receipt));
-
-    proof.emplace_back(
-      make_signed(ccf::MerkleProofLabel::MERKLE_PROOF_PATH_LABEL),
-      encode_path_cbor(*receipt.path));
-
-    auto proof_map = make_map(std::move(proof));
-    return proof_map.nondet_serialize();
+    return encode_merkle_proof(
+      receipt.write_set_digest.value(),
+      receipt.commit_evidence.value(),
+      receipt.claims_digest.value(),
+      *receipt.path);
   }
 
   std::optional<SerialisedCoseEndorsements> describe_cose_endorsements_v1(
@@ -314,7 +256,7 @@ namespace ccf::endpoints
       info.rpc_ctx->set_error(
         HTTP_STATUS_INTERNAL_SERVER_ERROR,
         ccf::errors::InternalError,
-        fmt::format(
+        std::format(
           "Cannot construct receipt for TxID {}: transaction produced no "
           "write set (read-only transactions do not have receipts)",
           info.tx_id.to_str()));
@@ -337,7 +279,7 @@ namespace ccf::endpoints
       info.rpc_ctx->set_error(
         HTTP_STATUS_INTERNAL_SERVER_ERROR,
         ccf::errors::InternalError,
-        fmt::format(
+        std::format(
           "No cached signature found covering TxID {}", info.tx_id.to_str()));
       return nullptr;
     }
@@ -350,7 +292,7 @@ namespace ccf::endpoints
       info.rpc_ctx->set_error(
         HTTP_STATUS_INTERNAL_SERVER_ERROR,
         ccf::errors::InternalError,
-        fmt::format(
+        std::format(
           "Seqno {} is not in range of cached signature tree",
           info.tx_id.seqno));
       return nullptr;
@@ -393,7 +335,7 @@ namespace ccf::historical
       args.rpc_ctx->set_error(
         HTTP_STATUS_BAD_REQUEST,
         ccf::errors::MissingRequiredHeader,
-        fmt::format(
+        std::format(
           "Historical query is missing '{}' header.",
           http::headers::CCF_TX_ID));
       return std::nullopt;
@@ -405,7 +347,7 @@ namespace ccf::historical
       args.rpc_ctx->set_error(
         HTTP_STATUS_BAD_REQUEST,
         ccf::errors::InvalidHeaderValue,
-        fmt::format(
+        std::format(
           "The value '{}' in header '{}' could not be converted to a valid "
           "Tx ID.",
           tx_id_header.value(),
@@ -463,7 +405,8 @@ namespace ccf::historical
       }
       default:
       {
-        LOG_FAIL_FMT("Unexpected historical query error {}", err);
+        LOG_FAIL_FMT(
+          "Unexpected historical query error {}", std::to_underlying(err));
       }
     }
   }
@@ -487,7 +430,7 @@ namespace ccf::historical
       case ccf::TxStatus::Unknown:
       case ccf::TxStatus::Pending:
       {
-        error_reason = fmt::format(
+        error_reason = std::format(
           "Only committed transactions can be queried. Transaction {}.{} "
           "is "
           "{}",
@@ -498,7 +441,7 @@ namespace ccf::historical
       }
       case ccf::TxStatus::Invalid:
       {
-        error_reason = fmt::format(
+        error_reason = std::format(
           "Only committed transactions can be queried. Transaction {}.{} "
           "is "
           "{}",
@@ -558,7 +501,7 @@ namespace ccf::historical
 
       // Check that the requested transaction ID is available
       {
-        auto error_reason = fmt::format(
+        auto error_reason = std::format(
           "Transaction {} is not available.", target_tx_id.to_str());
         auto is_available =
           available(target_tx_id.view, target_tx_id.seqno, error_reason);
@@ -607,7 +550,7 @@ namespace ccf::historical
           active_service->current_service_create_txid &&
           target_tx_id.view < active_service->current_service_create_txid->view)
         {
-          auto reason = fmt::format(
+          auto reason = std::format(
             "Historical transaction {} is not signed by the current service "
             "identity key and cannot be retrieved until recovery is complete.",
             target_tx_id.to_str());
@@ -640,7 +583,7 @@ namespace ccf::historical
           !populate_cose_service_endorsements(
             args.tx, historical_state, network_identity_subsystem))
         {
-          auto reason = fmt::format(
+          auto reason = std::format(
             "Historical transaction {} is not currently available.",
             target_tx_id.to_str());
           ehandler(
@@ -652,7 +595,7 @@ namespace ccf::historical
       }
       catch (const std::exception& e)
       {
-        auto reason = fmt::format(
+        auto reason = std::format(
           "Historical transaction {} failed with error: {}",
           target_tx_id.to_str(),
           e.what());

@@ -11,6 +11,7 @@
 #include <crypto/cbor_tags.h>
 #include <crypto/cose.h>
 #include <crypto/cose_utils.h>
+#include <format>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -38,7 +39,7 @@ namespace ccf::cose
         return phdr.map_at(make_signed(ccf::cose::header::iana::ALG))
           .as_signed();
       },
-      fmt::format(
+      std::format(
         "Parse protected header alg({})", ccf::cose::header::iana::ALG));
 
     try
@@ -49,12 +50,12 @@ namespace ccf::cose
       {
         hdr.cty = std::string(cty.as_string());
       }
-      catch (const DecodeError&)
+      catch (const tav::Exception&)
       {
         hdr.cty = cty.as_signed();
       }
     }
-    catch (const DecodeError& err)
+    catch (const tav::Exception& err)
     {
       std::ignore = err; // optional field
     }
@@ -65,7 +66,7 @@ namespace ccf::cose
           phdr.map_at(make_signed(ccf::cose::header::iana::X5CHAIN));
         return ccf::cose::utils::parse_x5chain(x5chain_val);
       },
-      fmt::format(
+      std::format(
         "Parse protected header x5chain({})",
         ccf::cose::header::iana::X5CHAIN));
 
@@ -120,7 +121,7 @@ namespace ccf::cose
   {
     if (bytes.size() != ccf::crypto::Sha256Hash::SIZE)
     {
-      throw COSEDecodeError(fmt::format(
+      throw COSEDecodeError(std::format(
         "Unsupported {} size: {} (expected {})",
         field,
         bytes.size(),
@@ -172,7 +173,7 @@ namespace ccf::cose
     if (value.kind() != tav::cbor::Kind::ARRAY || value.size() != size)
     {
       throw COSEDecodeError(
-        fmt::format("{} must be an array of {} elements", field, size));
+        std::format("{} must be an array of {} elements", field, size));
     }
   }
 
@@ -200,6 +201,37 @@ namespace ccf::cose
     return decoded;
   }
 
+  // Encodes an inclusion proof as carried in the unprotected header of CCF
+  // COSE receipts: {1: [write_set_digest, commit_evidence, claims_digest],
+  // 2: [[left, sibling digest], ...]}
+  static std::vector<uint8_t> encode_merkle_proof(const MerkleProof& proof)
+  {
+    using namespace tav::cbor;
+
+    std::vector<Value> leaf;
+    leaf.push_back(make_bytes(proof.leaf.write_set_digest));
+    leaf.push_back(make_string(proof.leaf.commit_evidence));
+    leaf.push_back(make_bytes(proof.leaf.claims_digest));
+
+    std::vector<Value> path;
+    for (const auto& [left, sibling] : proof.path)
+    {
+      std::vector<Value> element;
+      element.push_back(make_simple(boolean_to_simple(left != 0)));
+      element.push_back(make_bytes(sibling));
+      path.push_back(make_array(std::move(element)));
+    }
+
+    std::vector<MapItem> encoded;
+    encoded.emplace_back(
+      make_signed(ccf::MerkleProofLabel::MERKLE_PROOF_LEAF_LABEL),
+      make_array(std::move(leaf)));
+    encoded.emplace_back(
+      make_signed(ccf::MerkleProofLabel::MERKLE_PROOF_PATH_LABEL),
+      make_array(std::move(path)));
+    return make_map(std::move(encoded)).nondet_serialize();
+  }
+
   static void decode_ccf_claims(const tav::cbor::Value& cbor, CcfClaims& claims)
   {
     using namespace tav::cbor;
@@ -215,7 +247,7 @@ namespace ccf::cose
         return ccf_claims.map_at(make_string(ccf::cose::header::custom::TX_ID))
           .as_string();
       },
-      fmt::format(
+      std::format(
         "Parse CCF claims TxID ({}) field", ccf::cose::header::custom::TX_ID));
   }
 
@@ -230,7 +262,7 @@ namespace ccf::cose
         return cbor.map_at(make_signed(ccf::cose::header::iana::ALG))
           .as_signed();
       },
-      fmt::format(
+      std::format(
         "Parse protected header alg({})", ccf::cose::header::iana::ALG));
 
     rethrow_with_msg(
@@ -239,7 +271,7 @@ namespace ccf::cose
           cbor.map_at(make_signed(ccf::cose::header::iana::KID)).as_bytes();
         phdr.kid.assign(bytes.begin(), bytes.end());
       },
-      fmt::format(
+      std::format(
         "Parse protected header kid({})", ccf::cose::header::iana::KID));
 
     const auto vds = rethrow_with_msg(
@@ -247,13 +279,13 @@ namespace ccf::cose
         return cbor.map_at(make_signed(ccf::cose::header::iana::VDS))
           .as_signed();
       },
-      fmt::format(
+      std::format(
         "Parse protected header vds({})", ccf::cose::header::iana::VDS));
 
     if (vds != ccf::cose::value::CCF_LEDGER_SHA256)
     {
       throw COSEDecodeError(
-        fmt::format("Unsupported vds value ({}) in protected header", vds));
+        std::format("Unsupported vds value ({}) in protected header", vds));
     }
 
     phdr.vds = static_cast<int>(vds);
@@ -282,7 +314,7 @@ namespace ccf::cose
 
     const auto vdp = rethrow_with_msg(
       [&]() { return uhdr.map_at(make_signed(ccf::cose::header::iana::VDP)); },
-      fmt::format("Parse vdp() map", ccf::cose::header::iana::VDP));
+      std::format("Parse vdp() map", ccf::cose::header::iana::VDP));
 
     if (vdp.kind() != Kind::MAP)
     {
@@ -364,7 +396,7 @@ namespace ccf::cose
         proof.leaf.commit_evidence.empty() ||
         proof.leaf.commit_evidence.size() > MAX_COMMIT_EVIDENCE_SIZE)
       {
-        throw COSEDecodeError(fmt::format(
+        throw COSEDecodeError(std::format(
           "Merkle proof commit evidence must contain 1 to {} UTF-8 bytes",
           MAX_COMMIT_EVIDENCE_SIZE));
       }
@@ -496,7 +528,7 @@ namespace ccf::cose
       {
         if (proofs[i].leaf.claims_digest != receipt.claims_digest)
         {
-          throw COSEDecodeError(fmt::format(
+          throw COSEDecodeError(std::format(
             "Claims from proofs don't match: {} != {}",
             ds::to_hex(receipt.claims_digest),
             ds::to_hex(proofs[i].leaf.claims_digest)));

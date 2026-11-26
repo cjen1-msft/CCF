@@ -26,8 +26,9 @@ uv=$(command -v uv)
 
 package_version=$(
     "$uv" run --no-project --with packaging \
-        python scripts/validate_python_version.py "$BUILD_SOURCEBRANCH"
+        python scripts/derive_python_version.py "$BUILD_SOURCEBRANCH"
 )
+"$uv" version --project python --frozen "$package_version"
 
 rm -rf python/dist
 "$uv" build --wheel python
@@ -40,7 +41,7 @@ if [[ ${#wheels[@]} -ne 1 ]]; then
 fi
 wheel=${wheels[0]}
 
-python3 scripts/validate_python_package.py "$wheel" "$package_version"
+scripts/validate_python_package.py "$wheel" "$package_version"
 
 venv_dir=$(mktemp -d /tmp/ccf-wheel-test.XXXXXX)
 cleanup() {

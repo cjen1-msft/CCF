@@ -27,6 +27,7 @@ CCF (Confidential Consortium Framework) is a replicated state machine for confid
 - For C/C++ changes and security-sensitive reviews in any language, read [security/safety review guidance and C/C++ conventions](/.github/instructions/reviewing.instructions.md).
 - Before selecting, running, or writing tests, load the [testing skill](/.github/skills/testing/SKILL.md).
 - Before formatting or linting, load the [formatting-and-linting skill](/.github/skills/formatting-and-linting/SKILL.md).
+- Before preparing or updating a PR that targets a `release/N.x` branch, load the [backporting skill](/.github/skills/backporting/SKILL.md).
 - In Markdown and reStructuredText prose, do not manually wrap prose to a fixed column width or insert line breaks within a sentence.
   When editing an existing paragraph, put each sentence in that paragraph on its own line.
 - For user-facing API or behaviour changes, update existing documentation and add a change description following the [change-description instructions](/.github/instructions/changelog.instructions.md).
@@ -58,8 +59,8 @@ The default configuration is `RelWithDebInfo`. For a separate Debug build, selec
 For RST changes, build Sphinx from the repository root in a Python virtual environment with the documentation dependencies:
 
 ```bash
-uv pip install -r doc/requirements.txt -r doc/historical_ccf_requirements.txt
-sphinx-build --fail-on-warning -b html doc doc/html
+uv pip install -e ./python -r doc/requirements.txt
+python -m sphinx --fail-on-warning -b html -d build/doc-doctrees doc build/html/main
 ```
 
 ### Python

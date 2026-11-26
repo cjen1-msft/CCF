@@ -3,7 +3,11 @@
 
 #include "node/snapshotter.h"
 
+#include "ccf/ds/x509_time_fmt.h"
+#include "crypto/certs.h"
+#include "crypto/cose.h"
 #include "crypto/openssl/hash.h"
+#include "crypto/public_key.h"
 #include "ds/files.h"
 #include "ds/internal_logger.h"
 #include "kv/null_encryptor.h"
@@ -13,6 +17,8 @@
 #include "node/recovery_snapshot_ledger.h"
 #include "node/snapshot_serdes.h"
 #include "snapshots/filenames.h"
+
+#include <format>
 
 #define DOCTEST_CONFIG_IMPLEMENT
 #include <chrono>
@@ -43,7 +49,7 @@ struct ScopedSnapshotDir
 
   ScopedSnapshotDir()
   {
-    const auto unique_name = fmt::format(
+    const auto unique_name = std::format(
       "ccf-snapshotter-test-{}-{}",
       ::getpid(),
       std::chrono::steady_clock::now().time_since_epoch().count());
@@ -455,7 +461,7 @@ TEST_CASE("Recovery snapshot ledger scan filters directory contents")
     fixture.ledger_config.directory = path.string();
     REQUIRE_THROWS_WITH_AS(
       ccf::find_recovery_snapshot_ledger_files(fixture.ledger_config),
-      fmt::format(
+      std::format(
         "Unable to iterate ledger directory {}: {}",
         path.string(),
         std::make_error_code(std::errc::not_a_directory).message())
@@ -470,7 +476,7 @@ TEST_CASE("Recovery snapshot ledger scan filters directory contents")
     fixture.ledger_config.directory = path.string();
     REQUIRE_THROWS_WITH_AS(
       ccf::find_recovery_snapshot_ledger_files(fixture.ledger_config),
-      fmt::format(
+      std::format(
         "Unable to inspect ledger directory {}: {}",
         path.string(),
         std::make_error_code(std::errc::too_many_symbolic_link_levels)
@@ -495,7 +501,7 @@ TEST_CASE("Recovery snapshot ledger scan validates chunk headers")
     REQUIRE(fs::remove(current_path));
     REQUIRE_THROWS_WITH_AS(
       ccf::open_recovery_snapshot_ledger_file(files.front()),
-      fmt::format("Unable to open ledger file {}", current_path.string())
+      std::format("Unable to open ledger file {}", current_path.string())
         .c_str(),
       std::logic_error);
   }
@@ -508,7 +514,7 @@ TEST_CASE("Recovery snapshot ledger scan validates chunk headers")
       fs::resize_file(current_path, size);
       REQUIRE_THROWS_WITH_AS(
         fixture.scan(),
-        fmt::format("Ledger file {} is too small", current_path.string())
+        std::format("Ledger file {} is too small", current_path.string())
           .c_str(),
         std::logic_error);
     }
@@ -521,7 +527,7 @@ TEST_CASE("Recovery snapshot ledger scan validates chunk headers")
     fs::rename(current_path, committed_path);
     REQUIRE_THROWS_WITH_AS(
       fixture.scan(),
-      fmt::format(
+      std::format(
         "Committed ledger file {} has no positions table",
         committed_path.string())
         .c_str(),
@@ -545,7 +551,7 @@ TEST_CASE("Recovery snapshot ledger scan validates chunk headers")
       }
       REQUIRE_THROWS_WITH_AS(
         fixture.scan(),
-        fmt::format(
+        std::format(
           "Ledger file {} has invalid positions table offset {}",
           committed_path.string(),
           offset)
@@ -584,7 +590,7 @@ TEST_CASE("Recovery snapshot ledger reader reports truncation after opening")
   REQUIRE(reader.file);
   REQUIRE_THROWS_WITH_AS(
     ccf::read_recovery_snapshot_ledger_entry(reader, ledger_file),
-    fmt::format("Unable to read {} from ledger file {}", error, path.string())
+    std::format("Unable to read {} from ledger file {}", error, path.string())
       .c_str(),
     std::logic_error);
 }
@@ -642,7 +648,7 @@ TEST_CASE("Recovery snapshot ledger scan distinguishes incomplete chunk tails")
     write_ledger_file(committed_path, {first, tail}, true);
     REQUIRE_THROWS_WITH_AS(
       fixture.scan(),
-      fmt::format("Committed ledger file {} {}", committed_path.string(), error)
+      std::format("Committed ledger file {} {}", committed_path.string(), error)
         .c_str(),
       std::logic_error);
   }
@@ -684,7 +690,7 @@ TEST_CASE("Recovery snapshot ledger scan validates version ranges")
     write_ledger_file(path, {first, second});
     REQUIRE_THROWS_WITH_AS(
       fixture.scan(),
-      fmt::format(
+      std::format(
         "Ledger file {} does not start at its declared seqno 2", path.string())
         .c_str(),
       std::logic_error);
@@ -696,7 +702,7 @@ TEST_CASE("Recovery snapshot ledger scan validates version ranges")
     write_ledger_file(path, {first, second}, true);
     REQUIRE_THROWS_WITH_AS(
       fixture.scan(),
-      fmt::format(
+      std::format(
         "Ledger file {} does not end at its declared seqno 3", path.string())
         .c_str(),
       std::logic_error);
@@ -708,7 +714,7 @@ TEST_CASE("Recovery snapshot ledger scan validates version ranges")
     write_ledger_file(path, {}, true);
     REQUIRE_THROWS_WITH_AS(
       fixture.scan(),
-      fmt::format(
+      std::format(
         "Ledger file {} does not end at its declared seqno 1", path.string())
         .c_str(),
       std::logic_error);
@@ -722,7 +728,7 @@ TEST_CASE("Recovery snapshot ledger scan validates version ranges")
       write_ledger_file(path, {first, fixture.entry(next)});
       REQUIRE_THROWS_WITH_AS(
         fixture.scan(),
-        fmt::format(
+        std::format(
           "Ledger file {} contains non-contiguous versions 1 and {}",
           path.string(),
           next)
@@ -758,7 +764,7 @@ TEST_CASE("Recovery snapshot ledger scan rejects seqno overflow")
   SUBCASE("The last scanned entry must have a successor")
   {
     write_ledger_file(
-      fixture.ledger_dir.path / fmt::format("ledger_{}", max_seqno),
+      fixture.ledger_dir.path / std::format("ledger_{}", max_seqno),
       {fixture.entry(max_seqno)});
     REQUIRE_THROWS_WITH_AS(
       fixture.scan(max_seqno - 1),
@@ -878,7 +884,7 @@ TEST_CASE("Recovery snapshot ledger scan bounds individual endorsement sizes")
       {
         REQUIRE_THROWS_WITH_AS(
           fixture.scan(),
-          fmt::format(
+          std::format(
             "Ledger endorsement at 1 is too large ({} bytes; maximum {} bytes)",
             limit + extra,
             limit)
@@ -921,7 +927,7 @@ TEST_CASE("Recovery snapshot ledger scan bounds individual endorsement sizes")
       {
         REQUIRE_THROWS_WITH_AS(
           fixture.scan(),
-          fmt::format(
+          std::format(
             "Serialised previous service identity endorsement is too large "
             "({} bytes; maximum {} bytes)",
             limit + 4 * extra,
@@ -1508,6 +1514,112 @@ TEST_CASE("Rekey ledger while snapshot is in progress")
         hooks,
         &view_history) == ccf::kv::ApplyResult::PASS);
   }
+}
+
+TEST_CASE("Snapshot receipt")
+{
+  ccf::logger::config::default_init();
+
+  using namespace std::literals;
+  const auto valid_from =
+    ccf::ds::to_x509_time_string(std::chrono::system_clock::now() - 24h);
+  const auto valid_to =
+    ccf::crypto::compute_cert_valid_to_string(valid_from, 365);
+  auto service_kp = ccf::crypto::make_ec_key_pair();
+  const auto service_cert =
+    service_kp->self_sign("CN=Snapshot service", valid_from, valid_to);
+
+  // verify_snapshot() checks the snapshot body against the claims digest of
+  // the receipt leaf without deserialising it, so any bytes serve here
+  const std::vector<uint8_t> snapshot_body(64, 0x42);
+  const auto claims_digest =
+    ccf::crypto::Sha256Hash(snapshot_body.data(), snapshot_body.size());
+  const ccf::crypto::Sha256Hash write_set_digest(
+    std::string("snapshot evidence write set"));
+  const std::string commit_evidence = "ce:2.6:0123456789abcdef";
+
+  // A signed tree whose leaf at evidence_seqno is the snapshot evidence
+  // transaction
+  constexpr ccf::kv::Version evidence_seqno = 6;
+  ccf::MerkleTreeHistory tree;
+  for (ccf::kv::Version seqno = 1; seqno <= evidence_seqno + 2; ++seqno)
+  {
+    if (seqno == evidence_seqno)
+    {
+      tree.append(ccf::crypto::Sha256Hash(
+        write_set_digest,
+        ccf::crypto::Sha256Hash(commit_evidence),
+        claims_digest));
+    }
+    else
+    {
+      tree.append(ccf::crypto::Sha256Hash(std::format("tx {}", seqno)));
+    }
+  }
+  const auto root = tree.get_root();
+  const std::vector<uint8_t> root_bytes(root.h.begin(), root.h.end());
+  ccf::CoseSignatureMap cose_sigs;
+  cose_sigs[ccf::IdentityType::CLASSICAL] = ccf::cose::sign_ledger(
+    *service_kp,
+    ccf::crypto::kid_from_key(service_kp->public_key_der()),
+    0,
+    "issuer",
+    "subject",
+    ccf::TxID{2, tree.end_index() + 1}.to_str(),
+    root_bytes);
+
+  INFO("The receipt carries the signature and the proof of the evidence");
+  const auto receipt = ccf::build_and_serialise_receipt(
+    cose_sigs,
+    ccf::IdentityType::CLASSICAL,
+    tree.serialise(),
+    evidence_seqno,
+    write_set_digest,
+    commit_evidence,
+    claims_digest);
+  const auto decoded = ccf::cose::decode_ccf_receipt(receipt, true);
+  REQUIRE(decoded.merkle_root == root_bytes);
+  REQUIRE(
+    decoded.claims_digest ==
+    std::vector<uint8_t>(claims_digest.h.begin(), claims_digest.h.end()));
+
+  INFO("The receipt verifies under the signing service identity");
+  const ccf::SnapshotSegments segments{snapshot_body, receipt};
+  REQUIRE_NOTHROW(ccf::verify_snapshot(segments));
+  REQUIRE_NOTHROW(ccf::verify_snapshot(segments, service_cert.raw()));
+
+  INFO("The receipt is rejected under another service identity");
+  const auto other_cert = ccf::crypto::make_ec_key_pair()->self_sign(
+    "CN=Other service", valid_from, valid_to);
+  REQUIRE_THROWS(ccf::verify_snapshot(segments, other_cert.raw()));
+
+  INFO("The receipt is rejected for another snapshot body");
+  auto other_body = snapshot_body;
+  other_body.front() ^= 1;
+  REQUIRE_THROWS(
+    ccf::verify_snapshot(ccf::SnapshotSegments{other_body, receipt}));
+
+  INFO("Only COSE receipts are accepted");
+  auto invalid_receipt = receipt;
+  invalid_receipt.front() ^= 1;
+  REQUIRE_THROWS_WITH_AS(
+    ccf::verify_snapshot(ccf::SnapshotSegments{snapshot_body, invalid_receipt}),
+    "Snapshot receipt is not a COSE_Sign1 receipt",
+    std::logic_error);
+  REQUIRE_THROWS_WITH_AS(
+    ccf::verify_snapshot(ccf::SnapshotSegments{snapshot_body, {}}),
+    "Empty snapshot receipt",
+    std::logic_error);
+
+  INFO("The receipt requires a signature of the requested identity type");
+  REQUIRE_THROWS(ccf::build_and_serialise_receipt(
+    cose_sigs,
+    ccf::IdentityType::PQ,
+    tree.serialise(),
+    evidence_seqno,
+    write_set_digest,
+    commit_evidence,
+    claims_digest));
 }
 
 int main(int argc, char** argv)

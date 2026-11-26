@@ -1,8 +1,10 @@
+#!/usr/bin/env python3
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the Apache 2.0 License.
 import datetime
 import json
 import os
+import platform
 import re
 import shutil
 
@@ -41,8 +43,50 @@ FINAL_RELEASE_TAG = re.compile(r"^ccf-(\d+)\.0\.(\d+)$")
 # hardcoded in CCF.
 DEFAULT_NODE_CERTIFICATE_VALIDITY_DAYS = 365
 
+# Releases before 7.0 write snapshots with JSON receipts, which later releases
+# reject
+FIRST_RELEASE_WITH_COSE_SNAPSHOT_RECEIPTS = "ccf-7.0.0"
 
-def validate_compatibility_report(report, branch):
+
+# Releases before 8.0 are only built for Azure Linux 3. They cannot run directly
+# on later Azure Linux versions, where the cross-platform LTS workflow runs them
+# in a matching container instead.
+FIRST_MAJOR_VERSION_BUILT_FOR_AZURE_LINUX_4 = 8
+
+
+def is_azure_linux_4_or_later():
+    try:
+        os_release = platform.freedesktop_os_release()
+    except OSError:
+        return False
+    if os_release.get("ID") != "azurelinux":
+        return False
+    major_version = os_release.get("VERSION_ID", "").split(".")[0]
+    return major_version.isdigit() and int(major_version) >= 4
+
+
+def can_run_release_natively(tag, on_azure_linux_4=None):
+    """
+    Whether the published binaries of release `tag` can be executed directly on
+    the distribution this test runs on, rather than in a container.
+    """
+    if on_azure_linux_4 is None:
+        on_azure_linux_4 = is_azure_linux_4_or_later()
+    if not on_azure_linux_4:
+        return True
+    return (
+        infra.github.get_version_from_tag_name(tag).major
+        >= FIRST_MAJOR_VERSION_BUILT_FOR_AZURE_LINUX_4
+    )
+
+
+def writes_cose_snapshot_receipts(version):
+    return not infra.node.CCFVersion(version) < infra.node.CCFVersion(
+        FIRST_RELEASE_WITH_COSE_SNAPSHOT_RECEIPTS
+    )
+
+
+def validate_compatibility_report(report, branch, previous_lts_skipped=False):
     # A development branch can still point at a final release tag, but discovery
     # uses development-branch targets rather than release-validation targets.
     if not infra.github.is_release_branch(infra.github.sanitise_branch_name(branch)):
@@ -57,7 +101,7 @@ def validate_compatibility_report(report, branch):
     live_compatibility = report["live compatibility"]
 
     previous_lts = live_compatibility["with previous LTS"]
-    if current_major == 1:
+    if current_major == 1 or previous_lts_skipped:
         assert previous_lts is None, f"Expected no previous LTS, got {previous_lts}"
     else:
         previous_lts_match = FINAL_RELEASE_TAG.fullmatch(previous_lts or "")
@@ -78,9 +122,16 @@ def validate_compatibility_report(report, branch):
     if data_compatibility is not None:
         ledger_versions = data_compatibility["with previous ledger"]
         snapshot_versions = data_compatibility["with previous snapshots"]
+        # The snapshot pass covers the releases whose snapshots later steps
+        # start from
+        expected_snapshot_versions = [
+            version
+            for version in ledger_versions
+            if writes_cose_snapshot_receipts(version)
+        ]
         assert (
-            ledger_versions == snapshot_versions
-        ), "Ledger and snapshot compatibility covered different releases"
+            snapshot_versions == expected_snapshot_versions
+        ), f"Ledger and snapshot compatibility covered different releases: expected snapshots of {expected_snapshot_versions}, got {snapshot_versions}"
         expected_versions = set()
         if previous_lts is not None:
             expected_versions.add(previous_lts)
@@ -414,6 +465,10 @@ def run_code_upgrade_from(
             new_constitution = get_new_constitution_for_install(args, to_install_path)
             network.consortium.set_constitution(primary, new_constitution)
 
+            LOG.info("Legacy enrollment still works on the old primary")
+            upgrade_user = network.create_user("upgrade_user", args.participants_curve)
+            network.consortium.add_user(primary, upgrade_user.local_id)
+
             new_measurement = infra.utils.get_measurement(
                 infra.platform_detection.get_platform(),
                 args.package,
@@ -609,8 +664,17 @@ def run_live_compatibility_with_latest(
     the local checkout.
     """
     if lts_install_path is None:
+        lts_branch = os.getenv(ENV_VAR_LATEST_LTS_BRANCH_NAME, local_branch)
+        lts_tag = repo.get_latest_released_tag_for_branch(
+            lts_branch, this_release_branch_only
+        )
+        if lts_tag and not can_run_release_natively(lts_tag):
+            LOG.warning(
+                f"Skipping live compatibility with {lts_tag}: it is not built for this distribution, and is covered by the cross-platform LTS workflow instead"
+            )
+            return None
         lts_version, lts_install_path = repo.install_latest_lts_for_branch(
-            os.getenv(ENV_VAR_LATEST_LTS_BRANCH_NAME, local_branch),
+            lts_branch,
             this_release_branch_only,
             platform=infra.platform_detection.get_platform(),
         )
@@ -653,6 +717,10 @@ def run_ledger_compatibility_since_first(
     The supplied release selection is shared between the ledger and snapshot passes.
     Snapshots are used if `use_snapshot` is True. Otherwise, the entire historical
     ledger is used.
+
+    Returns the releases whose data later steps recovered from: every release for
+    the ledger pass, and the releases which write COSE snapshot receipts for the
+    snapshot pass.
     """
 
     LOG.info("Use snapshot: {}", use_snapshot)
@@ -678,7 +746,8 @@ def run_ledger_compatibility_since_first(
                     lts_release,
                     platform=infra.platform_detection.get_platform(),
                 )
-                lts_versions.append(version)
+                if not use_snapshot or writes_cose_snapshot_receipts(version):
+                    lts_versions.append(version)
                 set_js_args(args, install_path)
             else:
                 version = args.ccf_version
@@ -704,6 +773,12 @@ def run_ledger_compatibility_since_first(
                     "ccf-4.0.0-rc1"
                 ):
                     kwargs["reconfiguration_type"] = "OneTransaction"
+
+                # The nodes of this step start from the eol snapshots, or from
+                # the snapshots handed over by the previous step
+                started_from_snapshots = use_snapshot and (
+                    idx == 0 or snapshots_dir is not None
+                )
 
                 if idx == 0:
                     LOG.info(
@@ -825,14 +900,18 @@ def run_ledger_compatibility_since_first(
                         test_jwt_cleanup=run_jwt_cleanup,
                     )
 
-                snapshots_dir = (
-                    network.get_committed_snapshots(primary) if use_snapshot else None
-                )
+                # Snapshots written by releases before 7.0 carry JSON receipts,
+                # which later releases reject. Operators remove them before
+                # upgrading, so the next step recovers from the ledger alone.
+                if use_snapshot and writes_cose_snapshot_receipts(version):
+                    snapshots_dir = network.get_committed_snapshots(primary)
+                else:
+                    snapshots_dir = None
 
                 network.save_service_identity(args)
 
                 # Ledger file chunking changed from 1.x to 2.x and if it does not join from a snapshot the eol ledger files will be re-chunked differently on the joining node
-                check_file_invariants = use_snapshot
+                check_file_invariants = started_from_snapshots
 
                 LOG.info(
                     f"Stopping network recovering from version {previous_version} to {version}"
@@ -998,9 +1077,15 @@ if __name__ == "__main__":
             with open(
                 args.compatibility_report_file, encoding="utf-8"
             ) as compatibility_report_file:
+                lts_branch = os.getenv(ENV_VAR_LATEST_LTS_BRANCH_NAME, local_branch)
+                previous_lts_tag = repo.get_latest_released_tag_for_branch(
+                    lts_branch, this_release_branch_only=False
+                )
                 validate_compatibility_report(
                     json.load(compatibility_report_file),
-                    os.getenv(ENV_VAR_LATEST_LTS_BRANCH_NAME, local_branch),
+                    lts_branch,
+                    previous_lts_skipped=previous_lts_tag is not None
+                    and not can_run_release_natively(previous_lts_tag),
                 )
 
     LOG.success(f"Compatibility report:\n {json.dumps(compatibility_report, indent=2)}")

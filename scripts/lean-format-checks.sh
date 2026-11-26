@@ -36,8 +36,11 @@ for package in "${PACKAGES[@]}"; do
     exit 1
   fi
   # The disaster recovery package also checks Lean files outside lean/.
+  # The consensus package checks the model driver, which imports its model.
   if [ "$package" == "disaster-recovery" ]; then
-    PATHSPEC=("*.lean" ":(exclude)lean/consensus/*" ":(exclude)lean/consistency/*" ":(exclude)lean/kv/*" ":(exclude)lean/mathlib-equivalence/*")
+    PATHSPEC=("*.lean" ":(exclude)lean/consensus/*" ":(exclude)lean/consistency/*" ":(exclude)lean/kv/*" ":(exclude)lean/mathlib-equivalence/*" ":(exclude)tests/cft_model/*")
+  elif [ "$package" == "consensus" ]; then
+    PATHSPEC=("lean/consensus/*.lean" "tests/cft_model/*.lean")
   else
     PATHSPEC=("lean/$package/*.lean")
   fi
@@ -48,6 +51,12 @@ for package in "${PACKAGES[@]}"; do
       lake build ccf_common/+CCF
     fi
     lake build "$library"
+    # The consensus scenarios are a package outside lean/, without leanfmt.
+    # The model driver imports them.
+    if [ "$package" == "disaster-recovery" ] || [ "$package" == "consensus" ]; then
+      lake --dir "$ROOT_DIR/tests/cft_scenarios" build
+      export LEAN_PATH="$ROOT_DIR/tests/cft_scenarios/.lake/build/lib/lean"
+    fi
     git -C "$ROOT_DIR" ls-files -z -- "${PATHSPEC[@]}" |
       while IFS= read -r -d '' file; do
         printf '%s\0' "$ROOT_DIR/$file"

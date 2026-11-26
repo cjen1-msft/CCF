@@ -31,7 +31,10 @@ def unique_map(pairs):
 
 
 def run_driver(driver, scenario, timeout=60, *, text=True):
-    """Collect structured records; optionally decode console output for text consumers."""
+    """Run the named scenario and collect its structured records.
+
+    Console output is decoded for text consumers unless text is False.
+    """
     records = []
     stdout = stderr = b""
     try:
@@ -68,7 +71,7 @@ def run_driver(driver, scenario, timeout=60, *, text=True):
                                         ">II", timestamp.data
                                     )
                                     assert seconds > 0 and nanos < 10**9
-                                    assert set(record) == {"process_id", "h_ts", "msg"}
+                                    assert set(record) == {"pid", "m_ts", "msg"}
                                     records.append(record)
                                     complete = unpacker.tell()
                             assert received == complete, "Truncated MessagePack stream"
@@ -80,12 +83,7 @@ def run_driver(driver, scenario, timeout=60, *, text=True):
             host, port = listener.getsockname()
             try:
                 result = subprocess.run(
-                    [
-                        str(pathlib.Path(driver).resolve()),
-                        str(pathlib.Path(scenario).resolve()),
-                        host,
-                        str(port),
-                    ],
+                    [str(pathlib.Path(driver).resolve()), scenario, host, str(port)],
                     capture_output=True,
                     timeout=timeout,
                     check=False,
@@ -100,18 +98,13 @@ def run_driver(driver, scenario, timeout=60, *, text=True):
             assert not collector.is_alive(), "Collector failed to stop"
         if errors:
             raise errors[0]
-        if not records:
-            with pathlib.Path(scenario).open(encoding="utf-8") as source:
-                for line in source:
-                    line = line.split("#", 1)[0].rstrip(" \t\n\r\f\v")
-                    if line.startswith("===="):
-                        break
-                    assert not line, f"No cft trace records captured for {scenario}"
+        if result.returncode == 0:
+            assert records, f"No cft trace records captured for {scenario}"
         for sequence, record in enumerate(records):
             assert (
-                record["h_ts"] == sequence
+                record["m_ts"] == sequence
             ), "Missing, duplicate or reordered trace sequence"
-            assert record["process_id"] == records[0]["process_id"]
+            assert record["pid"] == records[0]["pid"]
         return (
             subprocess.CompletedProcess(
                 result.args,

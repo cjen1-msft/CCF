@@ -3,14 +3,19 @@
 #pragma once
 
 #include "ccf/indexing/strategies/visit_each_entry_in_map.h"
-#include "ccf/node_context.h"
 #include "ccf/seq_no_collection.h"
+
+namespace ccf
+{
+  struct AbstractNodeContext;
+}
 
 namespace ccf::indexing::strategies
 {
-  // Stores only a subset of results in-memory, on-demand, and dumps the
-  // remainder to disk. The size of the per-key buckets which will be retained,
-  // and the number of buckets which may be held in-memory, are configurable
+  // Retains a trusted current bucket for every distinct key. Completed
+  // non-empty buckets and immutable manifest pages are authenticated by LFS
+  // and fetched through bounded caches. Each key also retains an unfinished
+  // manifest page; memory still grows with the number of distinct keys.
   class SeqnosByKey_Bucketed_Untyped : public VisitEachEntryInMap
   {
   protected:
@@ -36,6 +41,9 @@ namespace ccf::indexing::strategies
 
     void tick() override;
 
+    // Inclusive queries with to - from above this limit are rejected.
+    // Manifest lookup progresses across asynchronous retries independently
+    // of file-cache eviction.
     [[nodiscard]] size_t max_requestable_range() const;
   };
 

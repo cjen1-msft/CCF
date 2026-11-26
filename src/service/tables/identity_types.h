@@ -6,6 +6,7 @@
 #include "ccf/kv/serialisers/blit_serialiser.h"
 
 #include <cstdint>
+#include <format>
 #include <map>
 #include <stdexcept>
 #include <vector>
@@ -63,6 +64,35 @@ namespace ccf
   using Identities = std::map<IdentityType, Identity>;
 }
 
+template <>
+struct std::formatter<ccf::IdentityType>
+{
+  template <typename ParseContext>
+  constexpr auto parse(ParseContext& ctx)
+  {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(const ccf::IdentityType& identity_type, FormatContext& ctx) const
+    -> decltype(ctx.out())
+  {
+    switch (identity_type)
+    {
+      case ccf::IdentityType::CLASSICAL:
+      {
+        return std::format_to(ctx.out(), "CLASSICAL");
+      }
+      case ccf::IdentityType::PQ:
+      {
+        return std::format_to(ctx.out(), "PQ");
+      }
+    }
+    return std::format_to(
+      ctx.out(), "{}", static_cast<uint64_t>(identity_type));
+  }
+};
+
 namespace ccf::kv::serialisers
 {
   // IdentityType is used as a KV key by tables which were previously a single
@@ -93,7 +123,7 @@ namespace ccf::kv::serialisers
         default:
         {
           throw std::logic_error(
-            fmt::format("Unknown identity type: {}", value));
+            std::format("Unknown identity type: {}", value));
         }
       }
     }

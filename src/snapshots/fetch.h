@@ -9,8 +9,10 @@
 #include "http/http_builder.h"
 #include "http_client/curl.h"
 
+#include <algorithm>
 #include <charconv>
 #include <curl/curl.h>
+#include <format>
 #include <llhttp/llhttp.h>
 #include <memory>
 #include <optional>
@@ -39,7 +41,7 @@
         { \
           response_content = "(no response body)"; \
         } \
-        error_message = fmt::format( \
+        error_message = std::format( \
           "Expected {} response from {} {}, instead received {} ({})", \
           ccf::http_status_str(expected), \
           request->get_method().c_str(), \
@@ -49,7 +51,7 @@
       } \
       else \
       { \
-        error_message = fmt::format( \
+        error_message = std::format( \
           "Expected {} response from {} {}, instead received {}", \
           ccf::http_status_str(expected), \
           request->get_method().c_str(), \
@@ -99,7 +101,7 @@ namespace ccf::snapshots
 
     if (range_start.empty() || range_end.empty() || total_size.empty())
     {
-      throw std::runtime_error(fmt::format(
+      throw std::runtime_error(std::format(
         "Unsupported content-range header format. Expected 'bytes "
         "<begin>-<end>/<total>', received: {}",
         it->second));
@@ -112,7 +114,7 @@ namespace ccf::snapshots
         range_start.begin(), range_start.end(), parsed_values.range_start);
       if (ec != std::errc())
       {
-        throw std::runtime_error(fmt::format(
+        throw std::runtime_error(std::format(
           "Could not parse range start ({}) from content-range header: {}",
           range_start,
           it->second));
@@ -124,7 +126,7 @@ namespace ccf::snapshots
         range_end.begin(), range_end.end(), parsed_values.inclusive_range_end);
       if (ec != std::errc())
       {
-        throw std::runtime_error(fmt::format(
+        throw std::runtime_error(std::format(
           "Could not parse range end ({}) from content-range header: {}",
           range_end,
           it->second));
@@ -136,12 +138,19 @@ namespace ccf::snapshots
         total_size.begin(), total_size.end(), parsed_values.total_size);
       if (ec != std::errc())
       {
-        throw std::runtime_error(fmt::format(
+        throw std::runtime_error(std::format(
           "Could not parse total size ({}) from content-range header: {}",
           total_size,
           it->second));
       }
     }
+
+    const auto invalid_range = [&it]() {
+      return std::runtime_error(std::format(
+        "Invalid range in content-range header. Expected a non-empty range "
+        "ending before the total size, received: {}",
+        it->second));
+    };
 
     {
       // Use content-length to determine whether the sender used an exclusive or
@@ -163,10 +172,20 @@ namespace ccf::snapshots
 
         if (ec != std::errc())
         {
-          throw std::runtime_error(fmt::format(
+          throw std::runtime_error(std::format(
             "Could not parse length from content-length header: {}",
             length_it->second));
         }
+      }
+
+      // An empty or inverted range is invalid in either notation. Reject it
+      // before the arithmetic below, which needs the end not to precede the
+      // start
+      if (
+        content_length == 0 ||
+        parsed_values.inclusive_range_end < parsed_values.range_start)
+      {
+        throw invalid_range();
       }
 
       const auto range_length =
@@ -193,13 +212,20 @@ namespace ccf::snapshots
       }
       else
       {
-        throw std::runtime_error(fmt::format(
+        throw std::runtime_error(std::format(
           "content-range ({}, {} bytes) and content-length ({}) headers do not "
           "agree",
           it->second,
           range_length + 1,
           length_it->second));
       }
+    }
+
+    // After normalising the range end above, the range must end before the
+    // total size
+    if (parsed_values.inclusive_range_end >= parsed_values.total_size)
+    {
+      throw invalid_range();
     }
 
     return parsed_values;
@@ -228,12 +254,12 @@ namespace ccf::snapshots
       std::string snapshot_url;
       if (since_seqno.has_value())
       {
-        snapshot_url = fmt::format(
+        snapshot_url = std::format(
           "https://{}/node/snapshot?since={}", peer_address, *since_seqno);
       }
       else
       {
-        snapshot_url = fmt::format("https://{}/node/snapshot", peer_address);
+        snapshot_url = std::format("https://{}/node/snapshot", peer_address);
       }
 
       // Fetch 4MB chunks at a time
@@ -242,14 +268,19 @@ namespace ccf::snapshots
       size_t range_end = range_size;
       size_t inclusive_range_end = range_end - 1;
       bool fetched_all = false;
+      std::optional<size_t> snapshot_size = std::nullopt;
+
+      // Until the first range gives the snapshot's total size, accept no more
+      // than one range from the peer
+      response_body->maximum_size = std::min(range_size, max_size);
 
       auto process_partial_response =
-        [&](const ccf::http_client::CurlRequest& request) {
+        [&](ccf::http_client::CurlRequest& request) {
           auto content_range = parse_content_range_header(request);
 
           if (content_range.range_start != range_start)
           {
-            throw std::runtime_error(fmt::format(
+            throw std::runtime_error(std::format(
               "Unexpected range response. Requested bytes {}-{}, received "
               "range starting at {}",
               range_start,
@@ -261,12 +292,44 @@ namespace ccf::snapshots
           // where the file ends), but should never give us more
           if (content_range.inclusive_range_end > inclusive_range_end)
           {
-            throw std::runtime_error(fmt::format(
+            throw std::runtime_error(std::format(
               "Unexpected range response. Requested bytes {}-{}, received "
               "range ending at {}",
               range_start,
               inclusive_range_end,
               content_range.inclusive_range_end));
+          }
+
+          if (!snapshot_size.has_value())
+          {
+            // The first response gives the snapshot's total size. Reject a
+            // snapshot larger than max_size now, rather than after fetching
+            // max_size bytes of it
+            if (content_range.total_size > max_size)
+            {
+              throw std::runtime_error(std::format(
+                "Snapshot size ({} bytes) exceeds the maximum fetch size ({} "
+                "bytes)",
+                content_range.total_size,
+                max_size));
+            }
+            snapshot_size = content_range.total_size;
+
+            // The remaining ranges are appended to this buffer. Size it for
+            // the whole snapshot now (a no-op if this range holds all of it):
+            // growing it as they arrive copies it into a buffer twice as
+            // large, briefly holding both copies. A peer that then sends more
+            // than this total is cut off before the buffer can grow past it
+            auto* body = request.get_response_body();
+            body->buffer.reserve(content_range.total_size);
+            body->maximum_size = content_range.total_size;
+          }
+          else if (content_range.total_size != *snapshot_size)
+          {
+            throw std::runtime_error(std::format(
+              "Unexpected range response. Expected total size {}, received {}",
+              *snapshot_size,
+              content_range.total_size));
           }
 
           const auto content_range_exclusive_range_end =
@@ -307,7 +370,7 @@ namespace ccf::snapshots
         ccf::http_client::UniqueSlist headers;
         headers.append(
           ccf::http::headers::RANGE,
-          fmt::format("bytes={}-{}", range_start, inclusive_range_end));
+          std::format("bytes={}-{}", range_start, inclusive_range_end));
 
         CURLcode curl_response = CURLE_FAILED_INIT;
         long status_code = 0;
@@ -334,7 +397,7 @@ namespace ccf::snapshots
 
         if (curl_response != CURLE_OK)
         {
-          throw std::runtime_error(fmt::format(
+          throw std::runtime_error(std::format(
             "Error fetching snapshot redirect from {}: {} ({})",
             request->get_url(),
             curl_easy_strerror(curl_response),
@@ -389,7 +452,7 @@ namespace ccf::snapshots
         ccf::http_client::UniqueSlist headers;
         headers.append(
           ccf::http::headers::RANGE,
-          fmt::format("bytes={}-{}", range_start, inclusive_range_end));
+          std::format("bytes={}-{}", range_start, inclusive_range_end));
 
         std::unique_ptr<ccf::http_client::CurlRequest> snapshot_range_request;
         CURLcode curl_response = CURLE_OK;
@@ -417,7 +480,7 @@ namespace ccf::snapshots
             snapshot_response_callback));
         if (curl_response != CURLE_OK)
         {
-          throw std::runtime_error(fmt::format(
+          throw std::runtime_error(std::format(
             "Error fetching snapshot chunk range from {}: {} ({})",
             snapshot_range_request->get_url(),
             curl_easy_strerror(curl_response),

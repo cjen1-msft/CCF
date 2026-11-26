@@ -7,8 +7,10 @@
 #include "http_client/curl.h"
 #include "snapshots/fetch.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <curl/header.h>
+#include <format>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -19,6 +21,7 @@
 #include <optional>
 #include <random>
 #include <span>
+#include <utility>
 #include <uv.h>
 
 #define DOCTEST_CONFIG_IMPLEMENT
@@ -182,7 +185,7 @@ TEST_CASE("ResponseHeaders rejects oversized headers")
 
   std::string oversized_value(
     ccf::http::default_max_header_size.count_bytes() + 1, 'x');
-  std::string header = fmt::format("X-Large: {}\r\n", oversized_value);
+  std::string header = std::format("X-Large: {}\r\n", oversized_value);
   REQUIRE(
     ccf::http_client::ResponseHeaders::recv_header_line(
       header.data(), 1, header.size(), &headers) == 0);
@@ -198,7 +201,7 @@ TEST_CASE("ResponseHeaders rejects oversized header fields")
 
   std::string oversized_field(
     ccf::http::default_max_header_size.count_bytes() + 1, 'x');
-  std::string header = fmt::format("{}: value\r\n", oversized_field);
+  std::string header = std::format("{}: value\r\n", oversized_field);
   REQUIRE(
     ccf::http_client::ResponseHeaders::recv_header_line(
       header.data(), 1, header.size(), &headers) == 0);
@@ -214,7 +217,7 @@ TEST_CASE("ResponseHeaders rejects too many headers")
 
   for (size_t i = 0; i < ccf::http::default_max_headers_count; ++i)
   {
-    std::string header = fmt::format("X-Test-{}: value\r\n", i);
+    std::string header = std::format("X-Test-{}: value\r\n", i);
     REQUIRE(
       ccf::http_client::ResponseHeaders::recv_header_line(
         header.data(), 1, header.size(), &headers) == header.size());
@@ -274,7 +277,7 @@ TEST_CASE("Synchronous")
   for (size_t i = 0; i < sync_number_requests; ++i)
   {
     data.iter = i;
-    std::string url = fmt::format("http://{}/{}", server_address, i);
+    std::string url = std::format("http://{}/{}", server_address, i);
     auto body = std::make_unique<ccf::http_client::RequestBody>(data);
 
     auto headers = ccf::http_client::UniqueSlist();
@@ -328,7 +331,7 @@ TEST_CASE("Synchronous POST echoes body")
   headers.append("Content-Type", "application/json");
 
   auto curl_handle = ccf::http_client::UniqueCURL();
-  std::string url = fmt::format("http://{}/join", server_address);
+  std::string url = std::format("http://{}/join", server_address);
 
   CURLcode curl_code = CURLE_FAILED_INIT;
   long status_code = 0;
@@ -376,7 +379,7 @@ TEST_CASE("Synchronous POST replays body after redirect")
 
   auto curl_handle = ccf::http_client::UniqueCURL();
   curl_handle.set_opt(CURLOPT_FOLLOWLOCATION, 1L);
-  std::string url = fmt::format("http://{}/redirect", server_address);
+  std::string url = std::format("http://{}/redirect", server_address);
 
   CURLcode curl_code = CURLE_FAILED_INIT;
   long status_code = 0;
@@ -497,7 +500,7 @@ TEST_CASE("VERIFYHOST rejects a certificate SAN mismatch")
     // The certificate's only SAN is a dNSName, so dialing the loopback IP
     // directly must fail hostname verification.
     const auto result =
-      perform_get(fmt::format("https://{}/", tls_addr), 2L, std::nullopt);
+      perform_get(std::format("https://{}/", tls_addr), 2L, std::nullopt);
     REQUIRE(result == CURLE_PEER_FAILED_VERIFICATION);
   }
 
@@ -505,9 +508,9 @@ TEST_CASE("VERIFYHOST rejects a certificate SAN mismatch")
   {
     // Dial the SAN name, resolved to the server's loopback address.
     const auto result = perform_get(
-      fmt::format("https://{}:{}/", tls_san, tls_port),
+      std::format("https://{}:{}/", tls_san, tls_port),
       2L,
-      fmt::format("{}:{}:{}", tls_san, tls_port, tls_host));
+      std::format("{}:{}:{}", tls_san, tls_port, tls_host));
     REQUIRE(result == CURLE_OK);
   }
 
@@ -517,10 +520,52 @@ TEST_CASE("VERIFYHOST rejects a certificate SAN mismatch")
     // succeeds, proving the CA/cert/connection are otherwise valid and that
     // the hostname check is the sole discriminator.
     const auto result =
-      perform_get(fmt::format("https://{}/", tls_addr), 0L, std::nullopt);
+      perform_get(std::format("https://{}/", tls_addr), 0L, std::nullopt);
     REQUIRE(result == CURLE_OK);
   }
 }
+
+// Records the messages logged while it is in scope
+class LogCapture
+{
+  class Logger : public ccf::logger::AbstractLogger
+  {
+    std::vector<std::string>& messages;
+
+  public:
+    explicit Logger(std::vector<std::string>& messages_) : messages(messages_)
+    {}
+
+    void write(const ccf::logger::LogLine& line) override
+    {
+      messages.push_back(line.msg);
+    }
+  };
+
+  std::vector<std::string> messages;
+
+public:
+  LogCapture()
+  {
+    ccf::logger::config::loggers().push_back(
+      std::make_unique<Logger>(messages));
+  }
+
+  LogCapture(const LogCapture&) = delete;
+  LogCapture& operator=(const LogCapture&) = delete;
+
+  ~LogCapture()
+  {
+    ccf::logger::config::loggers().pop_back();
+  }
+
+  [[nodiscard]] bool contains(const std::string& text) const
+  {
+    return std::ranges::any_of(messages, [&text](const auto& message) {
+      return message.find(text) != std::string::npos;
+    });
+  }
+};
 
 static std::unique_ptr<ccf::http_client::CurlRequest> snapshot_test_request(
   ccf::RESTVerb method,
@@ -543,7 +588,7 @@ static std::unique_ptr<ccf::http_client::CurlRequest> snapshot_test_request(
     std::make_unique<ccf::http_client::CurlRequest>(
       ccf::http_client::UniqueCURL(),
       method,
-      fmt::format("http://{}{}", server_address, path),
+      std::format("http://{}{}", server_address, path),
       ccf::http_client::UniqueSlist(),
       body.is_null() ? nullptr :
                        std::make_unique<ccf::http_client::RequestBody>(body),
@@ -562,12 +607,27 @@ TEST_CASE("Snapshot Content-Range headers")
     INFO(mode);
     const auto request = snapshot_test_request(
       HTTP_GET,
-      fmt::format("/snapshot-test/headers/{}", mode),
+      std::format("/snapshot-test/headers/{}", mode),
       nullptr,
       HTTP_STATUS_PARTIAL_CONTENT);
     const auto range = ccf::snapshots::parse_content_range_header(*request);
     CHECK(range.range_start == 2);
     CHECK(range.inclusive_range_end == 4);
+    CHECK(range.total_size == 10);
+  }
+
+  // A final range ends at the total size, in either notation
+  for (const auto* mode : {"inclusive_final", "exclusive_final"})
+  {
+    INFO(mode);
+    const auto request = snapshot_test_request(
+      HTTP_GET,
+      std::format("/snapshot-test/headers/{}", mode),
+      nullptr,
+      HTTP_STATUS_PARTIAL_CONTENT);
+    const auto range = ccf::snapshots::parse_content_range_header(*request);
+    CHECK(range.range_start == 7);
+    CHECK(range.inclusive_range_end == 9);
     CHECK(range.total_size == 10);
   }
 
@@ -585,13 +645,19 @@ TEST_CASE("Snapshot Content-Range headers")
     {"overflow_total", "Could not parse total size"},
     {"length_mismatch", "headers do not agree"},
     {"missing_length", "missing expected content-length header"},
+    {"end_at_total", "Invalid range in content-range header"},
+    {"past_total", "Invalid range in content-range header"},
+    {"empty", "Invalid range in content-range header"},
+    {"inverted", "Invalid range in content-range header"},
+    {"empty_at_start", "Invalid range in content-range header"},
+    {"inverted_with_body", "Invalid range in content-range header"},
   };
   for (const auto& [mode, error] : invalid_headers)
   {
     INFO(mode);
     const auto request = snapshot_test_request(
       HTTP_GET,
-      fmt::format("/snapshot-test/headers/{}", mode),
+      std::format("/snapshot-test/headers/{}", mode),
       nullptr,
       HTTP_STATUS_PARTIAL_CONTENT);
     CHECK_THROWS_WITH_AS(
@@ -621,7 +687,7 @@ TEST_CASE("Snapshot fetching over multiple HTTPS byte ranges")
     expected_data[i] = i % 251;
   }
   const std::string snapshot_path = "/node/snapshot/snapshot-test.committed";
-  const auto initial_range = fmt::format("bytes=0-{}", CHUNK_SIZE - 1);
+  const auto initial_range = std::format("bytes=0-{}", CHUNK_SIZE - 1);
 
   auto configure = [](const std::string& mode) {
     snapshot_test_request(
@@ -637,6 +703,9 @@ TEST_CASE("Snapshot fetching over multiple HTTPS byte ranges")
       REQUIRE(response.has_value());
       CHECK(response->snapshot_name == "snapshot-test.committed");
       REQUIRE(response->snapshot_data.size() == DATA_SIZE);
+      // The buffer is sized for the whole snapshot after the first range,
+      // rather than grown as the remaining ranges arrive
+      CHECK(response->snapshot_data.capacity() == DATA_SIZE);
       CHECK(std::equal(
         expected_data.begin(),
         expected_data.end(),
@@ -644,17 +713,17 @@ TEST_CASE("Snapshot fetching over multiple HTTPS byte ranges")
     };
   auto expected_requests = [&](std::optional<size_t> since) {
     const auto discovery_path = since.has_value() ?
-      fmt::format("/node/snapshot?since={}", *since) :
+      std::format("/node/snapshot?since={}", *since) :
       "/node/snapshot";
     return nlohmann::json::array({
       {{"path", discovery_path}, {"range", initial_range}},
       {{"path", "/node/snapshot/redirect"}, {"range", initial_range}},
       {{"path", snapshot_path}, {"range", initial_range}},
       {{"path", snapshot_path},
-       {"range", fmt::format("bytes={}-{}", CHUNK_SIZE, 2 * CHUNK_SIZE - 1)}},
+       {"range", std::format("bytes={}-{}", CHUNK_SIZE, 2 * CHUNK_SIZE - 1)}},
       {{"path", snapshot_path},
        {"range",
-        fmt::format("bytes={}-{}", 2 * CHUNK_SIZE, 3 * CHUNK_SIZE - 1)}},
+        std::format("bytes={}-{}", 2 * CHUNK_SIZE, 3 * CHUNK_SIZE - 1)}},
     });
   };
 
@@ -683,7 +752,8 @@ TEST_CASE("Snapshot fetching over multiple HTTPS byte ranges")
     {"no_location", 1},
     {"redirect_loop", 21},
     {"wrong_start", 3},
-    {"wrong_end", 3},
+    {"wrong_end", 4},
+    {"wrong_total", 4},
     {"chunk_error", 4},
   };
   for (const auto& [mode, request_count] : failures)
@@ -700,7 +770,10 @@ TEST_CASE("Snapshot fetching over multiple HTTPS byte ranges")
     CHECK(requests.front().at("range") == initial_range);
   }
 
-  for (const size_t max_size : {CHUNK_SIZE - 1, CHUNK_SIZE + 16})
+  // A snapshot larger than max_size is rejected by the first range: by the
+  // response size limit if the range itself does not fit, otherwise by its
+  // total size
+  for (const size_t max_size : {CHUNK_SIZE - 1, CHUNK_SIZE + 16, DATA_SIZE - 1})
   {
     INFO(max_size);
     configure("inclusive");
@@ -708,12 +781,36 @@ TEST_CASE("Snapshot fetching over multiple HTTPS byte ranges")
       ccf::snapshots::try_fetch_from_peer(peer_address, peer_ca, max_size)
         .has_value());
     const auto requests = get_requests();
-    CHECK(requests.size() == (max_size < CHUNK_SIZE ? 3 : 4));
+    CHECK(requests.size() == 3);
+    CHECK(requests.back().at("range") == initial_range);
+  }
+
+  // A peer sending more than its total size is cut off by the response size
+  // limit, which drops to that total, even when max_size would allow more
+  {
+    configure("overrun");
+    LogCapture logs;
+    CHECK_FALSE(
+      ccf::snapshots::try_fetch_from_peer(peer_address, peer_ca, 2 * DATA_SIZE)
+        .has_value());
+    CHECK(logs.contains(std::format("maximum is {} bytes", DATA_SIZE)));
+    const auto requests = get_requests();
+    CHECK(requests.size() == 5);
     CHECK(
       requests.back().at("range") ==
-      (max_size < CHUNK_SIZE ?
-         initial_range :
-         fmt::format("bytes={}-{}", CHUNK_SIZE, 2 * CHUNK_SIZE - 1)));
+      std::format("bytes={}-{}", 2 * CHUNK_SIZE, 3 * CHUNK_SIZE - 1));
+  }
+
+  // A peer ignoring the requested range is cut off after one range, before
+  // the snapshot's total size has been validated
+  {
+    configure("ignore_range");
+    LogCapture logs;
+    CHECK_FALSE(
+      ccf::snapshots::try_fetch_from_peer(peer_address, peer_ca, DATA_SIZE)
+        .has_value());
+    CHECK(logs.contains(std::format("maximum is {} bytes", CHUNK_SIZE)));
+    CHECK(get_requests().size() == 3);
   }
 
   configure("not_found");
@@ -745,7 +842,7 @@ TEST_CASE("CurlmLibuvContext")
       std::this_thread::sleep_for(std::chrono::milliseconds(delay));
 
       data.iter = i;
-      std::string url = fmt::format("http://{}/{}", server_address, i);
+      std::string url = std::format("http://{}/{}", server_address, i);
       auto body = std::make_unique<ccf::http_client::RequestBody>(data);
 
       auto headers = ccf::http_client::UniqueSlist();
@@ -810,7 +907,7 @@ TEST_CASE("CurlmLibuvContext slow")
       std::this_thread::sleep_for(std::chrono::milliseconds(delay));
 
       data.iter = i;
-      std::string url = fmt::format("http://{}/{}", server_address, i);
+      std::string url = std::format("http://{}/{}", server_address, i);
       auto body = std::make_unique<ccf::http_client::RequestBody>(data);
 
       auto headers = ccf::http_client::UniqueSlist();
@@ -881,7 +978,7 @@ TEST_CASE("CurlmLibuvContext timeouts")
       // 192.0.2.0/24 (TEST-NET-1) is reserved (RFC 5737) and should be
       // unroutable.
       const std::string unreachable_base = "http://192.0.2.1:65535";
-      std::string url = fmt::format("{}/{}", unreachable_base, i);
+      std::string url = std::format("{}/{}", unreachable_base, i);
       auto body = std::make_unique<ccf::http_client::RequestBody>(data);
 
       auto headers = ccf::http_client::UniqueSlist();
@@ -953,7 +1050,7 @@ TEST_CASE("CurlmLibuvContext multiple init")
 
       data.iter = i;
 
-      std::string url = fmt::format("http://{}/{}", server_address, i);
+      std::string url = std::format("http://{}/{}", server_address, i);
       auto body = std::make_unique<ccf::http_client::RequestBody>(data);
 
       auto headers = ccf::http_client::UniqueSlist();
@@ -973,7 +1070,7 @@ TEST_CASE("CurlmLibuvContext multiple init")
             "Request to {} completed: {} ({}) {}",
             request->get_url(),
             curl_easy_strerror(curl_response),
-            curl_response,
+            std::to_underlying(curl_response),
             status_code);
 
           // We expect all to fail to connect; count only unexpected successes.

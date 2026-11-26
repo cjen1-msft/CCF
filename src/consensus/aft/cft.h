@@ -20,11 +20,13 @@
 #include "tasks/periodic_task_owner.h"
 
 #include <algorithm>
+#include <format>
 #include <functional>
 #include <list>
 #include <map>
 #include <random>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #ifdef VERBOSE_CFT_LOGGING
@@ -311,21 +313,25 @@ namespace aft
         state->retirement_phase == ccf::kv::RetirementPhase::RetiredCommitted;
     }
 
-    void set_retired_committed(
+    void trace_retired_committed_tx(
       ccf::SeqNo seqno, const std::vector<ccf::kv::NodeId>& node_ids) override
     {
       for (const auto& node_id : node_ids)
       {
+        trace::retired_committed_tx(
+          state->node_id.value(), seqno, node_id.value());
+      }
+    }
+
+    void set_retired_committed(
+      ccf::SeqNo seqno, const std::vector<ccf::kv::NodeId>& node_ids) override
+    {
+      bool self_retired_committed = false;
+      for (const auto& node_id : node_ids)
+      {
         if (id() == node_id)
         {
-          CCF_ASSERT(
-            state->membership_state == ccf::kv::MembershipState::Retired,
-            "Node is not retired, cannot become retired committed");
-          CCF_ASSERT(
-            state->retirement_phase == ccf::kv::RetirementPhase::Completed,
-            "Node is not retired, cannot become retired committed");
-          state->retired_committed_idx = seqno;
-          become_retired(seqno, ccf::kv::RetirementPhase::RetiredCommitted);
+          self_retired_committed = true;
         }
         else
         {
@@ -336,6 +342,19 @@ namespace aft
           all_other_nodes.erase(node_id);
           CFT_INFO_FMT("Removed {} from nodes known to consensus", node_id);
         }
+      }
+
+      // Forget the whole batch before nominating a successor.
+      if (self_retired_committed)
+      {
+        CCF_ASSERT(
+          state->membership_state == ccf::kv::MembershipState::Retired,
+          "Node is not retired, cannot become retired committed");
+        CCF_ASSERT(
+          state->retirement_phase == ccf::kv::RetirementPhase::Completed,
+          "Node is not retired, cannot become retired committed");
+        state->retired_committed_idx = seqno;
+        become_retired(seqno, ccf::kv::RetirementPhase::RetiredCommitted);
       }
     }
 
@@ -555,9 +574,8 @@ namespace aft
       // a final state, and node identities never being re-used.
       if (
         !configurations.empty() &&
-        configurations.back().nodes.find(state->node_id) !=
-          configurations.back().nodes.end() &&
-        conf.find(state->node_id) == conf.end())
+        configurations.back().nodes.contains(state->node_id) &&
+        !conf.contains(state->node_id))
       {
         become_retired(idx, ccf::kv::RetirementPhase::Ordered);
       }
@@ -663,6 +681,10 @@ namespace aft
 
       CFT_DEBUG_FMT("Replicating {} entries", entries.size());
 
+      // Starts this call's entry events, so that trace replay can append the
+      // entries to the model as one batch
+      trace::replicate(*state);
+
       for (const auto& [index, data, is_globally_committable, hooks] : entries)
       {
         bool globally_committable = is_globally_committable;
@@ -679,7 +701,7 @@ namespace aft
           (globally_committable ? " committable" : ""),
           hooks->size());
 
-        trace::replicate(*state, term, index, globally_committable);
+        trace::replicate_entry(*state, term, index, globally_committable);
 
         for (auto& hook : *hooks)
         {
@@ -1455,7 +1477,10 @@ namespace aft
         // The end of this append entries (r.idx) was not a signature, but may
         // be in a new term. If it's a new term, this term started immediately
         // after the previous signature we saw (lci, last committable index).
-        if (r.idx > lci)
+        // If we already know the term of r.idx, there is nothing to record.
+        // We may then still hold entries of a later term after r.idx, which
+        // the sender has yet to replace, and that term starts after lci + 1.
+        if (r.idx > lci && get_term_internal(r.idx) != r.term_of_idx)
         {
           state->view_history.update(lci + 1, r.term_of_idx);
         }
@@ -2219,6 +2244,7 @@ namespace aft
     {
       ProposeRequestVote prv{.term = state->current_view};
       CFT_INFO_FMT("Proposing that {} becomes candidate", successor);
+      trace::send_propose_request_vote(*state, prv, successor.value());
       channels->send_consensus_message(successor, prv);
     }
 
@@ -2226,7 +2252,7 @@ namespace aft
     {
       CFT_INFO_FMT(
         "Becoming retired, phase {} (leadership {}): {}: {} at {}",
-        phase,
+        std::to_underlying(phase),
         state->leadership_state.load(),
         state->node_id,
         state->current_view,
@@ -2281,7 +2307,7 @@ namespace aft
       for (auto const& conf : configurations)
       {
         auto const& nodes = conf.nodes;
-        if (nodes.find(from) == nodes.end())
+        if (!nodes.contains(from))
         {
           // from node is no longer in any active configuration.
           continue;
@@ -2343,9 +2369,12 @@ namespace aft
       }
     }
 
-    // If there exists some committable idx in the current term such that idx >
-    // commit_idx and a majority of nodes have replicated it, commit to that
-    // idx.
+    // Commit the highest idx reachable by committing current-term signatures
+    // in turn. Each needs a majority of every configuration still active at or
+    // before it. Committing one retires the configurations before the last one
+    // at or before it, so a later idx may then need fewer acknowledgements.
+    // Configurations appended after idx do not need to replicate it: any log
+    // containing such a configuration also contains idx.
     void update_commit()
     {
       if (state->leadership_state.load() != ccf::kv::LeadershipState::Leader)
@@ -2354,17 +2383,49 @@ namespace aft
           "update_commit() must only be called while this node is leader");
       }
 
-      std::optional<Index> new_agreement_index = std::nullopt;
-
-      // Obtain CFT watermarks
-      for (auto const& c : configurations)
+      std::optional<Index> new_commit_idx = std::nullopt;
+      auto first = configurations.cbegin();
+      while (true)
       {
-        // The majority must be checked separately for each active
-        // configuration.
-        std::vector<Index> match;
-        match.reserve(c.nodes.size());
+        const auto idx = highest_committable_idx(first);
+        if (
+          !idx.has_value() ||
+          (new_commit_idx.has_value() && idx.value() <= new_commit_idx.value()))
+        {
+          break;
+        }
+        new_commit_idx = idx;
+        while (std::next(first) != configurations.cend() &&
+               std::next(first)->idx <= idx.value())
+        {
+          ++first;
+        }
+      }
 
-        for (const auto& node : c.nodes)
+      if (new_commit_idx.has_value())
+      {
+        commit(new_commit_idx.value());
+      }
+    }
+
+    // The highest committable idx in the current term which a majority of every
+    // configuration from first onwards, at or before idx, has replicated
+    std::optional<Index> highest_committable_idx(
+      std::list<Configuration>::const_iterator first)
+    {
+      // Configuration c applies to the idxs from c.idx up to the next
+      // configuration's idx. Such an idx has a quorum if it is at most the
+      // lowest majority watermark of c and every earlier configuration, so the
+      // idxs with a quorum are those from first's idx up to
+      // new_agreement_index.
+      std::optional<Index> new_agreement_index = std::nullopt;
+      auto lowest_confirmed = std::numeric_limits<Index>::max();
+      for (auto c = first; c != configurations.cend(); ++c)
+      {
+        std::vector<Index> match;
+        match.reserve(c->nodes.size());
+
+        for (const auto& node : c->nodes)
         {
           if (node.first == state->node_id)
           {
@@ -2379,51 +2440,57 @@ namespace aft
         sort(match.begin(), match.end());
         auto confirmed = match.at((match.size() - 1) / 2);
 
-        if (
-          !new_agreement_index.has_value() ||
-          confirmed < new_agreement_index.value())
+        lowest_confirmed = std::min(lowest_confirmed, confirmed);
+        if (lowest_confirmed < c->idx)
         {
-          new_agreement_index = confirmed;
+          break;
         }
+        const auto next = std::next(c);
+        new_agreement_index = next == configurations.cend() ?
+          lowest_confirmed :
+          std::min(lowest_confirmed, next->idx - 1);
       }
 
-      if (new_agreement_index.has_value())
+      if (!new_agreement_index.has_value())
       {
-        if (new_agreement_index.value() > state->last_idx)
-        {
-          throw std::logic_error(
-            "Followers appear to have later match indices than leader");
-        }
-
-        const auto new_commit_idx =
-          find_highest_possible_committable_index(new_agreement_index.value());
-
-        if (new_commit_idx.has_value())
-        {
-          CFT_DEBUG_FMT(
-            "In update_commit, new_commit_idx: {}, "
-            "last_idx: {}",
-            new_commit_idx.value(),
-            state->last_idx);
-
-          const auto term_of_new = get_term_internal(new_commit_idx.value());
-          if (term_of_new == state->current_view)
-          {
-            commit(new_commit_idx.value());
-          }
-          else
-          {
-            CFT_DEBUG_FMT(
-              "Ack quorum at {} resulted in proposed commit index {}, which "
-              "is in term {}. Waiting for agreement on committable entry in "
-              "current term {} to update commit",
-              new_agreement_index.value(),
-              new_commit_idx.value(),
-              term_of_new,
-              state->current_view);
-          }
-        }
+        return std::nullopt;
       }
+
+      if (new_agreement_index.value() > state->last_idx)
+      {
+        throw std::logic_error(
+          "Followers appear to have later match indices than leader");
+      }
+
+      const auto new_commit_idx =
+        find_highest_possible_committable_index(new_agreement_index.value());
+      if (!new_commit_idx.has_value() || new_commit_idx.value() < first->idx)
+      {
+        return std::nullopt;
+      }
+
+      CFT_DEBUG_FMT(
+        "In update_commit, new_commit_idx: {}, last_idx: {}",
+        new_commit_idx.value(),
+        state->last_idx);
+
+      // Terms do not decrease along the log, so if the highest committable idx
+      // with a quorum is not in the current term, no lower one is
+      const auto term_of_new = get_term_internal(new_commit_idx.value());
+      if (term_of_new != state->current_view)
+      {
+        CFT_DEBUG_FMT(
+          "Ack quorum at {} resulted in proposed commit index {}, which is in "
+          "term {}. Waiting for agreement on committable entry in current "
+          "term {} to update commit",
+          new_agreement_index.value(),
+          new_commit_idx.value(),
+          term_of_new,
+          state->current_view);
+        return std::nullopt;
+      }
+
+      return new_commit_idx;
     }
 
     // Commits at the highest committable index which is not greater than the
@@ -2457,7 +2524,7 @@ namespace aft
     {
       if (idx > state->last_idx)
       {
-        throw std::logic_error(fmt::format(
+        throw std::logic_error(std::format(
           "Tried to commit {} but last_idx is {}", idx, state->last_idx));
       }
 
@@ -2546,7 +2613,7 @@ namespace aft
       if (!configurations.empty())
       {
         auto current_nodes = configurations.back().nodes;
-        present = current_nodes.find(state->node_id) != current_nodes.end();
+        present = current_nodes.contains(state->node_id);
       }
       return present;
     }
