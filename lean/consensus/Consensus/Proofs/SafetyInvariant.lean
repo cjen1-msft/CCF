@@ -5492,11 +5492,6 @@ private theorem led_after {motive : Prop} {node : NodeID} {term : Nat}
     | inl => exact old (Or.inr ⟨log, commit, prior⟩)
     | inr => exact won log commit step
 
-private theorem led_other {node : NodeID} {term : Nat} (different : Not (node = c.actor))
-    (led : Led (f.advance after) node term)
-    : Led f node term :=
-  c.led_after led id fun _ _ step => absurd (c.electStep step).1 different
-
 private theorem canon_after {term : Nat} {log : List Entry}
     (canon : Canon (f.advance after) term log)
     : Canon f term log
@@ -5825,11 +5820,12 @@ private theorem wins_elect (wins : Wins c.actor c.pre c.event c.post)
 
 private theorem led_cur : LedCur (f.advance after) := by
   intro node state term now led
-  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨different, old⟩) with
-  | inl =>
-    subst nodeEq stateEq
-    refine c.led_after led (fun led => ?_) fun _ _ step => ?_
-    · have le := c.term_le
+  refine c.led_after led (fun led => ?_) fun _ _ step => ?_
+  · -- A leadership from before the step: only the actor's state has changed.
+    split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨_, old⟩) with
+    | inl =>
+      subst nodeEq stateEq
+      have le := c.term_le
       split_rel led_cur :=
           (rcases c.inv.led_cur c.actor c.pre term c.pre_now led with lt | ⟨termEq, role⟩) with
       | inl => exact Or.inl (Nat.lt_of_lt_of_le lt le)
@@ -5843,12 +5839,15 @@ private theorem led_cur : LedCur (f.advance after) := by
                 Summary.candidate c.sum candidate) with
           | inl => exact Nat.succ_ne_self _ (fresh.symm.trans same.symm)
           | inr => exact role preRole
-    · obtain ⟨_, _, _, _, termEq, role, _⟩ := c.electStep step
-      refine Or.inr ⟨termEq.symm, ?_⟩
-      split_rel role := (rcases role with role | role) with
-      | inl => rw [role] <;> simp
-      | inr => rw [role] <;> simp
-  | inr => exact c.inv.led_cur node state term old (c.led_other different led)
+    | inr => exact c.inv.led_cur node state term old led
+  · -- A leadership won in the step: the actor leaves the election in that term.
+    obtain ⟨actor, _, _, _, termEq, role, _⟩ := c.electStep step
+    subst actor
+    obtain rfl := c.now_post now
+    refine Or.inr ⟨termEq.symm, ?_⟩
+    split_rel role := (rcases role with role | role) with
+    | inl => rw [role] <;> simp
+    | inr => rw [role] <;> simp
 
 private theorem leader_led : LeaderLed (f.advance after) := by
   intro node state now role
