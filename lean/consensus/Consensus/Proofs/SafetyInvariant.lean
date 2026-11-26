@@ -5222,6 +5222,18 @@ include c
 
 private theorem sum : Summary c.actor c.pre c.event c.post c.sent := c.tr.summary
 
+/-- How the actor comes to lead after the step: it led the term before, or wins it now. -/
+private theorem origin_cases {motive : Prop}
+    (origin
+      : (c.pre.role = .primary /\ c.post.currentTerm = c.pre.currentTerm)
+        \/ Wins c.actor c.pre c.event c.post)
+    (continues : c.pre.role = .primary -> c.post.currentTerm = c.pre.currentTerm -> motive)
+    (wins : Wins c.actor c.pre c.event c.post -> motive)
+    : motive := by
+  split_rel origin := (rcases origin with ⟨leader, termEq⟩ | won) with
+  | inl => exact continues leader termEq
+  | inr => exact wins won
+
 private theorem pre_now : Now f c.actor c.pre := c.tr.pre_mem
 
 private theorem post_now : Now (f.advance after) c.actor c.post := c.tr.post_mem
@@ -5789,11 +5801,10 @@ private theorem leader_led : LeaderLed (f.advance after) := by
   split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨other, old⟩) with
   | inl =>
     subst nodeEq stateEq
-    split_rel leader := (rcases Summary.leader c.sum role with ⟨preRole, termEq⟩ | wins) with
-    | inl =>
-      rw [termEq]
-      exact (c.inv.leader_led c.actor c.pre c.pre_now preRole).mono after
-    | inr => exact Or.inr ⟨_, _, .inr ⟨f.current, rfl, c.wins_elect wins⟩⟩
+    refine c.origin_cases (Summary.leader c.sum role) (fun preRole termEq => ?_)
+      fun wins => Or.inr ⟨_, _, .inr ⟨f.current, rfl, c.wins_elect wins⟩⟩
+    rw [termEq]
+    exact (c.inv.leader_led c.actor c.pre c.pre_now preRole).mono after
   | inr => exact (c.inv.leader_led node state old role).mono after
 
 private theorem blocked_step {n t l i} (old : Blocked f.logs n t l i) :
@@ -6403,16 +6414,15 @@ private theorem leader_logs : LeaderLogs (f.advance after) := by
   split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨other, old⟩) with
   | inl =>
     subst nodeEq stateEq
-    split_rel leader := (rcases Summary.leader c.sum role with ⟨preRole, termEq⟩ | wins) with
-    | inl =>
-      have keep := c.keep_log termEq (by rw [preRole]; simp)
+    refine c.origin_cases (Summary.leader c.sum role) (fun preRole termEq => ?_)
+      fun wins => ?_
+    · have keep := c.keep_log termEq (by rw [preRole]; simp)
         (c.inv.leader_led c.actor c.pre c.pre_now preRole)
       have nonempty := c.inv.leader_logs c.actor c.pre c.pre_now preRole
       intro empty
       rw [empty] at keep
       exact nonempty (List.prefix_nil.mp keep)
-    | inr =>
-      obtain ⟨candidate, campaign, quorum, logEq, _⟩ := Wins.facts wins
+    · obtain ⟨candidate, campaign, quorum, logEq, _⟩ := Wins.facts wins
       have ⟨_, candidateLog, _, _⟩ := campaign
       have nonempty := hasQuorum_nonempty quorum
       obtain ⟨n, _, _, positive, eq⟩ := primaryState_log candidate
@@ -6699,17 +6709,6 @@ private theorem pre_led (leader : c.pre.role = .primary)
     : Led f c.actor c.pre.currentTerm :=
   c.inv.leader_led c.actor c.pre c.pre_now leader
 
-private theorem post_led
-    (origin
-      : (c.pre.role = .primary /\ c.post.currentTerm = c.pre.currentTerm)
-        \/ Wins c.actor c.pre c.event c.post)
-    : Led (f.advance after) c.actor c.post.currentTerm := by
-  split_rel origin := (rcases origin with ⟨leader, termEq⟩ | wins) with
-  | inl =>
-    rw [termEq]
-    exact (c.pre_led leader).mono after
-  | inr => exact Or.inr ⟨_, _, .inr ⟨f.current, rfl, c.wins_elect wins⟩⟩
-
 /-- An acknowledgement of a leader's term holds a prefix of the leader's log. -/
 private theorem acked_pre (leader : c.pre.role = .primary) {voter : NodeID} {index : Nat}
     (acked : Acked f voter c.pre.currentTerm index)
@@ -6812,22 +6811,6 @@ private theorem pre_backed_any
         Backed (f.advance after) c.post.log c.pre.commitIndex term := by
   obtain ⟨⟨term, backed⟩, _⟩ := c.inv.commit_backed c.actor c.pre c.pre_now
   exact ⟨term, (backed.transfer agree).mono after⟩
-
-/-- A step keeping the committed prefix keeps a leader's backing in its term. -/
-private theorem keep_backed
-    (agree : c.post.log.take c.pre.commitIndex = c.pre.log.take c.pre.commitIndex)
-    (commitEq : c.post.commitIndex = c.pre.commitIndex)
-    (origin
-      : (c.pre.role = .primary /\ c.post.currentTerm = c.pre.currentTerm)
-        \/ Wins c.actor c.pre c.event c.post)
-    : Backed (f.advance after) c.post.log c.post.commitIndex
-        c.post.currentTerm := by
-  rw [commitEq]
-  split_rel origin := (rcases origin with ⟨leader, _⟩ | wins) with
-  | inl => exact (c.pre_backed agree leader).mono after
-  | inr =>
-    have backed := c.elect_backed (c.wins_elect wins)
-    exact ((backed.weaken (Nat.sub_le _ _)).transfer agree).mono after
 
 /-- A leader's acknowledged prefix, from its match index. -/
 private theorem match_pre (leader : c.pre.role = .primary) {voter : NodeID}
@@ -7030,47 +7013,51 @@ private theorem post_backed_any
     rw [log, commit, List.take_length]
     exact inPart
 
-/-- The commit index of a node that continues or begins to lead is backed within its
-term. Such a node neither accepts a request, whose sender leads the same term, nor
-installs a snapshot. -/
-private theorem origin_backing
-    (origin
-      : (c.pre.role = .primary /\ c.post.currentTerm = c.pre.currentTerm)
-        \/ Wins c.actor c.pre c.event c.post)
+/-- A continuing leader's commit index stays backed within its term. Such a node neither
+accepts a request, whose sender leads the same term, nor installs a snapshot. -/
+private theorem continuing_backing (leader : c.pre.role = .primary)
+    (termEq : c.post.currentTerm = c.pre.currentTerm)
     : Backed (f.advance after) c.post.log c.post.commitIndex c.post.currentTerm := by
-  refine c.backing_cases (fun log commit => c.keep_backed (by rw [log]) commit origin) id
+  refine c.backing_cases (fun log commit => ?_) id
     (fun source request received accepted => ?_)
-    fun entries initialized _ fresh _ _ => ?_
+    fun entries _ _ fresh _ _ => ?_
+  · rw [commit]
+    exact (c.pre_backed (by rw [log]) leader).mono after
+  · -- The sender leads the term of the request, so the receiver did not.
+    obtain ⟨_, evidence⟩ := c.accept_evidence received
+    have : source = c.actor :=
+      c.inv.election_safety source c.actor request.term evidence.led
+        (by rw [accepted.1, termEq]; exact c.pre_led leader)
+    exact absurd this.symm evidence.different
+  · -- A fresh node has no role.
+    rw [fresh.1] at leader
+    cases leader
+
+/-- A node that wins an election has its commit index backed within the new term: a
+winning step neither accepts a request nor installs a snapshot. -/
+private theorem winning_backing (wins : Wins c.actor c.pre c.event c.post)
+    : Backed (f.advance after) c.post.log c.post.commitIndex c.post.currentTerm := by
+  refine c.backing_cases (fun log commit => ?_) id (fun _ _ received _ => ?_)
+    fun _ initialized _ _ _ _ => ?_
+  · rw [commit]
+    exact (((c.elect_backed (c.wins_elect wins)).weaken (Nat.sub_le _ _)).transfer
+      (by rw [log])).mono after
   · exfalso
-    split_rel origin := (rcases origin with ⟨leader, termEq⟩ | wins) with
-    | inl =>
-      -- The sender leads the term of the request, so the receiver did not.
-      obtain ⟨_, evidence⟩ := c.accept_evidence received
-      have : source = c.actor :=
-        c.inv.election_safety source c.actor request.term evidence.led
-          (by rw [accepted.1, termEq]; exact c.pre_led leader)
-      exact evidence.different this.symm
-    | inr =>
-      obtain ⟨_, _, _, _, electing⟩ := wins
-      rw [received] at electing
-      exact electing
+    obtain ⟨_, _, _, _, electing⟩ := wins
+    rw [received] at electing
+    exact electing
   · exfalso
-    split_rel origin := (rcases origin with ⟨leader, _⟩ | wins) with
-    | inl =>
-      -- A fresh node has no role.
-      rw [fresh.1] at leader
-      cases leader
-    | inr =>
-      obtain ⟨_, _, _, _, electing⟩ := wins
-      rw [initialized] at electing
-      exact electing
+    obtain ⟨_, _, _, _, electing⟩ := wins
+    rw [initialized] at electing
+    exact electing
 
 private theorem commit_backed : CommitBacked (f.advance after) := by
   intro node state now
   split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨_, old⟩) with
   | inl =>
     subst nodeEq stateEq
-    exact ⟨c.post_backed_any, fun role => c.origin_backing (Summary.leader c.sum role)⟩
+    exact ⟨c.post_backed_any, fun role =>
+      c.origin_cases (Summary.leader c.sum role) c.continuing_backing c.winning_backing⟩
   | inr =>
     obtain ⟨⟨term, backed⟩, strong⟩ := c.inv.commit_backed node state old
     exact ⟨⟨term, backed.mono after⟩, fun role => (strong role).mono after⟩
@@ -7335,12 +7322,20 @@ private theorem new_message {envelope : Model.Envelope} (new : envelope ∈ c.se
       rw [sourceEq]
       obtain ⟨aeok, notCandidate, origin⟩ := ok
       obtain ⟨different, term, bound, prevTerm, entries, commitLe⟩ := aeok
-      have led := c.post_led origin
+      obtain ⟨led, backed⟩
+          : Led (f.advance after) c.actor c.post.currentTerm
+            /\ Backed (f.advance after) c.post.log c.post.commitIndex c.post.currentTerm :=
+        c.origin_cases origin
+          (fun leader termEq =>
+            ⟨by rw [termEq]; exact (c.pre_led leader).mono after,
+              c.continuing_backing leader termEq⟩)
+          fun wins =>
+            ⟨Or.inr ⟨_, _, .inr ⟨f.current, rfl, c.wins_elect wins⟩⟩, c.winning_backing wins⟩
       refine ⟨c.post.log, different, term ▸ led, ?_, bound, prevTerm, entries, ?_⟩
       · exact .inr ⟨c.actor, c.post, ⟨c.post_now, term.symm,
           notCandidate, term ▸ led⟩, rfl⟩
       · rw [term]
-        exact (c.origin_backing origin).shorten commitLe
+        exact backed.shorten commitLe
   | appendEntriesResponse =>
       simp only [h] at ok
       simp only [MessageOK, h]
