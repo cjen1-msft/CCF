@@ -2574,8 +2574,8 @@ private theorem getElem_le_of_lt_length_filter {configurations : List Configurat
       _ <= i := Nat.le_trans (List.length_filter_le _ _) (List.length_take_le _ _)
   exact Nat.lt_irrefl _ (Nat.lt_of_lt_of_le lt count)
 
-/-- The configuration chosen by an index bound is within it, or is the first: so its index
-is within any limit that covers the bound and the index of some configuration. -/
+/-- The configuration chosen by an index bound is within any limit that covers the bound
+and the index of some configuration. -/
 private theorem chosen_bound {configurations : List Configuration}
     (sorted : configurations.Pairwise fun first second => first.index < second.index)
     (bound : Nat) (positive : 0 < configurations.length)
@@ -2591,23 +2591,21 @@ private theorem chosen_bound {configurations : List Configuration}
                 (Nat.sub_one_lt (Nat.ne_of_gt positive)))
       chosen.index <= limit := by
   intro chosen
-  split_rel counted := (by_cases counted : 0 < (configurations.filter
-      fun configuration => configuration.index <= bound).length) with
-  | pos =>
-    exact Nat.le_trans
-      (getElem_le_of_lt_length_filter sorted (Nat.sub_one_lt (Nat.ne_of_gt counted))) within
-  | neg =>
-    -- No configuration is within the bound: the first one is chosen, and it is the lowest.
-    split_rel configurations := (rcases configurations with _ | ⟨head, tail⟩) with
-    | inl => simp at positive
-    | inr =>
-      simp only [chosen, Nat.eq_zero_of_not_pos counted, Nat.zero_sub, List.getElem_cons_zero]
-      split_rel mem_cons := (rcases List.mem_cons.mp member with same | later) with
-      | inl =>
-        subst same
-        exact lowLe
-      | inr =>
-        exact Nat.le_trans (Nat.le_of_lt ((List.pairwise_cons.mp sorted).1 low later)) lowLe
+  -- Raise the bound to cover `low`. Then some configuration is within it, so the chosen
+  -- position, which is no later than the last one counted by the raised bound, is too.
+  have counted : 0 < (configurations.filter fun configuration =>
+      configuration.index <= max bound low.index).length :=
+    List.length_pos_of_mem
+      (List.mem_filter.mpr ⟨member, by simpa using Nat.le_max_right bound low.index⟩)
+  have before : (configurations.filter fun configuration => configuration.index <= bound).length
+        - 1
+      < (configurations.filter fun configuration =>
+          configuration.index <= max bound low.index).length :=
+    Nat.lt_of_le_of_lt
+      (Nat.sub_le_sub_right (length_filter_index_mono configurations (Nat.le_max_left _ _)) 1)
+      (Nat.sub_one_lt (Nat.ne_of_gt counted))
+  exact Nat.le_trans (getElem_le_of_lt_length_filter sorted before)
+    (Nat.max_le.mpr ⟨within, lowLe⟩)
 
 /--
 Two logs agreeing up to `k`, with commit indices at most `k` and a configuration
