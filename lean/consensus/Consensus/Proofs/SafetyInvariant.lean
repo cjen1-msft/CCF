@@ -5271,6 +5271,14 @@ private theorem post_seen : Seen (f.advance after) c.actor (observe c.post) :=
 private theorem frontier_pre : c.pre.commitIndex <= c.pre.log.length :=
   (c.inv.frontier _ _ c.pre_now).1
 
+/-- The actor's commit index is not beyond its latest signature index: one beyond it
+would be positive, hence at a signature. -/
+private theorem committable_pre : c.pre.commitIndex <= maxCommittableIndex c.pre.log :=
+  Nat.le_of_not_lt fun beyond =>
+    Nat.not_le_of_gt beyond
+      (signatureIndex_le_maxCommittableIndex
+        ((c.inv.frontier _ _ c.pre_now).2 (Nat.lt_of_le_of_lt (Nat.zero_le _) beyond)))
+
 private theorem received {source : NodeID} {message : Message}
     (eq : c.event = .receive source message)
     : exists envelope,
@@ -5459,23 +5467,15 @@ private theorem makeRequestVoteRequest_eq (state : NodeState)
     : makeRequestVoteRequest state = vals state.currentTerm state.log state.commitIndex :=
   rfl
 
-/-- A candidate's own vote request ranks at least as high as its log. -/
+/-- A candidate's own vote request ranks exactly as its log: its commit index is not
+beyond its latest signature index, so the request names that index. -/
 private theorem vals_outranks {state : NodeState} (term : Nat)
-    (sorted : state.log.Pairwise fun first second => first.term <= second.term)
-    (frontier : state.commitIndex <= state.log.length)
+    (committable : state.commitIndex <= maxCommittableIndex state.log)
     : LogFacts.Outranks (vals term state.log state.commitIndex) state.log := by
-  refine ⟨?_, fun _ => Nat.le_max_right _ _⟩
+  refine ⟨Nat.le_of_eq ?_, fun _ => Nat.le_max_right _ _⟩
   change termAt state.log (maxCommittableIndex state.log)
-    <= termAt state.log (max state.commitIndex (maxCommittableIndex state.log))
-  -- A log without a signature has last committable term zero.
-  split_rel signed :=
-      (rcases Nat.eq_zero_or_pos (maxCommittableIndex state.log) with none | positive) with
-  | inl =>
-    rw [none, termAt_zero]
-    exact Nat.zero_le _
-  | inr =>
-    exact termAt_mono sorted positive (Nat.le_max_right _ _)
-      (Nat.max_le.mpr ⟨frontier, maxCommittableIndexBounded state.log⟩)
+    = termAt state.log (max state.commitIndex (maxCommittableIndex state.log))
+  rw [Nat.max_eq_right committable]
 
 /-- A vote request that a log is up to date for ranks at least as high as the log. -/
 private theorem outranks_of_upToDate {state : NodeState} {request : RequestVoteRequest}
@@ -5497,10 +5497,6 @@ open Consensus.Proofs.Ledger
 variable [Config.InitialConfiguration]
 variable {f : Frame} {after : Model.State} (c : Ctx f after)
 include c
-
-private theorem pre_sorted
-    : c.pre.log.Pairwise fun first second => first.term <= second.term :=
-  c.inv.sorted c.actor c.pre c.pre_now
 
 /-- A received AppendEntries request was sent by the leader of its term, from its log. -/
 private theorem accept_evidence {source : NodeID} {request : AppendEntriesRequest}
@@ -5686,7 +5682,7 @@ private theorem self_granted {term : Nat} (le : c.pre.currentTerm <= term)
       le,
       termEq,
       voted,
-      vals_outranks term c.pre_sorted c.frontier_pre
+      vals_outranks term c.committable_pre
     ⟩,
     ⟨c.post.log, .inr ⟨c.post, c.tr.post_mem, termEq, rfl⟩⟩
   ⟩
@@ -6962,12 +6958,7 @@ private theorem wins_backing (wins : Wins c.actor c.pre c.event c.post)
   have elect := c.wins_elect wins
   have winning := (c.electStep elect).2.2.2.2.2.2.1
   obtain ⟨candidate, ⟨_, candidateLog, candidateCommit, _⟩, _, advance, _⟩ := wins
-  -- A commit index beyond the latest signature would be a positive one, at a signature.
-  have committable : c.pre.commitIndex <= maxCommittableIndex c.pre.log :=
-    Nat.le_of_not_lt fun beyond =>
-      Nat.not_le_of_gt beyond
-        (signatureIndex_le_maxCommittableIndex
-          ((c.inv.frontier _ _ c.pre_now).2 (Nat.lt_of_le_of_lt (Nat.zero_le _) beyond)))
+  have committable := c.committable_pre
   have agree : c.post.log.take c.pre.commitIndex = c.pre.log.take c.pre.commitIndex := by
     rw [take_eq_of_prefix winning
         (by rw [List.length_take]; exact Nat.le_min.mpr ⟨committable, c.frontier_pre⟩),
