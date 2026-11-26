@@ -2499,15 +2499,6 @@ private theorem activeConfigurations_sublist (log : List Entry) (commit : Nat)
     : (activeConfigurations log commit).Sublist (configurationHistory log) :=
   List.drop_sublist _ _
 
-/-- A log whose first entry is a configuration has a configuration history. -/
-private theorem configurationHistory_ne_nil {log : List Entry} {root : Entry}
-    (head : log.take 1 = [root]) (configured : root.content.metadata.configuration.isSome)
-    : configurationHistory log ≠ [] := by
-  obtain ⟨rest, eq, _⟩ := configurationHistory_split log 1
-  rw [eq, head]
-  obtain ⟨nodes, some⟩ := Option.isSome_iff_exists.mp configured
-  simp [configurationHistory, some]
-
 private theorem filter_index_append {front rest : List Configuration} {bound k : Nat}
     (le : bound <= k)
     (later : forall configuration, configuration ∈ rest -> k < configuration.index)
@@ -2590,10 +2581,13 @@ private theorem getElem_le_of_lt_length_filter {configurations : List Configurat
         rw [List.filter_cons_of_neg (by simpa using within), empty] at lt
         simp at lt
 
-/-- The configuration chosen by an index bound is within it, or is the first. -/
+/-- The configuration chosen by an index bound is within it, or is the first: so its index
+is within any limit that covers the bound and the index of some configuration. -/
 private theorem chosen_bound {configurations : List Configuration}
     (sorted : configurations.Pairwise fun first second => first.index < second.index)
     (bound : Nat) (positive : 0 < configurations.length)
+    {limit : Nat} (within : bound <= limit)
+    {low : Configuration} (member : low ∈ configurations) (lowLe : low.index <= limit)
     : let chosen :=
         configurations[
           (configurations.filter fun configuration => configuration.index <= bound).length
@@ -2602,14 +2596,15 @@ private theorem chosen_bound {configurations : List Configuration}
               exact Nat.lt_of_le_of_lt
                 (Nat.sub_le_sub_right (List.length_filter_le _ _) 1)
                 (Nat.sub_one_lt (Nat.ne_of_gt positive)))
-      chosen.index <= bound
-      \/ forall other, other ∈ configurations -> chosen.index <= other.index := by
+      chosen.index <= limit := by
   intro chosen
   split_rel counted := (by_cases counted : 0 < (configurations.filter
       fun configuration => configuration.index <= bound).length) with
-  | pos => exact Or.inl (getElem_le_of_lt_length_filter sorted (Nat.sub_one_lt (Nat.ne_of_gt counted)))
+  | pos =>
+    exact Nat.le_trans
+      (getElem_le_of_lt_length_filter sorted (Nat.sub_one_lt (Nat.ne_of_gt counted))) within
   | neg =>
-    refine Or.inr fun other member => ?_
+    -- No configuration is within the bound: the first one is chosen, and it is the lowest.
     split_rel configurations := (rcases configurations with _ | ⟨head, tail⟩) with
     | inl => simp at positive
     | inr =>
@@ -2617,31 +2612,34 @@ private theorem chosen_bound {configurations : List Configuration}
       split_rel mem_cons := (rcases List.mem_cons.mp member with same | later) with
       | inl =>
         subst same
-        exact Nat.le.refl
-      | inr => exact Nat.le_of_lt ((List.pairwise_cons.mp sorted).1 other later)
+        exact lowLe
+      | inr =>
+        exact Nat.le_trans (Nat.le_of_lt ((List.pairwise_cons.mp sorted).1 low later)) lowLe
 
 /--
 Two logs agreeing up to `k`, with commit indices at most `k` and a configuration
 among their first `k` entries, share an active configuration: the last one
-committed by the larger commit index, or the first one if neither commits one.
+committed by the larger commit index, or the first one if neither commits one. Its
+index is within any limit that covers both commit indices and some configuration
+among those entries.
 -/
 private theorem activeConfigurations_overlap {left right : List Entry}
     {leftCommit rightCommit k : Nat}
     (agree : left.take k = right.take k) (leftLe : leftCommit <= k)
-    (rightLe : rightCommit <= k) (configured : configurationHistory (right.take k) ≠ [])
+    (rightLe : rightCommit <= k)
+    {limit : Nat} (within : max leftCommit rightCommit <= limit)
+    {low : Configuration} (member : low ∈ configurationHistory (right.take k))
+    (lowLe : low.index <= limit)
     : exists configuration,
         configuration ∈ activeConfigurations left leftCommit
         /\ configuration ∈ activeConfigurations right rightCommit
-        /\ (configuration.index <= max leftCommit rightCommit
-            \/ forall other,
-                other ∈ configurationHistory (right.take k)
-                -> configuration.index <= other.index) := by
+        /\ configuration.index <= limit := by
   obtain ⟨leftRest, leftEq, leftLater⟩ := configurationHistory_split left k
   obtain ⟨rightRest, rightEq, rightLater⟩ := configurationHistory_split right k
   rw [agree] at leftEq
   have sorted := configurationHistory_sorted (right.take k)
-  generalize configurationHistory (right.take k) = common at leftEq rightEq configured sorted ⊢
-  have commonPos : 0 < common.length := List.length_pos_iff.mpr configured
+  generalize configurationHistory (right.take k) = common at leftEq rightEq member sorted ⊢
+  have commonPos : 0 < common.length := List.length_pos_of_mem member
   have count : forall {log : List Entry} {rest commit},
       configurationHistory log = common ++ rest
       -> (forall configuration, configuration ∈ rest -> k < configuration.index)
@@ -2675,19 +2673,17 @@ private theorem activeConfigurations_overlap {left right : List Entry}
   | inl =>
     have mono := length_filter_index_mono common ordered
     have chosenLt := Nat.lt_of_le_of_lt (Nat.sub_le_sub_right rightBound 1) last
-    refine ⟨common[_ - 1]'chosenLt, inDrop chosenLt leftEq (Nat.sub_le_sub_right mono 1),
-      inDrop chosenLt rightEq Nat.le.refl, ?_⟩
-    split_rel chosen_bound := (rcases chosen_bound sorted rightCommit commonPos with within | first) with
-    | inl => exact Or.inl (Nat.le_trans within (Nat.le_max_right _ _))
-    | inr => exact Or.inr first
+    exact ⟨common[_ - 1]'chosenLt, inDrop chosenLt leftEq (Nat.sub_le_sub_right mono 1),
+      inDrop chosenLt rightEq Nat.le.refl,
+      chosen_bound sorted rightCommit commonPos
+        (Nat.le_trans (Nat.le_max_right _ _) within) member lowLe⟩
   | inr =>
     have mono := length_filter_index_mono common ordered
     have chosenLt := Nat.lt_of_le_of_lt (Nat.sub_le_sub_right leftBound 1) last
-    refine ⟨common[_ - 1]'chosenLt, inDrop chosenLt leftEq Nat.le.refl,
-      inDrop chosenLt rightEq (Nat.sub_le_sub_right mono 1), ?_⟩
-    split_rel chosen_bound := (rcases chosen_bound sorted leftCommit commonPos with within | first) with
-    | inl => exact Or.inl (Nat.le_trans within (Nat.le_max_left _ _))
-    | inr => exact Or.inr first
+    exact ⟨common[_ - 1]'chosenLt, inDrop chosenLt leftEq Nat.le.refl,
+      inDrop chosenLt rightEq (Nat.sub_le_sub_right mono 1),
+      chosen_bound sorted leftCommit commonPos
+        (Nat.le_trans (Nat.le_max_left _ _) within) member lowLe⟩
 
 /-- Two strict majorities of one configuration share a member. -/
 private theorem majorities_intersect {configuration : Configuration}
@@ -2776,21 +2772,16 @@ private theorem rooted_overlap {root : Entry}
     | inr => rwa [Nat.max_eq_left positive]
   have rooted : (right.take (max k 1)).take 1 = [root] := by
     rw [List.take_take, Nat.min_eq_left (Nat.le_max_right _ _), rightHead]
-  obtain ⟨configuration, leftMember, rightMember, bound⟩ :=
-    activeConfigurations_overlap agree' (Nat.le_trans leftLe (Nat.le_max_left _ _))
-      (Nat.le_trans rightLe (Nat.le_max_left _ _))
-      (configurationHistory_ne_nil rooted configured)
-  refine ⟨configuration, leftMember, rightMember, ?_⟩
-  split_rel bound := (rcases bound with within | first) with
-  | inl => exact Nat.le_trans within (Nat.le_max_left _ _)
-  | inr =>
-    obtain ⟨rest, eq, _⟩ := configurationHistory_split (right.take (max k 1)) 1
-    obtain ⟨nodes, some⟩ := Option.isSome_iff_exists.mp configured
-    have genesis : ({ index := 1, nodes } : Configuration)
-        ∈ configurationHistory (right.take (max k 1)) := by
-      rw [eq, rooted]
-      simp [configurationHistory, some]
-    exact Nat.le_trans (first _ genesis) (Nat.le_max_right _ _)
+  -- The root's configuration, at index one, is among the agreed entries.
+  obtain ⟨rest, eq, _⟩ := configurationHistory_split (right.take (max k 1)) 1
+  obtain ⟨nodes, some⟩ := Option.isSome_iff_exists.mp configured
+  have genesis : ({ index := 1, nodes } : Configuration)
+      ∈ configurationHistory (right.take (max k 1)) := by
+    rw [eq, rooted]
+    simp [configurationHistory, some]
+  exact activeConfigurations_overlap agree' (Nat.le_trans leftLe (Nat.le_max_left _ _))
+    (Nat.le_trans rightLe (Nat.le_max_left _ _)) (Nat.le_max_left _ _) genesis
+    (Nat.le_max_right _ _)
 
 /-- Quorums for two rooted logs agreeing on both committed prefixes share a
 voter; a configuration-bearing root supplies a common configuration. -/
