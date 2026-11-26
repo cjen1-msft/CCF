@@ -531,8 +531,9 @@ private def bumpedState (state : NodeState) (term : Nat) : NodeState :=
       preVotesGranted := ∅
   }
 
-/-- What the AppendEntries request handler does, relative to the observed state. -/
-private def AEReply (self source : NodeID) (state : NodeState)
+/-- What the AppendEntries request handler does: its effect on the observed state
+`state`, and its log change and sends relative to the state `before` the step. -/
+private def AEReply (self source : NodeID) (before state : NodeState)
     (request : AppendEntriesRequest) (after : NodeState)
     (sent : List Model.Envelope)
     : Prop :=
@@ -541,34 +542,10 @@ private def AEReply (self source : NodeID) (state : NodeState)
   /\ after.matchIndex = state.matchIndex
   /\ (after.role = .primary -> state.role = .primary)
   /\ (after.role = .candidate -> after = state)
-  /\ ((after.log = state.log
-        /\ after.commitIndex = state.commitIndex
-        /\ forall e,
-            e ∈ sent
-            -> e.source = self
-                /\ exists response,
-                    e.payload = .appendEntriesResponse response
-                    /\ response.success = false)
-      \/ (request.term = state.currentTerm
-          /\ state.commitIndex <= request.prevLogIndex
-          /\ appendEntryMatchesLog state request
-          /\ after.log = acceptLog state.log request
-          /\ after.commitIndex
-              = max state.commitIndex
-                  (maxCommittableIndexUpTo after.log
-                    (min request.primaryCommit
-                      (request.prevLogIndex + request.entries.length)))
-          /\ exists e,
-              sent = [e]
-              /\ e.source = self
-              /\ e.target = source
-              /\ e.payload
-                  = .appendEntriesResponse
-                      {
-                        term := state.currentTerm,
-                        success := true,
-                        lastLogIndex := request.prevLogIndex + request.entries.length
-                      }))
+  /\ Kind self before (.receive source (.appendEntriesRequest request)) after
+  /\ forall e,
+      e ∈ sent
+      -> SendOK self before (.receive source (.appendEntriesRequest request)) after e
 
 /-- A partially appended batch: new entries at the leader's term, and
 packets consistent with the current log. -/
@@ -4226,9 +4203,11 @@ private theorem fromLeader_spec (self : NodeID) (state : NodeState)
   simp [eq]
   exact roleCase
 
-private theorem aeReply (self source : NodeID) (z : NodeState)
+private theorem aeReply (self source : NodeID) (before z : NodeState)
     (r : AppendEntriesRequest) (le : r.term <= z.currentTerm)
-    : Sends (AEReply self source z r)
+    (zLog : z.log = before.log) (zCommit : z.commitIndex = before.commitIndex)
+    (termLe : before.currentTerm <= z.currentTerm)
+    : Sends (AEReply self source before z r)
         (handleAppendEntriesRequest (Capabilities.record self) self source z r) := by
   unfold handleAppendEntriesRequest
   dsimp only
@@ -4280,19 +4259,9 @@ private theorem aeReply (self source : NodeID) (z : NodeState)
       intro role
       exact keep ⟨same, by simp [role]⟩
   have common := fun (after : NodeState) (sent : List Model.Envelope)
-      (rest : (after.log = z.log /\ after.commitIndex = z.commitIndex
-        /\ forall e, e ∈ sent -> e.source = self /\ exists response,
-          e.payload = .appendEntriesResponse response /\ response.success = false)
-      \/ (r.term = z.currentTerm /\ z.commitIndex <= r.prevLogIndex
-        /\ appendEntryMatchesLog z r
-        /\ after.log = acceptLog z.log r
-        /\ after.commitIndex = max z.commitIndex
-          (maxCommittableIndexUpTo after.log
-            (min r.primaryCommit (r.prevLogIndex + r.entries.length)))
-        /\ exists e, sent = [e] /\ e.source = self /\ e.target = source
-          /\ e.payload = .appendEntriesResponse
-            { term := z.currentTerm, success := true,
-              lastLogIndex := r.prevLogIndex + r.entries.length }))
+      (rest : Kind self before (.receive source (.appendEntriesRequest r)) after
+        /\ forall e, e ∈ sent
+          -> SendOK self before (.receive source (.appendEntriesRequest r)) after e)
       (term : after.currentTerm = w.currentTerm) (voted : after.votedFor = w.votedFor)
       (matchEq : after.matchIndex = w.matchIndex)
       (role : Not (after.role = .none) -> after.role = w.role)
@@ -4300,15 +4269,30 @@ private theorem aeReply (self source : NodeID) (z : NodeState)
     (⟨term.trans wTerm, voted.trans wVoted, matchEq.trans wMatch,
       fun leader => wLead ((role (by rw [leader]; simp)).symm.trans leader),
       fun c => (cand c).trans (wCand ((role (by rw [c]; simp)).symm.trans c)), rest⟩
-      : AEReply self source z r after sent)
+      : AEReply self source before z r after sent)
+  -- The log and commit index are unchanged and every reply is a rejection.
+  have quiet := fun (after : NodeState) (sent : List Model.Envelope)
+      (log : after.log = z.log) (commit : after.commitIndex = z.commitIndex)
+      (nacks : forall e, e ∈ sent -> e.source = self /\ exists response,
+        e.payload = .appendEntriesResponse response /\ response.success = false) =>
+    (⟨Kind.same (log.trans zLog) (commit.trans zCommit), fun e member => by
+        obtain ⟨source', response, payload, failed⟩ := nacks e member
+        refine ⟨source', ?_⟩
+        rw [payload]
+        intro success
+        rw [failed] at success
+        cases success⟩
+      : Kind self before (.receive source (.appendEntriesRequest r)) after
+        /\ forall e, e ∈ sent
+          -> SendOK self before (.receive source (.appendEntriesRequest r)) after e)
   refine Sends.ite' (fun reject => ?_) fun accept => ?_
   · have nack : forall payload, (exists response, payload = Message.appendEntriesResponse response
-        /\ response.success = false) -> Sends (AEReply self source z r)
+        /\ response.success = false) -> Sends (AEReply self source before z r)
         (do (Capabilities.record self).send payload source; pure w
           : NodeEffect _) :=
       fun payload isNack => Sends.bind' (Sends.send _ _ _) fun _ sent eq => Sends.pure' (by
         subst eq
-        refine common w _ (Or.inl ⟨wLog, wCommit, fun e member => ?_⟩) rfl rfl rfl
+        refine common w _ (quiet w _ wLog wCommit fun e member => ?_) rfl rfl rfl
           (fun _ => rfl) fun _ => rfl
         simp at member
         subst member
@@ -4320,7 +4304,7 @@ private theorem aeReply (self source : NodeID) (z : NodeState)
   refine Sends.ite'
     (fun _ =>
       Sends.pure'
-        (common _ [] (Or.inl ⟨wLog, wCommit, by simp⟩)
+        (common _ [] (quiet _ [] wLog wCommit (by simp))
           rfl rfl rfl (fun _ => rfl) fun c => (notCand c).elim))
     fun go => ?_
   have matches_ : appendEntryMatchesLog z r := by
@@ -4338,7 +4322,7 @@ private theorem aeReply (self source : NodeID) (z : NodeState)
             | none => z.log)
       -> v.currentTerm = w.currentTerm -> v.commitIndex = w.commitIndex
       -> v.votedFor = w.votedFor -> v.matchIndex = w.matchIndex -> v.role = w.role
-      -> Sends (AEReply self source z r)
+      -> Sends (AEReply self source before z r)
           (do
             let (state, response) := handleAppendEntiresFromPrimary self v r
             (Capabilities.record self).send (.appendEntriesResponse response) source
@@ -4351,14 +4335,24 @@ private theorem aeReply (self source : NodeID) (z : NodeState)
     obtain ⟨term, voted, matchEq, _, role, log, commit, response⟩ := spec
     refine Sends.bind' (Sends.send _ _ _) fun _ sent eq => Sends.pure' ?_
     subst eq
-    refine common _ _ (Or.inr ⟨same, commitLe, matches_, ?_, ?_, _, rfl, rfl, rfl, ?_⟩)
+    have term' : result.currentTerm = z.currentTerm := (term.trans vTerm).trans wTerm
+    have accepted : Accepted before r result := by
+      unfold appendEntryMatchesLog at matches_
+      rw [zLog] at matches_
+      refine ⟨same.trans term'.symm, same ▸ termLe, zCommit ▸ commitLe, matches_.1,
+        matches_.2, ?_, ?_⟩
+      · rw [log, vLog, ← zLog]
+        rfl
+      · rw [commit, vCommit, wCommit, zCommit]
+    refine common _ _ ⟨Kind.accept source r rfl accepted, fun e member => ?_⟩
       (term.trans vTerm) (voted.trans vVoted) (matchEq.trans vMatch)
       (fun kept => (role kept).trans vRole)
       fun c => (notCand (((role (by rw [c]; simp)).trans vRole).symm.trans c)).elim
-    · rw [log, vLog]
-      rfl
-    · rw [commit, vCommit, wCommit]
-    · rw [response, vTerm, wTerm]
+    simp only [List.append_nil, List.mem_singleton] at member
+    subst member
+    refine ⟨rfl, ?_⟩
+    rw [response]
+    exact fun _ => ⟨source, r, rfl, accepted, (vTerm.trans wTerm).trans term'.symm, rfl⟩
   have conflictEq : firstTermConflictIndex { w with primaryKnown := true } r
       = conflictIndex z.log r := by
     rw [firstTermConflictIndex_eq]
@@ -4373,43 +4367,6 @@ private theorem aeReply (self source : NodeID) (z : NodeState)
     rw [conflictEq] at heq
     exact tail _ (by simp only [heq, wLog]) rfl rfl rfl rfl rfl
 
-private theorem aeReply_summary {self source : NodeID} {before z after : NodeState}
-    {request : AppendEntriesRequest} {sent : List Model.Envelope}
-    (log : z.log = before.log) (commit : z.commitIndex = before.commitIndex)
-    (termLe : before.currentTerm <= z.currentTerm)
-    (reply : AEReply self source z request after sent)
-    : Kind self before (.receive source (.appendEntriesRequest request)) after
-      /\ forall e,
-          e ∈ sent
-          -> SendOK self before (.receive source (.appendEntriesRequest request)) after
-              e := by
-  obtain ⟨term, _, _, _, _, rest⟩ := reply
-  split_rel rest :=
-      (rcases rest with ⟨log', commit', nacks⟩ | ⟨same, commitLe, matches_, accepted, committed, e,
-        sentEq, source', _, payload⟩) with
-  | inl =>
-    refine ⟨Kind.same (log'.trans log) (commit'.trans commit), fun e member => ?_⟩
-    obtain ⟨source', response, payload, failed⟩ := nacks e member
-    refine ⟨source', ?_⟩
-    rw [payload]
-    intro success
-    rw [failed] at success
-    cases success
-  | inr =>
-    subst sentEq
-    have acceptedBy : Accepted before request after := by
-      unfold appendEntryMatchesLog at matches_
-      rw [log] at matches_
-      refine ⟨same.trans term.symm, same ▸ termLe, commit ▸ commitLe, matches_.1, matches_.2,
-        log ▸ accepted, ?_⟩
-      rw [committed, commit]
-    refine ⟨Kind.accept source request rfl acceptedBy, fun e' member => ?_⟩
-    simp only [List.mem_singleton] at member
-    subst member
-    refine ⟨source', ?_⟩
-    rw [payload]
-    exact fun _ => ⟨source, request, rfl, acceptedBy, term.symm, rfl⟩
-
 private theorem appendEntriesRequest_summary (self : NodeID) (before : NodeState)
     (source : NodeID) (request : AppendEntriesRequest)
     : Sends
@@ -4422,10 +4379,10 @@ private theorem appendEntriesRequest_summary (self : NodeID) (before : NodeState
   refine observe_bumping
     (motive := fun z => Sends _ (handleAppendEntriesRequest (Capabilities.record self) self source z request))
     before (message := .appendEntriesRequest request) rfl (fun bump => ?_) (fun le => ?_)
-  · refine Sends.mono (aeReply self source _ request (Nat.le.refl)) fun after sent reply => ?_
-    obtain ⟨kind, sends⟩ := aeReply_summary (before := before) (z := bumpedState before request.term) rfl rfl
-      (Nat.le_of_lt bump) reply
-    obtain ⟨term, _, _, lead, cand, _⟩ := reply
+  · refine Sends.mono
+      (aeReply self source before _ request (Nat.le.refl) rfl rfl (Nat.le_of_lt bump))
+      fun after sent reply => ?_
+    obtain ⟨term, _, _, lead, cand, kind, sends⟩ := reply
     exact bumped_summary (term ▸ bump)
       (fun candidate => by
         rw [cand candidate] at candidate
@@ -4434,9 +4391,9 @@ private theorem appendEntriesRequest_summary (self : NodeID) (before : NodeState
         have := lead leader
         simp [bumpedState] at this)
       ⟨source, _, rfl, trivial, term ▸ Nat.le.refl⟩ kind sends
-  · refine Sends.mono (aeReply self source _ request le) fun after sent reply => ?_
-    obtain ⟨kind, sends⟩ := aeReply_summary (before := before) rfl rfl Nat.le.refl reply
-    obtain ⟨term, voted, matchEq, lead, cand, _⟩ := reply
+  · refine Sends.mono (aeReply self source before _ request le rfl rfl Nat.le.refl)
+      fun after sent reply => ?_
+    obtain ⟨term, voted, matchEq, lead, cand, kind, sends⟩ := reply
     refine ⟨Nat.le_of_eq term.symm, fun _ voted' eq => voted ▸ eq,
       fun _ => Or.inr (Or.inr (Or.inl ⟨source, _, rfl, trivial, term ▸ le⟩)), fun c => ?_,
       fun leader => ?_, fun _ _ _ => Or.inl matchEq, kind, sends⟩
