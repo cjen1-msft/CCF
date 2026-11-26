@@ -5090,21 +5090,33 @@ private theorem backing_split {g : LogFacts.Ghost} {log : List Entry}
             exact take_prefix_take _ (Nat.le_of_lt (Nat.lt_of_not_le baseLe))
           exact ih (short.trans inBacking)
 
-/-- A new leader's log is a prefix of the candidate's that keeps its committed entries. -/
+/-- A new leader's log is a prefix of the candidate's that keeps its committed and its
+committable entries, and is nonempty if the candidate's is. -/
 private theorem primaryState_log (state : NodeState)
-    : exists n, state.commitIndex <= n /\ (primaryState state).log = state.log.take n := by
+    : exists n,
+        state.commitIndex <= n
+        /\ maxCommittableIndex state.log <= n
+        /\ (state.log ≠ [] -> 0 < n)
+        /\ (primaryState state).log = state.log.take n := by
   simp only [primaryState]
   split_rel commit := (split) with
   | pos =>
-    exact ⟨lastCommittableIndex state, by unfold lastCommittableIndex; exact Nat.le_max_left _ _,
-      rfl⟩
+    rename_i positive
+    have le : state.commitIndex <= lastCommittableIndex state := by
+      unfold lastCommittableIndex; exact Nat.le_max_left _ _
+    exact ⟨lastCommittableIndex state, le,
+      by unfold lastCommittableIndex; exact Nat.le_max_right _ _,
+      fun _ => Nat.lt_of_lt_of_le positive le, rfl⟩
   | neg =>
     exact ⟨max state.commitIndex state.log.length, Nat.le_max_left _ _,
+      Nat.le_trans (maxCommittableIndexBounded _) (Nat.le_max_right _ _),
+      fun nonempty => Nat.lt_of_lt_of_le (List.length_pos_iff.mpr nonempty)
+        (Nat.le_max_right _ _),
       (List.take_of_length_le (Nat.le_max_right _ _)).symm⟩
 
 private theorem primaryState_log_prefix (state : NodeState)
     : (primaryState state).log <+: state.log := by
-  obtain ⟨n, _, eq⟩ := primaryState_log state
+  obtain ⟨n, _, _, _, eq⟩ := primaryState_log state
   rw [eq]
   exact List.take_prefix _ _
 
@@ -5149,7 +5161,7 @@ private theorem Advance.frontier {self : NodeID} {middle state : NodeState}
 private theorem primaryState_frontier {state : NodeState}
     (frontier : Direct.CommitFrontier state)
     : Direct.CommitFrontier (primaryState state) := by
-  obtain ⟨n, le, eq⟩ := primaryState_log state
+  obtain ⟨n, le, _, _, eq⟩ := primaryState_log state
   exact (frontier.keep (count := n) le (suffix := [])).of_log (by rw [eq]; simp) rfl
 
 /-- A rollback point lies after the request's previous index. -/
@@ -5732,17 +5744,9 @@ private theorem wins_elect (wins : Wins c.actor c.pre c.event c.post)
   ⟩
   · rw [termEq]
     exact termCase
-  · rw [logEq]
-    simp only [primaryState]
-    split_rel committed := (split) with
-    | pos =>
-      rw [candidateLog]
-      exact take_prefix_take _ (by
-        simp only [lastCommittableIndex, candidateLog]
-        exact Nat.le_max_right _ _)
-    | neg =>
-      rw [candidateLog]
-      exact List.take_prefix _ _
+  · obtain ⟨n, _, committable, _, eq⟩ := primaryState_log candidate
+    rw [logEq, eq, candidateLog] at *
+    exact take_prefix_take _ committable
   · intro voter mem
     rw [termEq]
     exact c.campaign_votes campaign termEq votedEq voter mem
@@ -6423,15 +6427,10 @@ private theorem leader_logs : LeaderLogs (f.advance after) := by
       obtain ⟨candidate, campaign, quorum, logEq, _⟩ := Wins.facts wins
       have ⟨_, candidateLog, _, _⟩ := campaign
       have nonempty := hasQuorum_nonempty quorum
-      rw [logEq]
-      simp only [primaryState, lastCommittableIndex]
-      split_rel commit := (split) with
-      | pos =>
-        rw [candidateLog]
-        simp only [ne_eq, List.take_eq_nil_iff, not_or]
-        exact ⟨Nat.ne_of_gt (Nat.lt_of_lt_of_le ‹candidate.commitIndex > 0› (Nat.le_max_left _ _)),
-          nonempty⟩
-      | neg => rwa [candidateLog]
+      obtain ⟨n, _, _, positive, eq⟩ := primaryState_log candidate
+      rw [logEq, eq, candidateLog] at *
+      simp only [ne_eq, List.take_eq_nil_iff, not_or]
+      exact ⟨Nat.ne_of_gt (positive nonempty), nonempty⟩
   | inr => exact c.inv.leader_logs node state old role
 
 /-- An earlier leadership of the actor in its new term continues. -/
