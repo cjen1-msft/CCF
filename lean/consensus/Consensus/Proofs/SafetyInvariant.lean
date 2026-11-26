@@ -1971,11 +1971,8 @@ private theorem forIn' {β : Type} {items : List γ} {init : β}
           exact pure' fun e member => first e (by simpa using member)
       | yield =>
           rename_i value
-          refine mono (ih fun item value member => each item value (List.mem_cons_of_mem _ member))
-            fun _ later rest e member => ?_
-          split_rel mem_append := (rcases List.mem_append.mp member with old | new) with
-          | inl => exact first e old
-          | inr => exact rest e new
+          exact mono (ih fun item value member => each item value (List.mem_cons_of_mem _ member))
+            fun _ later rest => List.forall_mem_append.mpr ⟨first, rest⟩
 
 /-- A fold that keeps `I` of its accumulator and everything sent so far. -/
 private theorem foldlM' {I : α -> List (Envelope Node Message) -> Prop}
@@ -2102,9 +2099,7 @@ private theorem LocalTransition.mem_network {before after : Model.State}
     (member : envelope ∈ after.network)
     : envelope ∈ before.network \/ envelope ∈ transition.outputs.outgoing := by
   rw [transition.networkEq] at member
-  split_rel mem_append := (rcases List.mem_append.mp member with old | new) with
-  | inl => exact Or.inl (transition.pendingSub _ old)
-  | inr => exact Or.inr new
+  exact (List.mem_append.mp member).imp_left (transition.pendingSub _)
 
 /-- Two entries of one reachable state for the same node agree. -/
 private theorem state_unique {state : Model.State}
@@ -3436,12 +3431,10 @@ private theorem becomePrimary_sends (candidate : NodeState)
       simp [primaryState]
     refine ⟨rfl, other, _, rfl, rfl, ?_, rfl, ?_, Nat.le.refl⟩ <;>
       simp [makeAppendEntriesRequest, sentEq, messageEntries]
-  · intro e member
-    split_rel mem_append := (rcases List.mem_append.mp (by simpa using member) with old | new) with
-    | inl =>
-      have := nominated e old
-      exact Or.inl ⟨this.1, by simpa [primaryState] using this.2⟩
-    | inr => exact Or.inr (beats e new)
+  · simp only [List.append_nil]
+    exact List.forall_mem_append.mpr
+      ⟨fun e old => Or.inl ⟨(nominated e old).1, by simpa [primaryState] using (nominated e old).2⟩,
+        fun e new => Or.inr (beats e new)⟩
 
 private theorem electIfQuorum_sends (candidate : NodeState)
     : Sends
@@ -3490,12 +3483,9 @@ private theorem becomeCandidate_sends (state : NodeState)
       have := requests e (by simpa using member)
       exact ⟨this.1, this.2.2⟩⟩
   | inr =>
-    refine Or.inr ⟨by simpa [freshCandidate] using quorum, advance, fun e member => ?_⟩
-    split_rel mem_append := (rcases List.mem_append.mp member with old | new) with
-    | inl => exact Or.inl (by simpa [freshCandidate] using started e old)
-    | inr =>
-      have := requests e new
-      exact Or.inr ⟨this.1, this.2.2⟩
+    exact Or.inr ⟨by simpa [freshCandidate] using quorum, advance, List.forall_mem_append.mpr
+      ⟨fun e old => Or.inl (by simpa [freshCandidate] using started e old),
+        fun e new => Or.inr ⟨(requests e new).1, (requests e new).2.2⟩⟩⟩
 
 end Effects
 end Consensus.Proofs.Safety
@@ -4419,10 +4409,7 @@ private theorem BatchState.push {self : NodeID} {before state : NodeState}
     ⟨entries ++ [{ term := before.currentTerm, content }], sentIndex, by simp, ?_⟩,
     fun e member => (beats e member).extend (List.prefix_append _ _) Nat.le.refl
   ⟩
-  intro entry member
-  split_rel mem_append := (rcases List.mem_append.mp member with old | new) with
-  | inl => exact terms entry old
-  | inr => simp at new; rw [new]
+  exact List.forall_mem_append.mpr ⟨terms, fun entry new => by simp at new; rw [new]⟩
 
 private theorem appendEntry_batch (self : NodeID) (before : NodeState)
     (state : NodeState) (sent : List Model.Envelope)
@@ -4461,10 +4448,7 @@ private theorem appendEntry_batch (self : NodeID) (before : NodeState)
                       { before with log := before.log ++ entries, sentIndex } self).erase self
                   then (before.log ++ entries).length else sentIndex peer }
             (sent ++ later) :=
-          ⟨⟨entries, _, rfl, terms⟩, fun e member => by
-            split_rel mem_append := (rcases List.mem_append.mp member with old | new) with
-            | inl => exact beats e old
-            | inr => exact sentBeats e new⟩
+          ⟨⟨entries, _, rfl, terms⟩, List.forall_mem_append.mpr ⟨beats, sentBeats⟩⟩
         simpa using batch.push content
 
 private theorem sendEntries_batch (self : NodeID) (before state : NodeState)
@@ -4478,13 +4462,11 @@ private theorem sendEntries_batch (self : NodeID) (before state : NodeState)
   obtain ⟨⟨entries, sentIndex, rfl, terms⟩, packets⟩ := batch
   refine ⟨⟨entries, _, rfl, terms⟩, fun e member => ?_⟩
   simp only [List.append_nil] at member
-  split_rel mem_append := (rcases List.mem_append.mp member with old | new) with
-  | inl => exact packets e old
-  | inr =>
-    simp only [eq, List.mem_singleton] at new
-    subst e
-    have other : Not (destination = self) := (Finset.mem_erase.mp peer).1
-    exact ⟨rfl, other, _, rfl, rfl, Nat.le_trans le bound, rfl, List.take_prefix _ _, Nat.le.refl⟩
+  refine List.forall_mem_append.mpr ⟨packets, fun e new => ?_⟩ e member
+  simp only [eq, List.mem_singleton] at new
+  subst e
+  have other : Not (destination = self) := (Finset.mem_erase.mp peer).1
+  exact ⟨rfl, other, _, rfl, rfl, Nat.le_trans le bound, rfl, List.take_prefix _ _, Nat.le.refl⟩
 
 private theorem appendBatch_summary (self : NodeID) (state : NodeState)
     (contents : List AppendEntryInput)
@@ -4529,16 +4511,14 @@ private theorem appendBatch_summary (self : NodeID) (state : NodeState)
     Kind.append entries sentIndex leader terms (eq ▸ advance),
     fun e member => ?_
   ⟩
-  split_rel mem_append := (rcases List.mem_append.mp (by simpa using member) with old | new) with
-  | inl =>
-    have from_ : AEFrom self after.currentTerm after.commitIndex after.log e :=
+  refine List.forall_mem_append.mpr ⟨fun e old => ?_, fun e new => ?_⟩ e (by simpa using member)
+  · have from_ : AEFrom self after.currentTerm after.commitIndex after.log e :=
       term ▸ (beats e old).extend (log ▸ List.prefix_refl _) commit
     obtain ⟨request, payload, ok⟩ := from_.ok
     refine ⟨from_.1, ?_⟩
     rw [payload]
     exact ⟨ok, notCandidate, Or.inl ⟨leader, term⟩⟩
-  | inr =>
-    obtain ⟨source, payload⟩ := nominated e new
+  · obtain ⟨source, payload⟩ := nominated e new
     refine ⟨source, ?_⟩
     rw [payload]
     show appended.currentTerm = after.currentTerm
@@ -6180,11 +6160,9 @@ private theorem CopyLog.append {g : LogFacts.Ghost} {term : Nat} {log entries : 
     (terms : forall entry, entry ∈ entries -> entry.term = term)
     (canon : g.canon term (log ++ entries))
     : CopyLog g term (log ++ entries) := by
-  refine ⟨copy.rooted.append nonempty entries, fun entry mem => ?_, ?_,
+  refine ⟨copy.rooted.append nonempty entries,
+    List.forall_mem_append.mpr ⟨copy.terms, fun entry new => Nat.le_of_eq (terms entry new)⟩, ?_,
     fun index positive bound => ?_⟩
-  · split_rel mem_append := (rcases List.mem_append.mp mem with old | new) with
-    | inl => exact copy.terms entry old
-    | inr => exact Nat.le_of_eq (terms entry new)
   · rw [List.pairwise_append]
     refine ⟨copy.sorted, ?_, ?_⟩
     · exact List.pairwise_of_forall_mem_list fun first firstMem second secondMem => by
