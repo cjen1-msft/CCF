@@ -71,15 +71,13 @@ preserves it at `f.advance after` given only `Inv f` and one protocol transition
 `inv_of_reachable` lifts this result to any reachable state. The public properties
 still speak about positions in a trace; preservation does not take a trace as input.
 
-[`VoteFacts.Inv`](Consensus/Proofs/VoteFacts.lean) tracks observed
-`(voter, term, votedFor)` facts and cannot introduce a second candidate for one voter and term.
-[`LogFacts.advance`](Consensus/Proofs/LogFacts.lean) updates the evidence for seen logs,
-grants, elections, leader logs and commits using the two endpoints and the previous ghost.
-An independent [historical specification](../consensus-coverage/ConsensusCoverage/Historical.lean)
-proves that folding this update agrees with looking through the history. The safety proof
-does not import that specification.
-When comparing same-term elections, the proof carries the first election's quorum and
-commit backing rather than recovering them from the snapshot where it won.
+[`VoteFacts.Inv`](Consensus/Proofs/SafetyInvariant.lean) tracks observed `(voter, term, votedFor)` facts and cannot introduce a second candidate for one voter and term.
+[`LogFacts.advance`](Consensus/Proofs/LogFacts.lean) updates the evidence for seen logs, grants, elections and leader logs using the two endpoints and the previous ghost.
+Committed prefixes are not recorded: `Commit` derives them from the leader logs and observations.
+`LogFacts.lean` and `VoteFacts.lean` hold only the ghost definitions; the proofs about them are in `SafetyInvariant.lean`, where the coverage generator can read them.
+An independent [historical specification](../consensus-coverage/ConsensusCoverage/Historical.lean) proves that folding this update agrees with looking through the history.
+The safety proof does not import that specification.
+When comparing same-term elections, the proof carries the first election's quorum and commit backing rather than recovering them from the snapshot where it won.
 
 The commit/election intersection lemma (`core`) now takes only quorum and log facts.
 At a grant, the request must outrank each signed prefix the voter retained, or a
@@ -123,7 +121,12 @@ at least two branches are live. A dead branch must eliminate a kernel-checked pr
 of `False` in its own context. The script-replay result is diagnostic only: the same
 script can rely on different hypotheses in different branches.
 
-The current generator emits 397 step questions and 14 state questions (425 coordinates with both endpoints), and `Inv` has 27 clauses.
+The generator reads proof bodies only from the modules that `Classes.lean` imports with `import all`: `SafetyInvariant.lean` and `Direct.lean`.
+A theorem proved in any other module reaches it as an axiom without a value, so its case splits would be neither counted nor audited.
+[`hidden-proofs.lean`](../consensus-coverage/scripts/hidden-proofs.lean) fails if any `Consensus.Proofs` constant in the kernel closure of the four roots has no visible body.
+Its one named exception is the derived decidable equality on ballot stamps, which stays beside `VoteFacts.Stamp`.
+
+The current generator emits 353 step questions and 2 state questions (357 coordinates with both endpoints), and `Inv` has 24 clauses.
 The exact family, witness, and support results below were checked on the earlier schema of 516 step questions, 16 state questions (548 coordinates) and 30 clauses; the `ConsensusCoverage` modules that prove them have not yet been ported to the current schema.
 Historical search statistics are indicated separately.
 

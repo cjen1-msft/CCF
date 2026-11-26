@@ -1,7 +1,9 @@
 module
 
 public import Consensus.Model
-import Relevance.Split
+
+/-! The log ghost. Definitions only: the proofs about them are in `SafetyInvariant.lean`,
+the module whose proof bodies the coverage generator reads. -/
 
 namespace Consensus.Proofs.LogFacts
 
@@ -66,18 +68,6 @@ the original proof used to recover by visiting the instant the leader log was se
 def WinningPrefix (g : Ghost) : Prop :=
   ∀ k l, g.canon k l → Model.BOOTSTRAP_TERM < k →
     ∃ n p i, g.elected n k p i ∧ p.take (maxCommittableIndex p) <+: l
-
-theorem chain_step {bootstrap g prev s} (old : Chain g)
-    (grows : ∀ n st k, (advance bootstrap g prev s).canonNow bootstrap s n st k →
-      ∀ l, (advance bootstrap g prev s).canon k l → l <+: st.log) :
-    Chain (advance bootstrap g prev s) := by
-  intro k a b ca cb
-  split_rel right := (rcases cb with past | ⟨n, st, now, rfl⟩) with
-  | inl =>
-    split_rel left := (rcases ca with past' | ⟨n, st, now, rfl⟩) with
-    | inl => exact old k a b past' past
-    | inr => exact .inr (grows n st k now b (.inl past))
-  | inr => exact .inl (grows n st k now a ca)
 
 end
 end Consensus.Proofs.LogFacts
