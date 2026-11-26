@@ -86,14 +86,14 @@ The commit/election intersection lemma (`core`) takes only quorum and log facts.
 At a grant, the request must outrank each signed prefix the voter retained, or a leader log must witness that the voter lost the prefix.
 A later observation cannot introduce a lower-term prefix for that voter.
 Elections retain this evidence, so `complete_of` shows from the certificates of one frame that every committed prefix is in the log of every later-term election.
-It inducts on the election term and, within a term, on the derivation of the commit, without revisiting a vote, an election or a step.
+It inducts on the election term and, within a term, `carried_of_chain` inducts on the derivation of the commit, without revisiting a vote, an election or a step.
 Completeness is therefore a consequence of the other clauses, not a clause of `Inv`.
 This also handles a commit recorded after a higher-term election.
 
 Committed prefixes are a derived closure, not ghost state.
 `Commit` holds the empty prefix and every prefix with signed quorum evidence whose base lies within a prefix committed no later.
 No constructor names a snapshot or a position in the execution, so a step that records nothing commits nothing, and `Commit.advance` carries every derivation across a step unchanged.
-For the other direction, a new election must carry every older committed prefix: `carried_of_chain` inducts over the links of a `Commit` derivation, not over execution steps.
+For the other direction, a new election must carry every older committed prefix: the same `carried_of_chain` applies to the election of the step, with the leader logs of the frame before it.
 The `comparable` clause states that committed prefixes are comparable; `comparable_of` proves it from the leader-log chain and `complete_of`.
 
 For a candidate that cannot win, `Blocked` records an ungranted request and a
@@ -130,7 +130,7 @@ A theorem proved in any other module reaches it as an axiom without a value, so 
 [`hidden-proofs.lean`](../consensus-coverage/scripts/hidden-proofs.lean) fails if any `Consensus.Proofs` constant in the kernel closure of the four roots has no visible body.
 Its one named exception is the derived decidable equality on ballot stamps, which stays beside `VoteFacts.Stamp`.
 
-The current generator emits 385 step questions and 2 state questions (389 coordinates with both endpoints), and `Inv` has 24 clauses.
+The current generator emits 353 step questions and 2 state questions (357 coordinates with both endpoints), and `Inv` has 24 clauses.
 The exact family, witness, and support results below were checked on the earlier schema of 516 step questions, 16 state questions (548 coordinates) and 30 clauses; the `ConsensusCoverage` modules that prove them have not yet been ported to the current schema.
 Historical search statistics are indicated separately.
 
