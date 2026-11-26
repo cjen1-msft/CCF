@@ -967,7 +967,6 @@ private structure Inv (frame : Frame) : Prop where
   canon_mono : CanonMono frame
   chains : LogFacts.Chain frame.logs
   winningPrefix : LogFacts.WinningPrefix frame.logs
-  completeness : Completeness frame
   commit_backed : CommitBacked frame
   persist : Persist frame
   match_ack : MatchAck frame
@@ -4827,8 +4826,6 @@ private theorem inv_initial : Inv (Frame.start initial) := by
   · intro k l canon gt
     have boot := (initial_canon initialized (canon)).1
     exact (Nat.not_lt_of_ge (Nat.le_of_eq boot) gt).elim
-  · intro term part node later log commit _ elected
-    exact absurd elected not_elected_single
   · intro node state now
     have zero : state.commitIndex = 0 := by rw [stateOf now]; rfl
     have backed (term : Nat) : Backed (Frame.start initial) state.log state.commitIndex term :=
@@ -5023,11 +5020,6 @@ private theorem Inv.canon_floor {h : Frame} (inv : Inv h) {k l} (canon : h.logs.
     2 ≤ k := by
   obtain ⟨n, led⟩ := inv.owner canon
   exact inv.leader_floor led
-
-private theorem Inv.later {h : Frame} (inv : Inv h) : Later h.logs :=
-  later_of_complete inv.winningPrefix
-    (fun _ _ _ _ _ _ commit elected => inv.completeness _ _ _ _ _ _ commit elected)
-    (fun _ _ canon => inv.canon_floor canon)
 
 /-- Committed parts are comparable. -/
 private theorem committed_comparable {frame : Frame} (inv : Inv frame)
@@ -6271,6 +6263,15 @@ private theorem complete_of {g : LogFacts.Ghost} {v : VoteFacts.Ghost}
         exact core chains facts (logs _ _ facts.canon) two campaign lt (Nat.le_refl _) agree
           baseLe' commitLe clean
 
+/-- Completeness is not a clause of the invariant: the election certificates and leader
+logs of a frame already imply it. -/
+private theorem Inv.completeness {h : Frame} (inv : Inv h) : Completeness h :=
+  complete_of inv.rankedElections inv.electionCerts inv.winningPrefix inv.chains inv.copyLogs
+    (fun _ _ canon => inv.canon_floor canon)
+
+private theorem Inv.later {h : Frame} (inv : Inv h) : Later h.logs :=
+  later_of_complete inv.winningPrefix inv.completeness (fun _ _ canon => inv.canon_floor canon)
+
 end Consensus.Proofs.Safety
 
 namespace Consensus.Proofs.Safety.Ctx
@@ -7329,7 +7330,6 @@ private theorem inv_step : Inv (f.advance after) :=
     canon_mono := c.canon_mono
     chains := c.chains
     winningPrefix := c.winningPrefix
-    completeness := c.completeness
     commit_backed := c.commit_backed
     persist := c.persist
     match_ack := c.match_ack
