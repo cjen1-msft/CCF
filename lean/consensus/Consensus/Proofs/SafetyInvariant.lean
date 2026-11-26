@@ -5412,23 +5412,23 @@ private theorem electStep {node : NodeID} {term commit : Nat} {log : List Entry}
       | inl => rw [role'] at role <;> cases role
       | inr => rw [role'] at role <;> cases role
 
-private theorem led_after {node : NodeID} {term : Nat}
+/-- A leadership recorded after the step was recorded before it, or is won in it. -/
+private theorem led_after {motive : Prop} {node : NodeID} {term : Nat}
     (led : Led (f.advance after) node term)
-    : Led f node term
-      \/ exists log commit, ElectStep f after node term log commit := by
+    (old : Led f node term -> motive)
+    (won : forall log commit, ElectStep f after node term log commit -> motive)
+    : motive := by
   split_rel led := (rcases led with bootstrap | ⟨log, commit, elected⟩) with
-  | inl => exact Or.inl (Or.inl bootstrap)
+  | inl => exact old (Or.inl bootstrap)
   | inr =>
-    split_rel elected_after := (rcases c.elected_after elected with old | step) with
-    | inl => exact Or.inl (Or.inr ⟨log, commit, old⟩)
-    | inr => exact Or.inr ⟨log, commit, step⟩
+    split_rel elected_after := (rcases c.elected_after elected with prior | step) with
+    | inl => exact old (Or.inr ⟨log, commit, prior⟩)
+    | inr => exact won log commit step
 
 private theorem led_other {node : NodeID} {term : Nat} (different : Not (node = c.actor))
     (led : Led (f.advance after) node term)
-    : Led f node term := by
-  split_rel led_after := (rcases c.led_after led with old | ⟨_, _, step⟩) with
-  | inl => exact old
-  | inr => exact absurd (c.electStep step).1 different
+    : Led f node term :=
+  c.led_after led id fun _ _ step => absurd (c.electStep step).1 different
 
 private theorem canon_after {term : Nat} {log : List Entry}
     (canon : Canon (f.advance after) term log)
@@ -5746,9 +5746,8 @@ private theorem led_cur : LedCur (f.advance after) := by
   split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨different, old⟩) with
   | inl =>
     subst nodeEq stateEq
-    split_rel led_after := (rcases c.led_after led with led | ⟨_, _, step⟩) with
-    | inl =>
-      have le := c.term_le
+    refine c.led_after led (fun led => ?_) fun _ _ step => ?_
+    · have le := c.term_le
       split_rel led_cur :=
           (rcases c.inv.led_cur c.actor c.pre term c.pre_now led with lt | ⟨termEq, role⟩) with
       | inl => exact Or.inl (Nat.lt_of_lt_of_le lt le)
@@ -5762,8 +5761,7 @@ private theorem led_cur : LedCur (f.advance after) := by
                 Summary.candidate c.sum candidate) with
           | inl => exact Nat.succ_ne_self _ (fresh.symm.trans same.symm)
           | inr => exact role preRole
-    | inr =>
-      obtain ⟨_, _, _, _, termEq, role, _⟩ := c.electStep step
+    · obtain ⟨_, _, _, _, termEq, role, _⟩ := c.electStep step
       refine Or.inr ⟨termEq.symm, ?_⟩
       split_rel role := (rcases role with role | role) with
       | inl => rw [role] <;> simp
@@ -6311,15 +6309,13 @@ private theorem new_old_unique {node other : NodeID} {term commit : Nat}
 
 private theorem election_safety : ElectionSafety (f.advance after) := by
   intro node other term left right
-  split_rel led_after := (rcases c.led_after left with left | ⟨_, _, leftStep⟩) with
-  | inl =>
-    split_rel led_after := (rcases c.led_after right with right | ⟨_, _, rightStep⟩) with
-    | inl => exact c.inv.election_safety node other term left right
-    | inr => exact (c.new_old_unique rightStep left).symm
-  | inr =>
-    split_rel led_after := (rcases c.led_after right with right | ⟨_, _, rightStep⟩) with
-    | inl => exact c.new_old_unique leftStep right
-    | inr => exact (c.electStep leftStep).1.trans (c.electStep rightStep).1.symm
+  refine c.led_after left (fun left => ?_) fun _ _ leftStep => ?_
+  · refine c.led_after right (fun right => ?_) fun _ _ rightStep => ?_
+    · exact c.inv.election_safety node other term left right
+    · exact (c.new_old_unique rightStep left).symm
+  · refine c.led_after right (fun right => ?_) fun _ _ rightStep => ?_
+    · exact c.new_old_unique leftStep right
+    · exact (c.electStep leftStep).1.trans (c.electStep rightStep).1.symm
 
 private theorem rankedElections : RankedElections (f.advance after).logs
     (f.advance after).votes := by
@@ -6469,16 +6465,14 @@ private theorem leader_cases {motive : NodeID -> NodeState -> Prop} {node : Node
     | install =>
       rename_i _ _ _ _ fresh _ _ _ role
       exfalso
-      split_rel led_after := (rcases c.led_after led with old | ⟨_, _, step⟩) with
-      | inl =>
-        have floor := c.inv.leader_floor old
+      refine c.led_after led (fun old => ?_) fun _ _ step => ?_
+      · have floor := c.inv.leader_floor old
         have zero : c.pre.currentTerm = 0 := fresh.2.1
         split_rel led_cur :=
             (rcases c.inv.led_cur c.actor c.pre _ c.pre_now old with lt | ⟨eq, _⟩) with
         | inl => omega
         | inr => omega
-      | inr =>
-        have roleCase := (c.electStep step).2.2.2.2.2.1
+      · have roleCase := (c.electStep step).2.2.2.2.2.1
         rw [role] at roleCase
         split_rel roleCase := (rcases roleCase with primary | none) with
         | inl => cases primary
@@ -6630,16 +6624,14 @@ private theorem canonLogs : CanonLogs (f.advance after).logs := by
   apply canonLogs_step c.inv.canonLogs
   rintro n st k ⟨now, rfl, role, led⟩
   refine ⟨c.leader_copy now led, ⟨_, led⟩, fun gt => ?_⟩
-  split_rel led_after := (rcases c.led_after led with oldLed | ⟨l, i, step⟩) with
-  | inl =>
-    -- A continuing leader extends its previous log, which already held the prefix.
+  refine c.led_after led (fun oldLed => ?_) fun l i step => ?_
+  · -- A continuing leader extends its previous log, which already held the prefix.
     obtain ⟨before, old, term, oldRole, keep⟩ := c.continuing now role oldLed
     rw [← term] at oldLed gt ⊢
     obtain ⟨m, p, i, elect, sub⟩ := c.inv.winningPrefix _ _
       (c.inv.canon_mono n before old oldRole oldLed).1 gt
     exact ⟨m, p, i, .inl elect, sub.trans keep⟩
-  | inr =>
-    obtain ⟨rfl, _, _, _, _, _, winning, _⟩ := c.electStep step
+  · obtain ⟨rfl, _, _, _, _, _, winning, _⟩ := c.electStep step
     obtain rfl := c.now_post now
     exact ⟨_, l, i, .inr ⟨f.current, rfl, step⟩, winning⟩
 
