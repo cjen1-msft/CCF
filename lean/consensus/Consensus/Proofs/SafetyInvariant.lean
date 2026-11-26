@@ -632,12 +632,16 @@ end Consensus.Proofs.VoteFacts
 
 namespace Consensus.Proofs.LogFacts
 
+/-- Leader logs of a term still agree after a step: a leader log recorded by the new
+state extends every earlier one of its term (`grows`), and two recorded by it are one
+log (`same`). -/
 private theorem chain_step {bootstrap g prev s} (old : Chain g)
     (grows : ∀ n st k, (advance bootstrap g prev s).canonNow bootstrap s n st k →
-      ∀ l, (advance bootstrap g prev s).canon k l → l <+: st.log) :
+      ∀ l, g.canon k l → l <+: st.log)
+    (same : ∀ n st n' st' k, (advance bootstrap g prev s).canonNow bootstrap s n st k →
+      (advance bootstrap g prev s).canonNow bootstrap s n' st' k → st'.log = st.log) :
     Chain (advance bootstrap g prev s) := by
   intro k a b ca cb m ma mb
-  -- A leader log recorded by this state extends every leader log of its term.
   have extended {α : Type} {x y : List α} (sub : x <+: y) (mx : m ≤ x.length) :
       x.take m = y.take m := by
     obtain ⟨rest, rfl⟩ := sub
@@ -646,8 +650,11 @@ private theorem chain_step {bootstrap g prev s} (old : Chain g)
   | inl =>
     split_rel left := (rcases ca with past' | ⟨n, st, now, rfl⟩) with
     | inl => exact old k a b past' past m ma mb
-    | inr => exact (extended (grows n st k now b (.inl past)) mb).symm
-  | inr => exact extended (grows n st k now a ca) ma
+    | inr => exact (extended (grows n st k now b past) mb).symm
+  | inr =>
+    split_rel left := (rcases ca with past' | ⟨n', st', now', rfl⟩) with
+    | inl => exact extended (grows n st k now a past') ma
+    | inr => rw [same n st n' st' k now now']
 
 end Consensus.Proofs.LogFacts
 
@@ -6529,24 +6536,38 @@ private theorem continuing {node : NodeID} {state : NodeState}
   obtain ⟨eq, preRole⟩ := c.old_led_actor led
   exact (won.fresh eq.symm preRole).elim
 
+/-- An earlier leader log of the term is its one leader's, whose log only grew. -/
+private theorem canon_old {node : NodeID} {state : NodeState}
+    (now : Now (f.advance after) node state) (role : Not (state.role = .candidate))
+    (led : Led (f.advance after) node state.currentTerm) {log : List Entry}
+    (canon : Canon f state.currentTerm log)
+    : log <+: state.log := by
+  obtain ⟨node', led'⟩ := c.inv.owner canon
+  have := c.election_safety node' node _ (led'.mono after) led
+  subst this
+  obtain ⟨before, old, term, oldRole, keep⟩ := c.continuing now role led'
+  rw [← term] at canon led'
+  exact ((c.inv.canon_mono node' before old oldRole led').2 _ canon).trans keep
+
+/-- Two leader logs recorded by this state for one term are the log of its one leader. -/
+private theorem canon_same {node node' : NodeID} {state state' : NodeState} {term : Nat}
+    (first : CanonNow (f.advance after) node state term)
+    (second : CanonNow (f.advance after) node' state' term)
+    : state'.log = state.log := by
+  obtain ⟨now, _, _, led⟩ := first
+  obtain ⟨now', _, _, led'⟩ := second
+  have := c.election_safety node' node _ led' led
+  subst this
+  rw [c.unique _ _ _ now' now]
+
 private theorem canon_mono : CanonMono (f.advance after) := by
   intro node state now role led
   refine ⟨.inr ⟨node, state, ⟨now, rfl, role, led⟩, rfl⟩, fun log canon => ?_⟩
   split_rel canon_after :=
-      (rcases c.canon_after canon with canon | ⟨node', state', ⟨now', _, _, led'⟩, logEq⟩) with
-  | inl =>
-    -- An earlier leader log of the term is its one leader's, whose log only grew.
-    obtain ⟨node', led'⟩ := c.inv.owner canon
-    have := c.election_safety node' node _ (led'.mono after) led
-    subst this
-    obtain ⟨before, old, term, oldRole, keep⟩ := c.continuing now role led'
-    rw [← term] at canon led'
-    exact ((c.inv.canon_mono node' before old oldRole led').2 _ canon).trans keep
+      (rcases c.canon_after canon with canon | ⟨node', state', recorded, logEq⟩) with
+  | inl => exact c.canon_old now role led canon
   | inr =>
-    -- A leader log recorded by this state is that of the one leader of the term.
-    have := c.election_safety node' node _ led' led
-    subst this logEq
-    rw [c.unique _ _ _ now' now]
+    rw [← logEq, c.canon_same ⟨now, rfl, role, led⟩ recorded]
     exact List.prefix_refl _
 
 /-- A leader that appends entries of its term keeps a copyable log: the extended log
@@ -6588,8 +6609,10 @@ private theorem leader_copy {node : NodeID} {state : NodeState}
 
 private theorem chains : LogFacts.Chain (f.advance after).logs := by
   apply LogFacts.chain_step c.inv.chains
-  rintro n st k ⟨now, rfl, role, led⟩ l canon
-  exact (c.canon_mono n st now role led).2 l canon
+  · rintro n st k ⟨now, rfl, role, led⟩ l canon
+    exact c.canon_old now role led canon
+  · intro n st n' st' k first second
+    exact c.canon_same first second
 
 /-- Every log stays one a follower may copy: a prefix of the old log, the leader's own
 extension of it, or a prefix of a leader log. -/
