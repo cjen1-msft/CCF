@@ -5317,6 +5317,64 @@ private theorem received_term {source : NodeID} {message : Message}
 
 private theorem term_le : c.pre.currentTerm <= c.post.currentTerm := Summary.term_le c.sum
 
+/-- A voter is not, after the step, below the term of a vote it cast before it: its term
+only grows. -/
+private theorem old_stamp_now {stamp : VoteFacts.Stamp} (cast : stamp ∈ f.votes)
+    {state : NodeState} (now : Now (f.advance after) stamp.voter state)
+    (below : state.currentTerm < stamp.term)
+    : False := by
+  split_rel now_after := (rcases c.now_after now with ⟨actor, rfl⟩ | ⟨_, old⟩) with
+  | inl =>
+    have bound := c.inv.ballots.bounds stamp cast c.pre (by rw [actor]; exact c.pre_now)
+    exact Nat.lt_irrefl _ (Nat.lt_of_lt_of_le below (Nat.le_trans bound c.term_le))
+  | inr =>
+    exact Nat.lt_irrefl _
+      (Nat.lt_of_lt_of_le below (c.inv.ballots.bounds stamp cast state old))
+
+/-- A node does not have two states of different terms after the step. -/
+private theorem one_term_now {node : NodeID} {first second : NodeState}
+    (left : Now (f.advance after) node first) (right : Now (f.advance after) node second)
+    (below : first.currentTerm < second.currentTerm)
+    : False := by
+  split_rel now_after := (rcases c.now_after left with ⟨actor, rfl⟩ | ⟨other, old⟩) with
+  | inl =>
+    subst actor
+    rw [c.now_post right] at below
+    exact Nat.lt_irrefl _ below
+  | inr =>
+    split_rel now_after := (rcases c.now_after right with ⟨actor, _⟩ | ⟨_, old'⟩) with
+    | inl => exact other actor
+    | inr =>
+      rw [c.inv.unique node first second old old'] at below
+      exact Nat.lt_irrefl _ below
+
+/-- A vote recorded after the step names the candidate of any vote the voter cast in that
+term before it: within a term a voter keeps its vote. -/
+private theorem stamp_clash {voter first second : NodeID} {term : Nat}
+    (recorded : (⟨voter, term, some first⟩ : VoteFacts.Stamp) ∈ (f.advance after).votes)
+    (cast : (⟨voter, term, some second⟩ : VoteFacts.Stamp) ∈ f.votes)
+    (ne : Not (first = second))
+    : False := by
+  split_rel recorded :=
+      (rcases VoteFacts.mem_advance.1 recorded with ⟨n, state, now, eq⟩ | before) with
+  | inl =>
+    -- The vote is the voter's current one; its vote from before the step is kept.
+    obtain rfl : n = voter := congrArg VoteFacts.Stamp.voter eq
+    have termEq : state.currentTerm = term := congrArg VoteFacts.Stamp.term eq
+    have voteEq : state.votedFor = some first := congrArg VoteFacts.Stamp.vote eq
+    split_rel now_after := (rcases c.now_after now with ⟨actor, rfl⟩ | ⟨_, old⟩) with
+    | inl =>
+      subst actor
+      have bound : term <= c.pre.currentTerm := c.inv.ballots.bounds _ cast c.pre c.pre_now
+      have same : c.post.currentTerm = c.pre.currentTerm :=
+        Nat.le_antisymm (termEq ▸ bound) c.term_le
+      have kept := c.inv.ballots.keeps _ cast c.pre c.pre_now (termEq.symm.trans same) second rfl
+      exact ne (Option.some.inj (voteEq.symm.trans (Summary.vote_keep c.sum same second kept)))
+    | inr =>
+      have kept := c.inv.ballots.keeps _ cast state old termEq.symm second rfl
+      exact ne (Option.some.inj (voteEq.symm.trans kept))
+  | inr => exact ne (c.inv.ballots.unique voter term first second before cast)
+
 /-- A node's committed prefix ending at a signature is a signed prefix of a leader log. -/
 private theorem snap_of_committed {node : NodeID} {state : NodeState}
     (now : Now f node state) {index : Nat} (positive : 0 < index)
@@ -5635,20 +5693,20 @@ private theorem rankAtGrant {v n t r k l i}
 private theorem grantFactsBefore : GrantFacts (f.advance after).logs
     (f.advance after).votes f.logs.canon := by
   intro v n t r grant
-  have extend (stamp : ⟨v, t, some n⟩ ∈ (f.advance after).votes)
+  -- The voter is not observed after the step in a term below that of its vote.
+  have extend (stale : ∀ st, Now (f.advance after) v st → st.currentTerm < t → False)
       (old : VoterRank f.logs f.logs.canon v t t r) :
       VoterRank (f.advance after).logs f.logs.canon v t t r := by
     intro k l i obs lt sig atI
     split_rel observed := (rcases obs with past | ⟨st, now, term, _⟩) with
     | inl => exact old k l i past lt sig atI
-    | inr =>
-      have later : t ≤ st.currentTerm := c.ballots.bounds _ stamp st now
-      omega
+    | inr => exact (stale st now (by rw [term]; exact lt)).elim
   split_rel grant := (rcases grant with old | ⟨p, eq, fresh, supported⟩) with
   | inl =>
     obtain ⟨⟨stamp, ranked⟩, l, seen⟩ := c.inv.grantFacts v n t r old
     have stamp' := (VoteFacts.mem_advance (s := after)).2 (.inr stamp)
-    exact ⟨⟨stamp', extend stamp' ranked⟩, l, .inl seen⟩
+    exact ⟨⟨stamp', extend (fun _ now below => c.old_stamp_now stamp now below) ranked⟩,
+      l, .inl seen⟩
   | inr =>
     change some f.current = some p at eq
     cases eq
@@ -5657,7 +5715,8 @@ private theorem grantFactsBefore : GrantFacts (f.advance after).logs
     obtain ⟨_, post, _, postMem, _, term, vote, _⟩ := fresh
     have stamp : ⟨v, t, some n⟩ ∈ (f.advance after).votes :=
       VoteFacts.mem_advance.2 (.inl ⟨v, post, postMem, by simp [VoteFacts.stamp, term, vote]⟩)
-    exact ⟨⟨stamp, extend stamp rank⟩, supported⟩
+    exact ⟨⟨stamp, extend (fun _ now below =>
+      c.one_term_now now postMem (by rw [term]; exact below)) rank⟩, supported⟩
 
 private theorem grantFacts : GrantFacts (f.advance after).logs
     (f.advance after).votes (f.advance after).logs.canon := by
@@ -6277,11 +6336,12 @@ private theorem freshCert {node : NodeID} {term commit : Nat} {log : List Entry}
       (c.grantFactsBefore v node term _ ((granted v m))).1.1⟩⟩
 
 omit c in
-private theorem certificates_agree {g : LogFacts.Ghost} {v : VoteFacts.Ghost}
-    {s : Model.State} {n m k l i l' i'} (a : ElectionCert g v n k l i)
-    (b : ElectionCert g v m k l' i') (votes : VoteFacts.Inv s v)
+private theorem certificates_meet {g : LogFacts.Ghost} {v v' : VoteFacts.Ghost}
+    {n m k l i l' i'} (a : ElectionCert g v n k l i) (b : ElectionCert g v' m k l' i')
     (carriedA : ∀ t p, Commit g t p → t < k → p <+: l)
-    (carriedB : ∀ t p, Commit g t p → t < k → p <+: l') : n = m := by
+    (carriedB : ∀ t p, Commit g t p → t < k → p <+: l') :
+    ∃ voter, (⟨voter, k, some n⟩ : VoteFacts.Stamp) ∈ v
+      ∧ (⟨voter, k, some m⟩ : VoteFacts.Stamp) ∈ v' := by
   have takeEq {x y : List Entry} {j : Nat} (front : j ≤ x.length)
       (back : ∃ e p, Commit g e p ∧ e < k ∧ x.take j <+: p)
       (carry : ∀ t p, Commit g t p → t < k → p <+: y) : x.take j = y.take j := by
@@ -6300,7 +6360,7 @@ private theorem certificates_agree {g : LogFacts.Ghost} {v : VoteFacts.Ghost}
   obtain ⟨xs, q, observed⟩ := a.quorum
   obtain ⟨ys, q', observed'⟩ := b.quorum
   obtain ⟨voter, mem, mem'⟩ := quorums_intersect GENESIS_configured a.rooted b.rooted eq le le' q q'
-  exact votes.unique voter k n m (observed voter mem) (observed' voter mem')
+  exact ⟨voter, observed voter mem, observed' voter mem'⟩
 
 private theorem new_old_unique {node other : NodeID} {term commit : Nat}
     {log : List Entry}
@@ -6313,11 +6373,12 @@ private theorem new_old_unique {node other : NodeID} {term commit : Nat}
     have := fresh.above
     simp [same, BOOTSTRAP_TERM] at this
   | inr =>
+    -- The two quorums share a voter, who kept its vote of that term across the step.
     have cert := c.inv.electionCerts other term l i (old)
-    apply certificates_agree fresh (cert.weaken (fun _ _ h => h)
-      (fun _ h => VoteFacts.mem_advance.2 (.inr h))) c.ballots
-    · exact fun _ _ com => c.old_in_new elect com
-    · exact fun _ _ com => c.inv.completeness _ _ _ _ _ _ (com) old
+    obtain ⟨voter, mine, theirs⟩ := certificates_meet fresh cert
+      (fun _ _ com => c.old_in_new elect com)
+      (fun _ _ com => c.inv.completeness _ _ _ _ _ _ (com) old)
+    exact Classical.byContradiction fun ne => c.stamp_clash mine theirs ne
 
 private theorem election_safety : ElectionSafety (f.advance after) := by
   intro node other term left right
@@ -6343,10 +6404,7 @@ private theorem elections : Elections (f.advance after).logs (f.advance after).v
     intro x stamp k p seen lt
     split_rel seen := (rcases seen with past | ⟨st, now, term, _⟩) with
     | inl => exact past
-    | inr =>
-      have ge : t ≤ st.currentTerm := c.ballots.bounds _
-        (VoteFacts.mem_advance.2 (.inr stamp)) st now
-      omega
+    | inr => exact (c.old_stamp_now stamp now (by rw [term]; exact lt)).elim
   | inr =>
     refine ⟨(c.freshCert new).weaken (fun _ _ h => Commit.advance h) (fun _ h => h), ?_⟩
     apply (c.freshCampaign new).transport (fun _ m => m) (fun _ _ m => .inl m) ?_
