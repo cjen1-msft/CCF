@@ -834,9 +834,9 @@ private def ElectionCerts (g : LogFacts.Ghost) (v : VoteFacts.Ghost) : Prop :=
   ∀ n k l i, g.elected n k l i → ElectionCert g v n k l i
 
 /-- What a later vote says about a signed prefix previously held by the voter:
-the request outranks it, or a leader in the intervening terms lacked it. -/
+the request ranks at least as high, or a leader in the intervening terms lacked it. -/
 private def VoteRank (r : RequestVoteRequest) (k i : Nat) : Prop :=
-  k < r.lastCommittableTerm ∨ (k = r.lastCommittableTerm ∧ i ≤ r.lastCommittableIndex)
+  k ≤ r.lastCommittableTerm ∧ (k = r.lastCommittableTerm → i ≤ r.lastCommittableIndex)
 
 private def RankOrLoss (canon : Nat → List Entry → Prop) (bound : Nat)
     (r : RequestVoteRequest) (k i : Nat) (p : List Entry) : Prop :=
@@ -5596,11 +5596,10 @@ private theorem rankAtGrant {v n t r k l i}
     left
     unfold VoteRank
     split_rel up_to_date := (rcases up with lt | ⟨eq, le⟩) with
-    | inl => exact .inl (Nat.lt_of_le_of_lt rank lt)
-    | inr =>
-      split_rel term := (rcases Nat.lt_or_eq_of_le rank with lt | same) with
-      | inl => exact .inl (Nat.lt_of_lt_of_le lt (Nat.le_of_eq eq))
-      | inr => exact .inr ⟨same.trans eq, Nat.le_trans index le⟩
+    | inl =>
+      exact ⟨Nat.le_of_lt (Nat.lt_of_le_of_lt rank lt),
+        fun same => absurd (same ▸ rank) (Nat.not_le_of_gt lt)⟩
+    | inr => exact ⟨Nat.le_trans rank (Nat.le_of_eq eq), fun _ => Nat.le_trans index le⟩
   | inr =>
     obtain ⟨e, l', lo, hi, canon, missing⟩ := lost
     exact .inr ⟨e, l', atI ▸ lo, Nat.le_trans hi le, canon, missing⟩
@@ -5804,11 +5803,7 @@ private theorem blocked_step {n t l i} (old : Blocked f.logs n t l i) :
     change some f.current = some p at eq
     cases eq
     split_rel rank := (rcases c.rankAtGrant fresh seen sig term with ranked | ⟨e, _, above, below, _⟩) with
-    | inl =>
-      unfold VoteRank at ranked
-      split_rel vote_rank := (rcases ranked with lt | ⟨eq, le⟩) with
-      | inl => omega
-      | inr => omega
+    | inl => exact absurd ranked.1 (Nat.not_le_of_gt low)
     | inr => omega
 
 private theorem blocked_no_election {n t l i} (blocked : Blocked f.logs n t l i)
@@ -6003,17 +5998,14 @@ private theorem core {g : LogFacts.Ghost} {v n t b i later commit bound k l log}
     have atI : termAt p i = t := by rw [termAt_of_prefix sub (Nat.le_of_eq partLength.symm), partTerm]
     have signed := isSignatureAt_of_prefix sub (isSignatureAt_take_of_le Nat.le.refl step.signature)
     let j := max commit (maxCommittableIndex log)
-    have rank : t < termAt log j ∨ (t = termAt log j ∧ i ≤ j) := by
+    have rank : t ≤ termAt log j ∧ (t = termAt log j → i ≤ j) := by
       split_rel rank := (rcases (ranked voter voteMem).2 t p i seen lt signed atI with rank | lost) with
       | inl => exact rank
       | inr =>
         obtain ⟨e, a, lo, hi, canon, missing⟩ := lost
         rw [← take_of_prefix_length sub partLength] at missing
         exact (missing (clean e a lo hi canon)).elim
-    have termGe : t ≤ termAt log j := by
-      split_rel rank_bound := (rcases rank with lt | ⟨eq, _⟩) with
-      | inl => exact Nat.le_of_lt lt
-      | inr => exact Nat.le_of_eq eq
+    have termGe : t ≤ termAt log j := rank.1
     have jPos : 0 < j := by
       split_rel eq_zero_or_pos := (rcases Nat.eq_zero_or_pos j with zero | positive) with
       | inl =>
@@ -6048,7 +6040,7 @@ private theorem core {g : LogFacts.Ghost} {v n t b i later commit bound k l log}
       | inr =>
         exact viaAnchor long (take_of_prefix_length sub partLength)
     | inr =>
-      have indexLeJ : i ≤ j := (rank.resolve_left (Nat.not_lt_of_ge (Nat.le_of_eq same.symm))).2
+      have indexLeJ : i ≤ j := rank.2 same
       rw [← same] at canon
       have comparable := chain _ _ _ canon step.canon
       have anchoredIndex := Nat.le_trans indexLeJ anchoredLength
