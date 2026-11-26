@@ -2574,8 +2574,8 @@ private theorem getElem_le_of_lt_length_filter {configurations : List Configurat
       _ <= i := Nat.le_trans (List.length_filter_le _ _) (List.length_take_le _ _)
   exact Nat.lt_irrefl _ (Nat.lt_of_lt_of_le lt count)
 
-/-- The configuration chosen by an index bound is within it, or is the first: so its index
-is within any limit that covers the bound and the index of some configuration. -/
+/-- The configuration chosen by an index bound is within any limit that covers the bound
+and the index of some configuration. -/
 private theorem chosen_bound {configurations : List Configuration}
     (sorted : configurations.Pairwise fun first second => first.index < second.index)
     (bound : Nat) (positive : 0 < configurations.length)
@@ -2591,23 +2591,21 @@ private theorem chosen_bound {configurations : List Configuration}
                 (Nat.sub_one_lt (Nat.ne_of_gt positive)))
       chosen.index <= limit := by
   intro chosen
-  split_rel counted := (by_cases counted : 0 < (configurations.filter
-      fun configuration => configuration.index <= bound).length) with
-  | pos =>
-    exact Nat.le_trans
-      (getElem_le_of_lt_length_filter sorted (Nat.sub_one_lt (Nat.ne_of_gt counted))) within
-  | neg =>
-    -- No configuration is within the bound: the first one is chosen, and it is the lowest.
-    split_rel configurations := (rcases configurations with _ | ⟨head, tail⟩) with
-    | inl => simp at positive
-    | inr =>
-      simp only [chosen, Nat.eq_zero_of_not_pos counted, Nat.zero_sub, List.getElem_cons_zero]
-      split_rel mem_cons := (rcases List.mem_cons.mp member with same | later) with
-      | inl =>
-        subst same
-        exact lowLe
-      | inr =>
-        exact Nat.le_trans (Nat.le_of_lt ((List.pairwise_cons.mp sorted).1 low later)) lowLe
+  -- Raise the bound to cover `low`. Then some configuration is within it, so the chosen
+  -- position, which is no later than the last one counted by the raised bound, is too.
+  have counted : 0 < (configurations.filter fun configuration =>
+      configuration.index <= max bound low.index).length :=
+    List.length_pos_of_mem
+      (List.mem_filter.mpr ⟨member, by simpa using Nat.le_max_right bound low.index⟩)
+  have before : (configurations.filter fun configuration => configuration.index <= bound).length
+        - 1
+      < (configurations.filter fun configuration =>
+          configuration.index <= max bound low.index).length :=
+    Nat.lt_of_le_of_lt
+      (Nat.sub_le_sub_right (length_filter_index_mono configurations (Nat.le_max_left _ _)) 1)
+      (Nat.sub_one_lt (Nat.ne_of_gt counted))
+  exact Nat.le_trans (getElem_le_of_lt_length_filter sorted before)
+    (Nat.max_le.mpr ⟨within, lowLe⟩)
 
 /--
 Two logs agreeing up to `k`, with commit indices at most `k` and a configuration
@@ -2659,24 +2657,19 @@ private theorem activeConfigurations_overlap {left right : List Entry}
   unfold activeConfigurations
   simp only
   rw [count leftEq leftLater leftLe, count rightEq rightLater rightLe]
-  have leftBound := length_filter_le common leftCommit
-  have rightBound := length_filter_le common rightCommit
   have last : common.length - 1 < common.length := Nat.sub_one_lt (Nat.ne_of_gt commonPos)
-  split_rel le_total := (rcases Nat.le_total leftCommit rightCommit with ordered | ordered) with
-  | inl =>
-    have mono := length_filter_index_mono common ordered
-    have chosenLt := Nat.lt_of_le_of_lt (Nat.sub_le_sub_right rightBound 1) last
-    exact ⟨common[_ - 1]'chosenLt, inDrop chosenLt leftEq (Nat.sub_le_sub_right mono 1),
-      inDrop chosenLt rightEq Nat.le.refl,
-      chosen_bound sorted rightCommit commonPos
-        (Nat.le_trans (Nat.le_max_right _ _) within) member lowLe⟩
-  | inr =>
-    have mono := length_filter_index_mono common ordered
-    have chosenLt := Nat.lt_of_le_of_lt (Nat.sub_le_sub_right leftBound 1) last
-    exact ⟨common[_ - 1]'chosenLt, inDrop chosenLt leftEq Nat.le.refl,
-      inDrop chosenLt rightEq (Nat.sub_le_sub_right mono 1),
-      chosen_bound sorted leftCommit commonPos
-        (Nat.le_trans (Nat.le_max_left _ _) within) member lowLe⟩
+  -- The configuration chosen by the larger commit index is active for both logs.
+  have chosenLt
+      : (common.filter fun configuration =>
+            configuration.index <= max leftCommit rightCommit).length - 1
+        < common.length :=
+    Nat.lt_of_le_of_lt (Nat.sub_le_sub_right (length_filter_le common _) 1) last
+  exact ⟨common[_ - 1]'chosenLt,
+    inDrop chosenLt leftEq
+      (Nat.sub_le_sub_right (length_filter_index_mono common (Nat.le_max_left _ _)) 1),
+    inDrop chosenLt rightEq
+      (Nat.sub_le_sub_right (length_filter_index_mono common (Nat.le_max_right _ _)) 1),
+    chosen_bound sorted (max leftCommit rightCommit) commonPos within member lowLe⟩
 
 /-- Two strict majorities of one configuration share a member. -/
 private theorem majorities_intersect {configuration : Configuration}
@@ -2748,24 +2741,25 @@ private theorem rooted_overlap {root : Entry}
         /\ configuration.index <= max (max leftCommit rightCommit) 1 := by
   have leftHead := leftRooted.head leftNonempty
   have rightHead := rightRooted.head rightNonempty
-  have agree' : left.take (max k 1) = right.take (max k 1) := by
-    split_rel eq_zero_or_pos := (rcases Nat.eq_zero_or_pos k with zero | positive) with
-    | inl =>
-      subst zero
-      simp [leftHead, rightHead]
-    | inr => rwa [Nat.max_eq_left positive]
-  have rooted : (right.take (max k 1)).take 1 = [root] := by
-    rw [List.take_take, Nat.min_eq_left (Nat.le_max_right _ _), rightHead]
+  -- Both logs start with the root, so they agree on the root followed by the rest of the
+  -- agreed prefix: on their first `1 + (k - 1)` entries, which cover the first `k`.
+  have covers : k <= 1 + (k - 1) := by
+    rw [Nat.add_comm]
+    exact Nat.le_succ_of_pred_le (Nat.le_refl _)
+  have agree' : left.take (1 + (k - 1)) = right.take (1 + (k - 1)) := by
+    rw [List.take_add, List.take_add, leftHead, rightHead, ← List.drop_take,
+      ← List.drop_take, agree]
+  have rooted : (right.take (1 + (k - 1))).take 1 = [root] := by
+    rw [List.take_take, Nat.min_eq_left (Nat.le_add_right 1 _), rightHead]
   -- The root's configuration, at index one, is among the agreed entries.
-  obtain ⟨rest, eq, _⟩ := configurationHistory_split (right.take (max k 1)) 1
+  obtain ⟨rest, eq, _⟩ := configurationHistory_split (right.take (1 + (k - 1))) 1
   obtain ⟨nodes, some⟩ := Option.isSome_iff_exists.mp configured
   have genesis : ({ index := 1, nodes } : Configuration)
-      ∈ configurationHistory (right.take (max k 1)) := by
+      ∈ configurationHistory (right.take (1 + (k - 1))) := by
     rw [eq, rooted]
     simp [configurationHistory, some]
-  exact activeConfigurations_overlap agree' (Nat.le_trans leftLe (Nat.le_max_left _ _))
-    (Nat.le_trans rightLe (Nat.le_max_left _ _)) (Nat.le_max_left _ _) genesis
-    (Nat.le_max_right _ _)
+  exact activeConfigurations_overlap agree' (Nat.le_trans leftLe covers)
+    (Nat.le_trans rightLe covers) (Nat.le_max_left _ _) genesis (Nat.le_max_right _ _)
 
 /-- Quorums for two rooted logs agreeing on both committed prefixes share a
 voter; a configuration-bearing root supplies a common configuration. -/
@@ -4859,24 +4853,19 @@ open Model.Node
 open Consensus.Proofs.Ledger
 variable [Config.InitialConfiguration]
 
+/-- Terms do not decrease along a sorted log, from its first entry on. -/
 private theorem termAt_mono {log : List Entry}
     (sorted : log.Pairwise fun first second => first.term <= second.term) {i j : Nat}
-    (le : i <= j) (bound : j <= log.length)
+    (positive : 0 < i) (le : i <= j) (bound : j <= log.length)
     : termAt log i <= termAt log j := by
-  split_rel eq_zero_or_pos := (rcases Nat.eq_zero_or_pos i with zero | positive) with
+  rw [termAt_eq positive (Nat.le_trans le bound), termAt_eq (Nat.lt_of_lt_of_le positive le) bound]
+  split_rel eq_or_lt_of_le := (rcases Nat.eq_or_lt_of_le le with same | lt) with
   | inl =>
-    subst zero
-    rw [termAt_zero]
-    exact Nat.zero_le _
+    subst same
+    exact Nat.le.refl
   | inr =>
-    rw [termAt_eq positive (Nat.le_trans le bound), termAt_eq (Nat.lt_of_lt_of_le positive le) bound]
-    split_rel eq_or_lt_of_le := (rcases Nat.eq_or_lt_of_le le with same | lt) with
-    | inl =>
-      subst same
-      exact Nat.le.refl
-    | inr =>
-      exact List.pairwise_iff_getElem.mp sorted _ _ _ _
-        (Nat.sub_lt_sub_right (Nat.succ_le_of_lt positive) lt)
+    exact List.pairwise_iff_getElem.mp sorted _ _ _ _
+      (Nat.sub_lt_sub_right (Nat.succ_le_of_lt positive) lt)
 
 private theorem termAt_le_of_mem {log : List Entry} {bound : Nat}
     (terms : forall entry, entry ∈ log -> entry.term <= bound) (index : Nat)
@@ -5222,6 +5211,18 @@ include c
 
 private theorem sum : Summary c.actor c.pre c.event c.post c.sent := c.tr.summary
 
+/-- How the actor comes to lead after the step: it led the term before, or wins it now. -/
+private theorem origin_cases {motive : Prop}
+    (origin
+      : (c.pre.role = .primary /\ c.post.currentTerm = c.pre.currentTerm)
+        \/ Wins c.actor c.pre c.event c.post)
+    (continues : c.pre.role = .primary -> c.post.currentTerm = c.pre.currentTerm -> motive)
+    (wins : Wins c.actor c.pre c.event c.post -> motive)
+    : motive := by
+  split_rel origin := (rcases origin with ⟨leader, termEq⟩ | won) with
+  | inl => exact continues leader termEq
+  | inr => exact wins won
+
 private theorem pre_now : Now f c.actor c.pre := c.tr.pre_mem
 
 private theorem post_now : Now (f.advance after) c.actor c.post := c.tr.post_mem
@@ -5462,10 +5463,19 @@ private theorem makeRequestVoteRequest_eq (state : NodeState)
 private theorem vals_outranks {state : NodeState} (term : Nat)
     (sorted : state.log.Pairwise fun first second => first.term <= second.term)
     (frontier : state.commitIndex <= state.log.length)
-    : LogFacts.Outranks (vals term state.log state.commitIndex) state.log :=
-  ⟨termAt_mono sorted (Nat.le_max_right _ _)
-      (Nat.max_le.mpr ⟨frontier, maxCommittableIndexBounded state.log⟩),
-    fun _ => Nat.le_max_right _ _⟩
+    : LogFacts.Outranks (vals term state.log state.commitIndex) state.log := by
+  refine ⟨?_, fun _ => Nat.le_max_right _ _⟩
+  change termAt state.log (maxCommittableIndex state.log)
+    <= termAt state.log (max state.commitIndex (maxCommittableIndex state.log))
+  -- A log without a signature has last committable term zero.
+  split_rel signed :=
+      (rcases Nat.eq_zero_or_pos (maxCommittableIndex state.log) with none | positive) with
+  | inl =>
+    rw [none, termAt_zero]
+    exact Nat.zero_le _
+  | inr =>
+    exact termAt_mono sorted positive (Nat.le_max_right _ _)
+      (Nat.max_le.mpr ⟨frontier, maxCommittableIndexBounded state.log⟩)
 
 /-- A vote request that a log is up to date for ranks at least as high as the log. -/
 private theorem outranks_of_upToDate {state : NodeState} {request : RequestVoteRequest}
@@ -5615,7 +5625,8 @@ private theorem rankAtGrant {v n t r k l i}
     have bound := Nat.le_of_eq (List.length_take_of_le (signature_bound sig)).symm
     have signed := isSignatureAt_of_prefix sub (isSignatureAt_take_of_le Nat.le.refl sig)
     have index := signatureIndex_le_maxCommittableIndex signed
-    have rank := termAt_mono (c.inv.sorted v st preMem) index (maxCommittableIndexBounded _)
+    have rank := termAt_mono (c.inv.sorted v st preMem) (signature_pos signed) index
+      (maxCommittableIndexBounded _)
     rw [termAt_of_prefix sub bound, termAt_take Nat.le.refl, atI] at rank
     change k ≤ maxCommittableTerm st.log at rank
     exact .inl ⟨Nat.le_trans rank up.1,
@@ -5789,11 +5800,10 @@ private theorem leader_led : LeaderLed (f.advance after) := by
   split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨other, old⟩) with
   | inl =>
     subst nodeEq stateEq
-    split_rel leader := (rcases Summary.leader c.sum role with ⟨preRole, termEq⟩ | wins) with
-    | inl =>
-      rw [termEq]
-      exact (c.inv.leader_led c.actor c.pre c.pre_now preRole).mono after
-    | inr => exact Or.inr ⟨_, _, .inr ⟨f.current, rfl, c.wins_elect wins⟩⟩
+    refine c.origin_cases (Summary.leader c.sum role) (fun preRole termEq => ?_)
+      fun wins => Or.inr ⟨_, _, .inr ⟨f.current, rfl, c.wins_elect wins⟩⟩
+    rw [termEq]
+    exact (c.inv.leader_led c.actor c.pre c.pre_now preRole).mono after
   | inr => exact (c.inv.leader_led node state old role).mono after
 
 private theorem blocked_step {n t l i} (old : Blocked f.logs n t l i) :
@@ -6035,7 +6045,8 @@ private theorem core {g : LogFacts.Ghost} {v n t b i later commit bound k l log}
       | inl =>
         exfalso
         have partSorted := copy.sorted.sublist (List.take_sublist i l)
-        have mono := termAt_mono partSorted (Nat.le_of_lt short) (Nat.le_of_eq partLength.symm)
+        have mono := termAt_mono partSorted jPos (Nat.le_of_lt short)
+          (Nat.le_of_eq partLength.symm)
         have atJ : termAt (l.take i) j = termAt log j := by
           rw [← termAt_of_prefix sub (Nat.le_of_lt (Nat.lt_of_lt_of_eq short partLength.symm)),
             ← termAt_take (n := j) Nat.le.refl, ← anchoredTake,
@@ -6280,11 +6291,16 @@ private theorem certificates_agree {g : LogFacts.Ghost} {v : VoteFacts.Ghost}
       (carry : ∀ t p, Commit g t p → t < k → p <+: y) : x.take j = y.take j := by
     obtain ⟨e, p, com, lt, sub⟩ := back
     exact take_of_prefix_length (sub.trans (carry e p com lt)) (List.length_take_of_le front)
-  have agree : ∃ j, l.take j = l'.take j ∧ i ≤ j ∧ i' ≤ j := by
-    split_rel le_total := (rcases Nat.le_total i' i with le | le) with
-    | inl => exact ⟨i, takeEq a.frontier a.backing carriedB, Nat.le_refl _, le⟩
-    | inr => exact ⟨i', (takeEq b.frontier b.backing carriedA).symm, le, Nat.le_refl _⟩
-  obtain ⟨j, eq, le, le'⟩ := agree
+  -- Each log holds the other's committed prefix, so the two agree up to both commit
+  -- indices: on the first `i` entries followed by the rest of the first `i'`.
+  have first : l.take i = l'.take i := takeEq a.frontier a.backing carriedB
+  have second : l.take i' = l'.take i' := (takeEq b.frontier b.backing carriedA).symm
+  have eq : l.take (i + (i' - i)) = l'.take (i + (i' - i)) := by
+    rw [List.take_add, List.take_add, ← List.drop_take, ← List.drop_take, first, second]
+  have le : i ≤ i + (i' - i) := Nat.le_add_right _ _
+  have le' : i' ≤ i + (i' - i) := by
+    rw [Nat.add_comm]
+    exact Nat.le_add_of_sub_le (Nat.le_refl _)
   obtain ⟨xs, q, observed⟩ := a.quorum
   obtain ⟨ys, q', observed'⟩ := b.quorum
   obtain ⟨voter, mem, mem'⟩ := quorums_intersect GENESIS_configured a.rooted b.rooted eq le le' q q'
@@ -6403,16 +6419,15 @@ private theorem leader_logs : LeaderLogs (f.advance after) := by
   split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨other, old⟩) with
   | inl =>
     subst nodeEq stateEq
-    split_rel leader := (rcases Summary.leader c.sum role with ⟨preRole, termEq⟩ | wins) with
-    | inl =>
-      have keep := c.keep_log termEq (by rw [preRole]; simp)
+    refine c.origin_cases (Summary.leader c.sum role) (fun preRole termEq => ?_)
+      fun wins => ?_
+    · have keep := c.keep_log termEq (by rw [preRole]; simp)
         (c.inv.leader_led c.actor c.pre c.pre_now preRole)
       have nonempty := c.inv.leader_logs c.actor c.pre c.pre_now preRole
       intro empty
       rw [empty] at keep
       exact nonempty (List.prefix_nil.mp keep)
-    | inr =>
-      obtain ⟨candidate, campaign, quorum, logEq, _⟩ := Wins.facts wins
+    · obtain ⟨candidate, campaign, quorum, logEq, _⟩ := Wins.facts wins
       have ⟨_, candidateLog, _, _⟩ := campaign
       have nonempty := hasQuorum_nonempty quorum
       obtain ⟨n, _, _, positive, eq⟩ := primaryState_log candidate
@@ -6699,17 +6714,6 @@ private theorem pre_led (leader : c.pre.role = .primary)
     : Led f c.actor c.pre.currentTerm :=
   c.inv.leader_led c.actor c.pre c.pre_now leader
 
-private theorem post_led
-    (origin
-      : (c.pre.role = .primary /\ c.post.currentTerm = c.pre.currentTerm)
-        \/ Wins c.actor c.pre c.event c.post)
-    : Led (f.advance after) c.actor c.post.currentTerm := by
-  split_rel origin := (rcases origin with ⟨leader, termEq⟩ | wins) with
-  | inl =>
-    rw [termEq]
-    exact (c.pre_led leader).mono after
-  | inr => exact Or.inr ⟨_, _, .inr ⟨f.current, rfl, c.wins_elect wins⟩⟩
-
 /-- An acknowledgement of a leader's term holds a prefix of the leader's log. -/
 private theorem acked_pre (leader : c.pre.role = .primary) {voter : NodeID} {index : Nat}
     (acked : Acked f voter c.pre.currentTerm index)
@@ -6812,22 +6816,6 @@ private theorem pre_backed_any
         Backed (f.advance after) c.post.log c.pre.commitIndex term := by
   obtain ⟨⟨term, backed⟩, _⟩ := c.inv.commit_backed c.actor c.pre c.pre_now
   exact ⟨term, (backed.transfer agree).mono after⟩
-
-/-- A step keeping the committed prefix keeps a leader's backing in its term. -/
-private theorem keep_backed
-    (agree : c.post.log.take c.pre.commitIndex = c.pre.log.take c.pre.commitIndex)
-    (commitEq : c.post.commitIndex = c.pre.commitIndex)
-    (origin
-      : (c.pre.role = .primary /\ c.post.currentTerm = c.pre.currentTerm)
-        \/ Wins c.actor c.pre c.event c.post)
-    : Backed (f.advance after) c.post.log c.post.commitIndex
-        c.post.currentTerm := by
-  rw [commitEq]
-  split_rel origin := (rcases origin with ⟨leader, _⟩ | wins) with
-  | inl => exact (c.pre_backed agree leader).mono after
-  | inr =>
-    have backed := c.elect_backed (c.wins_elect wins)
-    exact ((backed.weaken (Nat.sub_le _ _)).transfer agree).mono after
 
 /-- A leader's acknowledged prefix, from its match index. -/
 private theorem match_pre (leader : c.pre.role = .primary) {voter : NodeID}
@@ -6958,12 +6946,12 @@ private theorem wins_backing (wins : Wins c.actor c.pre c.event c.post)
   have elect := c.wins_elect wins
   have winning := (c.electStep elect).2.2.2.2.2.2.1
   obtain ⟨candidate, ⟨_, candidateLog, candidateCommit, _⟩, _, advance, _⟩ := wins
-  have committable : c.pre.commitIndex <= maxCommittableIndex c.pre.log := by
-    split_rel eq_zero_or_pos := (rcases Nat.eq_zero_or_pos c.pre.commitIndex with zero | positive) with
-    | inl => exact Nat.le_trans (Nat.le_of_eq zero) (Nat.zero_le _)
-    | inr =>
-      exact signatureIndex_le_maxCommittableIndex
-        ((c.inv.frontier _ _ c.pre_now).2 positive)
+  -- A commit index beyond the latest signature would be a positive one, at a signature.
+  have committable : c.pre.commitIndex <= maxCommittableIndex c.pre.log :=
+    Nat.le_of_not_lt fun beyond =>
+      Nat.not_le_of_gt beyond
+        (signatureIndex_le_maxCommittableIndex
+          ((c.inv.frontier _ _ c.pre_now).2 (Nat.lt_of_le_of_lt (Nat.zero_le _) beyond)))
   have agree : c.post.log.take c.pre.commitIndex = c.pre.log.take c.pre.commitIndex := by
     rw [take_eq_of_prefix winning
         (by rw [List.length_take]; exact Nat.le_min.mpr ⟨committable, c.frontier_pre⟩),
@@ -7030,47 +7018,51 @@ private theorem post_backed_any
     rw [log, commit, List.take_length]
     exact inPart
 
-/-- The commit index of a node that continues or begins to lead is backed within its
-term. Such a node neither accepts a request, whose sender leads the same term, nor
-installs a snapshot. -/
-private theorem origin_backing
-    (origin
-      : (c.pre.role = .primary /\ c.post.currentTerm = c.pre.currentTerm)
-        \/ Wins c.actor c.pre c.event c.post)
+/-- A continuing leader's commit index stays backed within its term. Such a node neither
+accepts a request, whose sender leads the same term, nor installs a snapshot. -/
+private theorem continuing_backing (leader : c.pre.role = .primary)
+    (termEq : c.post.currentTerm = c.pre.currentTerm)
     : Backed (f.advance after) c.post.log c.post.commitIndex c.post.currentTerm := by
-  refine c.backing_cases (fun log commit => c.keep_backed (by rw [log]) commit origin) id
+  refine c.backing_cases (fun log commit => ?_) id
     (fun source request received accepted => ?_)
-    fun entries initialized _ fresh _ _ => ?_
+    fun entries _ _ fresh _ _ => ?_
+  · rw [commit]
+    exact (c.pre_backed (by rw [log]) leader).mono after
+  · -- The sender leads the term of the request, so the receiver did not.
+    obtain ⟨_, evidence⟩ := c.accept_evidence received
+    have : source = c.actor :=
+      c.inv.election_safety source c.actor request.term evidence.led
+        (by rw [accepted.1, termEq]; exact c.pre_led leader)
+    exact absurd this.symm evidence.different
+  · -- A fresh node has no role.
+    rw [fresh.1] at leader
+    cases leader
+
+/-- A node that wins an election has its commit index backed within the new term: a
+winning step neither accepts a request nor installs a snapshot. -/
+private theorem winning_backing (wins : Wins c.actor c.pre c.event c.post)
+    : Backed (f.advance after) c.post.log c.post.commitIndex c.post.currentTerm := by
+  refine c.backing_cases (fun log commit => ?_) id (fun _ _ received _ => ?_)
+    fun _ initialized _ _ _ _ => ?_
+  · rw [commit]
+    exact (((c.elect_backed (c.wins_elect wins)).weaken (Nat.sub_le _ _)).transfer
+      (by rw [log])).mono after
   · exfalso
-    split_rel origin := (rcases origin with ⟨leader, termEq⟩ | wins) with
-    | inl =>
-      -- The sender leads the term of the request, so the receiver did not.
-      obtain ⟨_, evidence⟩ := c.accept_evidence received
-      have : source = c.actor :=
-        c.inv.election_safety source c.actor request.term evidence.led
-          (by rw [accepted.1, termEq]; exact c.pre_led leader)
-      exact evidence.different this.symm
-    | inr =>
-      obtain ⟨_, _, _, _, electing⟩ := wins
-      rw [received] at electing
-      exact electing
+    obtain ⟨_, _, _, _, electing⟩ := wins
+    rw [received] at electing
+    exact electing
   · exfalso
-    split_rel origin := (rcases origin with ⟨leader, _⟩ | wins) with
-    | inl =>
-      -- A fresh node has no role.
-      rw [fresh.1] at leader
-      cases leader
-    | inr =>
-      obtain ⟨_, _, _, _, electing⟩ := wins
-      rw [initialized] at electing
-      exact electing
+    obtain ⟨_, _, _, _, electing⟩ := wins
+    rw [initialized] at electing
+    exact electing
 
 private theorem commit_backed : CommitBacked (f.advance after) := by
   intro node state now
   split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨_, old⟩) with
   | inl =>
     subst nodeEq stateEq
-    exact ⟨c.post_backed_any, fun role => c.origin_backing (Summary.leader c.sum role)⟩
+    exact ⟨c.post_backed_any, fun role =>
+      c.origin_cases (Summary.leader c.sum role) c.continuing_backing c.winning_backing⟩
   | inr =>
     obtain ⟨⟨term, backed⟩, strong⟩ := c.inv.commit_backed node state old
     exact ⟨⟨term, backed.mono after⟩, fun role => (strong role).mono after⟩
@@ -7335,12 +7327,20 @@ private theorem new_message {envelope : Model.Envelope} (new : envelope ∈ c.se
       rw [sourceEq]
       obtain ⟨aeok, notCandidate, origin⟩ := ok
       obtain ⟨different, term, bound, prevTerm, entries, commitLe⟩ := aeok
-      have led := c.post_led origin
+      obtain ⟨led, backed⟩
+          : Led (f.advance after) c.actor c.post.currentTerm
+            /\ Backed (f.advance after) c.post.log c.post.commitIndex c.post.currentTerm :=
+        c.origin_cases origin
+          (fun leader termEq =>
+            ⟨by rw [termEq]; exact (c.pre_led leader).mono after,
+              c.continuing_backing leader termEq⟩)
+          fun wins =>
+            ⟨Or.inr ⟨_, _, .inr ⟨f.current, rfl, c.wins_elect wins⟩⟩, c.winning_backing wins⟩
       refine ⟨c.post.log, different, term ▸ led, ?_, bound, prevTerm, entries, ?_⟩
       · exact .inr ⟨c.actor, c.post, ⟨c.post_now, term.symm,
           notCandidate, term ▸ led⟩, rfl⟩
       · rw [term]
-        exact (c.origin_backing origin).shorten commitLe
+        exact backed.shorten commitLe
   | appendEntriesResponse =>
       simp only [h] at ok
       simp only [MessageOK, h]
