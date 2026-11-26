@@ -3,14 +3,26 @@ module
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
-public import ConsensusCoverage.ReadersTotal
+public import ConsensusCoverage.ActionProfile
 import all ConsensusCoverage.ActionProfile
 import all ConsensusCoverage.Classes
 import all ConsensusCoverage.FullProfile
 import all ConsensusCoverage.ProofContexts
-import all ConsensusCoverage.ReadersTotal
+import all ConsensusCoverage.StateCoverage
 import all Consensus.Proofs.SafetyInvariant
 meta import Lean
+
+/-!
+# The step questions of each invariant clause
+
+For each field `c` of `Inv`, `questions c` is the list `Q_c` of generated step questions
+recorded in the transitive proof-term closure of that field of `Ctx.inv_step`. `calls c d`
+is the cross-clause dependency relation and `trunk` the questions shared by every clause
+that is not local. A per-clause table has one row per `(pre, answers on Q_c, post)`.
+
+The sizes are deliberately not theorems here: `scripts/clause-sizes.lean` prints them, so
+that a schema change only touches the per-clause modules whose lists changed.
+-/
 
 namespace ConsensusCoverage.ClauseQuestions
 
@@ -18,17 +30,16 @@ set_option maxRecDepth 8192
 set_option maxHeartbeats 0
 
 public inductive Clause where
-  | terms | sorted | active | ballots | grantFacts | led_cur | leader_led | candidate
-  | electionCerts | election_safety | rankedElections | canon_mono | chains | winningPrefix
-  | anchor | completeness | commit_backed | persist | match_ack | messages | message_terms
-  | rooted | leader_logs | commitChains | copyLogs | distinct | frontier | owners | observed
+  | node_logs | active | ballots | grantFacts | led_cur | leader_led | candidate | elections
+  | election_safety | canon_mono | chains | canonLogs | commit_backed | persist | match_ack
+  | messages | message_terms | leader_logs | comparable | unique | frontier | observed
   | term_mono
   deriving DecidableEq, Repr, Inhabited
 
 open FullProfile in
 public def Clause.all : List Clause := (constructors% Clause).toList
 
-public theorem Clause.enumeration : Clause.all.length = 30 ∧ Clause.all.Nodup := by decide +kernel
+public theorem Clause.enumeration : Clause.all.length = 23 ∧ Clause.all.Nodup := by decide +kernel
 public theorem Clause.mem_all (c : Clause) : c ∈ Clause.all := by cases c <;> decide +kernel
 
 open Lean Meta Elab Term in
@@ -100,32 +111,18 @@ private def data : Array (List Classes.StepBranch) × Array (List Clause) := cla
 
 public def questions (c : Clause) : List Classes.StepBranch := data.1[c.ctorIdx]?.getD []
 public def calls (c d : Clause) : Bool := (data.2[c.ctorIdx]?.getD []).contains d
-public def readable (c : Clause) := (questions c).filter (· ∈ ReadersTotal.covered)
-public def readableCount (c : Clause) := (readable c).length
-public def unreadCount (c : Clause) := ((questions c).filter (· ∉ ReadersTotal.covered)).length
+/-- In how many clause lists a question occurs. -/
+public def frequency (b : Classes.StepBranch) : Nat := (Clause.all.filter fun c => (questions c).contains b).length
 
-public theorem counts :
-    Clause.all.map (fun c => ((questions c).length, readableCount c, unreadCount c)) =
-      [(203,200,3), (201,198,3), (171,168,3), (170,167,3), (188,185,3),
-       (180,177,3), (189,186,3), (221,218,3), (222,219,3), (248,245,3),
-       (250,247,3), (287,284,3), (287,284,3), (287,284,3), (203,200,3),
-       (330,327,3), (318,315,3), (225,222,3), (171,168,3), (332,329,3),
-       (176,173,3), (203,200,3), (214,211,3), (273,270,3), (223,220,3),
-       (2,2,0), (91,89,2), (0,0,0), (0,0,0), (175,172,3)] := by decide +kernel
+/-- A clause is local when it asks no more than the `unique` clause, whose proof only
+compares the states stored for one node. -/
+public def localOnly (c : Clause) : Bool := (questions c).length ≤ (questions .unique).length
 
-public theorem dependencies :
-    Clause.all.map (fun c => Clause.all.filter (calls c)) =
-      [[], [], [], [.distinct], [.ballots, .distinct], [], [], [], [.ballots, .distinct],
-       [.ballots, .distinct], [.ballots, .election_safety, .distinct],
-       [.ballots, .election_safety, .distinct],
-       [.ballots, .election_safety, .canon_mono, .distinct],
-       [.ballots, .election_safety, .canon_mono, .distinct], [],
-       [.sorted, .ballots, .election_safety, .rankedElections, .canon_mono, .chains,
-        .winningPrefix, .rooted, .distinct],
-       [.ballots, .election_safety, .distinct], [], [],
-       [.ballots, .election_safety, .commit_backed, .distinct], [], [], [],
-       [.sorted, .ballots, .electionCerts, .rooted, .distinct],
-       [.terms, .sorted, .anchor, .rooted], [], [], [], [], [.distinct]] := by decide +kernel
+/-- The shared trunk: the questions asked by every clause that is not local. -/
+public def trunk (b : Classes.StepBranch) : Bool :=
+  Clause.all.all fun c => localOnly c || (questions c).contains b
+
+public def nonTrunk (c : Clause) : List Classes.StepBranch := (questions c).filter (!trunk ·)
 
 public theorem questions_nodup (c : Clause) : (questions c).Nodup := by
   cases c <;> decide +kernel
@@ -152,8 +149,7 @@ public noncomputable def clauseLabel (c : Clause) := restrictedLabel (questions 
 
 private theorem answers_eq {r t : StateCoverage.Row} :
     ProofContexts.answers r = ProofContexts.answers t ↔ r = t :=
-  ⟨fun h => Prod.ext (congrFun h .committed_logs_comparable_left_backed_inl)
-    (congrFun h .committed_logs_comparable_left_backed_inr), congrArg _⟩
+  ⟨fun h => congrFun h .committed_logs_comparable_committed_comparable_inl, congrArg _⟩
 
 public theorem restrictedLabel_eq_iff (qs : List Classes.StepBranch) (s t : ActionProfile.Step) :
     restrictedLabel qs s = restrictedLabel qs t ↔
@@ -175,5 +171,30 @@ public def ClauseRealized (c : Clause) (p : ClauseProfile c) : Prop :=
 
 public def ClauseExactTable (c : Clause) (rows : List (ClauseProfile c)) : Prop :=
   rows.Nodup ∧ ∀ p, p ∈ rows ↔ ClauseRealized c p
+
+/-- Both endpoints of every recorded step answer the state questions positively. -/
+public theorem endpoints (qs : List Classes.StepBranch) (s : ActionProfile.Step) :
+    (restrictedLabel qs s).pre = true ∧ (restrictedLabel qs s).post = true :=
+  StateCoverage.step_read s.ran s.past (s.before :: s.past)
+
+/-- The table of any question list: the rows of bit vectors, with both endpoints true. -/
+public def ExactBits (qs : List Classes.StepBranch) (rows : List (List Bool)) : Prop :=
+  rows.Nodup ∧ ∀ p, p ∈ rows ↔ ∃ s : ActionProfile.Step, (restrictedLabel qs s).bits = p
+
+public theorem ExactBits.table {c : Clause} {rows : List (List Bool)} (h : ExactBits (questions c) rows) :
+    ClauseExactTable c (rows.map fun bits => ⟨true, bits, true⟩) := by
+  refine ⟨h.1.map _ (fun _ _ ne eq => ne (RestrictedProfile.mk.inj eq).2.1), fun p => ?_⟩
+  simp only [List.mem_map, h.2, ClauseRealized, clauseLabel]
+  constructor
+  · rintro ⟨_, ⟨s, rfl⟩, rfl⟩
+    refine ⟨s, ?_⟩
+    obtain ⟨a, b⟩ := endpoints (questions c) s
+    generalize restrictedLabel (questions c) s = r at a b
+    cases r; simp_all
+  · rintro ⟨s, rfl⟩
+    refine ⟨_, ⟨s, rfl⟩, ?_⟩
+    obtain ⟨a, b⟩ := endpoints (questions c) s
+    generalize restrictedLabel (questions c) s = r at a b
+    cases r; simp_all
 
 end ConsensusCoverage.ClauseQuestions

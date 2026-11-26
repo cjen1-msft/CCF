@@ -6,7 +6,6 @@ module
 public import ConsensusCoverage.ActionContext
 public import ConsensusCoverage.PinnedClasses
 public import ConsensusCoverage.ProofContexts
-import all ConsensusCoverage.Projection
 import all ConsensusCoverage.StateCoverage
 import all Consensus.Proofs.SafetyInvariant
 
@@ -36,7 +35,7 @@ public theorem Step.current_eq (s : Step) : current s.frame = s.before :=
   @StateCoverage.frame_current ⟨s.cfg⟩ s.before s.past
 
 public theorem Step.folded (s : Step) : Folded s.cfg s.nodes s.frame :=
-  Projection.run_folded s.run
+  StateCoverage.run_folded s.run
 
 private theorem Step.exists_context (s : Step) :
     letI : Config.InitialConfiguration := ⟨s.cfg⟩

@@ -55,7 +55,7 @@ end
 public section
 
 set_option maxRecDepth 8192
-set_option exponentiation.threshold 548
+set_option exponentiation.threshold 259
 
 inductive Question
   | pre (branch : Classes.StateBranch)
@@ -74,8 +74,8 @@ abbrev Profile := Question → Bool
 @[expose] def stateBranches : Array Classes.StateBranch := constructors% Classes.StateBranch
 @[expose] def stepBranches : Array Classes.StepBranch := constructors% Classes.StepBranch
 
-theorem stateBranch_count : stateBranches.size = 16 := rfl
-theorem stepBranch_count : stepBranches.size = 516 := rfl
+theorem stateBranch_count : stateBranches.size = 2 := rfl
+theorem stepBranch_count : stepBranches.size = 255 := rfl
 
 @[expose] def questions : Array Question :=
   (stateBranches.map Question.pre ++ stepBranches.map Question.step) ++
@@ -84,7 +84,7 @@ theorem stepBranch_count : stepBranches.size = 516 := rfl
 @[expose] def questionCount : Nat :=
   stateBranches.size + stepBranches.size + stateBranches.size
 
-theorem question_count : questionCount = 548 := rfl
+theorem question_count : questionCount = 259 := rfl
 
 theorem questions_size : questions.size = questionCount := by
   simp only [questions, Array.size_append, Array.size_map, questionCount]
@@ -157,7 +157,7 @@ def profileCapacity : Nat := profileSpace.val
 theorem profileCapacity_eq : profileCapacity = Nat.pow 2 questionCount :=
   profileSpace.property
 
-theorem profile_capacity : profileCapacity = Nat.pow 2 548 :=
+theorem profile_capacity : profileCapacity = Nat.pow 2 259 :=
   profileCapacity_eq.trans (congrArg (Nat.pow 2) question_count)
 
 private def encodeBits {n : Nat} (f : Fin n → Bool) : BitVec n :=
@@ -333,7 +333,7 @@ abbrev Observation := Profile → Prop
 /-- Capacity of the universe of *all* sets of profiles; not a reachable row count. -/
 def observationCapacity : Nat := Nat.pow 2 profileCapacity
 
-/-- Combine with `profile_capacity` for the bound `2 ^ (2 ^ 548)`. The
+/-- Combine with `profile_capacity` for the bound `2 ^ (2 ^ 259)`. The
 exponent is left symbolic so a kernel reduction cannot expand this bound. -/
 theorem observation_capacity {n : Nat} (h : profileCapacity = n) :
     observationCapacity = Nat.pow 2 n :=
