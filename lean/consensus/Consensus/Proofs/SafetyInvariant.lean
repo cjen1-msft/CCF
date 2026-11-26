@@ -87,27 +87,6 @@ end Consensus.Proofs.Concrete
 namespace Consensus.Proofs.Direct
 
 set_option linter.unusedSectionVars false
-open Consensus.Proofs.Config
-open CCF CCF.MultiNodeTransitionSystem Concrete
-open Model.Node
-open Model (initialNodeState)
-variable [Config.InitialConfiguration]
-
-/-- A node-local predicate that holds initially and survives every local step. -/
-private structure NodeInvariant (P : NodeID -> NodeState -> Prop) : Prop where
-  initial : forall node, P node (initialNodeState Config.INITIAL_CONFIGURATION node)
-  step
-    : forall node state event after outputs,
-        P node state
-        -> (Model.Node.step (Capabilities.record node) node state event).run {}
-            = some (after, outputs)
-        -> P node after
-
-end Consensus.Proofs.Direct
-
-namespace Consensus.Proofs.Direct
-
-set_option linter.unusedSectionVars false
 open CCF
 variable {Node Message Notification : Type}
 
@@ -1806,55 +1785,6 @@ open Model.Node
 open Model (initialNodeState)
 variable [Config.InitialConfiguration]
 
-private theorem NodeInvariant.reachable {P : NodeID -> NodeState -> Prop}
-    (invariant : NodeInvariant P) {nodes : List NodeID} {state : Model.State}
-    (reachable
-      : (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes).Reachable state)
-    : forall node local_, (node, local_) ∈ state.nodes -> P node local_ := by
-  split_rel reachable :=
-      (induction reachable
-        using @TransitionSystem.Reachable.rec
-          (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes)) with
-  | initial =>
-      rename_i initialized
-      intro node local_ member
-      have initial : local_ = initialNodeState Config.INITIAL_CONFIGURATION node := initialized.2.2.2.2 (node, local_) member
-      subst initial
-      exact invariant.initial node
-  | step =>
-      rename_i before after action _ stepped ih
-      have preserved : forall {actor : NodeID} {old : NodeState}
-          {event : Model.Node.Event} {new outputs},
-          nodeState before actor = some old ->
-          (Model.Node.step (Capabilities.record actor) actor old event).run {}
-            = some (new, outputs) ->
-          forall node local_,
-            (node, local_) ∈ replaceNode before.nodes actor new ->
-            P node local_ := by
-        intro actor old event new outputs found acted node local_ member
-        split_rel mem_replaceNode :=
-            (rcases mem_replaceNode member with ⟨nodeEq, stateEq⟩ | ⟨other, listed⟩) with
-        | inl =>
-          subst nodeEq stateEq
-          exact invariant.step _ _ _ _ _ (ih _ _ (mem_of_nodeState found)) acted
-        | inr => exact ih _ _ listed
-      split_rel action := (cases action) with
-      | «local» =>
-          rename_i actor input
-          obtain ⟨old, new, outputs, found, acted, rfl⟩ := step_local stepped
-          exact preserved (event := .internal input) found
-            (by
-              split_rel input := (cases input) with
-              | append => exact acted
-              | sendEntries => exact acted
-              | timeout => exact acted
-              | nominateSuccessor => exact acted
-              | initAsBackup => exact acted)
-      | deliver =>
-          rename_i envelope
-          obtain ⟨_, old, new, outputs, found, received, rfl⟩ := step_deliver stepped
-          exact preserved (event := .receive envelope.source envelope.payload) found received
-
 private theorem keys_nodup {nodes : List NodeID} {state : Model.State}
     (reachable
       : (Model.transitionSystem Config.INITIAL_CONFIGURATION nodes).Reachable state)
@@ -2973,148 +2903,6 @@ private theorem foldl_select_max_pos (P : Nat -> Prop) [DecidablePred P]
     exact absurd positive (Nat.lt_irrefl 0)
   | inr => exact holds
 
-private theorem highestCommittableIndex_signature (state : NodeState) (self : NodeID)
-    (positive : 0 < highestCommittableIndex state self)
-    : isSignatureAt state.log (highestCommittableIndex state self) = true := by
-  unfold highestCommittableIndex at positive ⊢
-  exact (foldl_select_max_pos _ _ positive).2.1
-
-private theorem signature_le_length {log : List Entry} {index : Nat}
-    (signature : isSignatureAt log index = true)
-    : index <= log.length := by
-  obtain ⟨entry, found, _⟩ := Ledger.isSignatureAtTrue signature
-  exact Ledger.entryAtSomeIndexBound found
-
-private theorem CommitFrontier.leaderAppendState {state : NodeState}
-    (frontier : CommitFrontier state) (content : EntryContent)
-    : CommitFrontier
-        { state with log := state.log ++ [{ term := state.currentTerm, content }] } :=
-  frontier.extend (List.prefix_append _ _)
-
-end Consensus.Proofs.Direct
-
-namespace Consensus.Proofs.Direct
-
-set_option linter.unusedSectionVars false
-open Consensus.Proofs.Config
-open CCF
-open Model.Node
-open Ledger (
-  isSignatureAt_of_prefix isSignatureAt_take_of_le signatureIndex_le_maxCommittableIndex
-    maxCommittableIndexUpTo_le_length maxCommittableIndexUpToPositiveIsSignature
-  )
-section AppendEntries
-variable {self : NodeID} {state : NodeState}
-  {request : AppendEntriesRequest}
-
-private theorem CommitFrontier.fromLeader (frontier : CommitFrontier state)
-    : CommitFrontier (handleAppendEntiresFromPrimary self state request).1 := by
-  obtain ⟨retired, role, known, eq, -⟩ :=
-    Ledger.handleAppendEntiresFromPrimary_eq self state request
-  rw [eq]
-  exact (CommitFrontier.advance
-          (bound :=
-            min request.primaryCommit (request.prevLogIndex + request.entries.length))
-          (frontier.extend (List.prefix_append _ _))).of_log
-    rfl rfl
-
-private theorem CommitFrontier.handleAppendEntriesRequest
-    (frontier : CommitFrontier state) (caps : Caps) (source : NodeID)
-    : Keeps CommitFrontier
-        (Model.Node.handleAppendEntriesRequest caps self source state request) := by
-  unfold Model.Node.handleAppendEntriesRequest
-  have stepped : CommitFrontier (if request.term = state.currentTerm /\
-      (state.role = .candidate \/ state.role = .preVoteCandidate) then
-        becomeAwareOfNewTerm state request.term else state) := by
-    split_rel stepDown := (split) with
-    | pos => exact frontier.of_log rfl rfl
-    | neg => exact frontier
-  generalize (if request.term = state.currentTerm /\
-      (state.role = .candidate \/ state.role = .preVoteCandidate) then
-        becomeAwareOfNewTerm state request.term else state) = current
-    at stepped
-  refine Keeps.ite' (fun _ => by
-    dsimp only
-    split_rel stepDown := (split) with
-    | pos => exact Keeps.seq' fun _ => Keeps.pure' stepped
-    | neg => exact Keeps.seq' fun _ => Keeps.pure' stepped) fun _ => ?_
-  dsimp only
-  refine Keeps.ite' (fun _ => Keeps.pure' (stepped.of_log rfl rfl)) fun notBefore => ?_
-  have within : current.commitIndex <= request.prevLogIndex :=
-    Nat.le_of_not_lt fun lt => notBefore (Or.inl lt)
-  split_rel conflict := (split) with
-  | none =>
-    exact Keeps.seq' fun _ => Keeps.pure'
-      (CommitFrontier.of_log stepped (after := { current with primaryKnown := true }) rfl
-        rfl).fromLeader
-  | some =>
-    rename_i index conflict
-    have := Ledger.firstTermConflictIndex_ge conflict
-    exact Keeps.seq' fun _ => Keeps.pure'
-      (CommitFrontier.of_log (stepped.keep (count := index - 1)
-        (Nat.le_trans within (Nat.le_sub_of_add_le this)) (suffix := []))
-        (after :=
-          {
-            current with
-              primaryKnown := true, log := current.log.take (index - 1), isNewFollower := false
-          })
-        (by simp) rfl).fromLeader
-
-end AppendEntries
-end Consensus.Proofs.Direct
-
-namespace Consensus.Proofs.Direct
-
-set_option linter.unusedSectionVars false
-open Consensus.Proofs.Config
-open CCF
-open Model.Node
-open Ledger (
-  isSignatureAt_of_prefix isSignatureAt_take_of_le signatureIndex_le_maxCommittableIndex
-    maxCommittableIndexUpTo_le_length maxCommittableIndexUpToPositiveIsSignature
-  )
-
-private theorem CommitFrontier.advanced {state : NodeState} (self : NodeID)
-    (frontier : CommitFrontier state) (caps : Caps)
-    : Keeps CommitFrontier (Model.Node.advanceCommit caps state self) := by
-  unfold Model.Node.advanceCommit
-  refine Keeps.ite' (fun _ => Keeps.pure' frontier) fun ahead => ?_
-  have signature := highestCommittableIndex_signature state self
-    (Nat.lt_of_le_of_lt (Nat.zero_le _) (Nat.lt_of_not_le ahead))
-  have advanced : CommitFrontier
-      (state.recordCommit self (highestCommittableIndex state self)) :=
-    ⟨by simpa using signature_le_length signature, fun _ => by simpa using signature⟩
-  dsimp only
-  exact Keeps.ite'
-    (fun _ =>
-      Keeps.ite' (fun _ => Keeps.seq' fun _ => Keeps.pure' advanced)
-        fun _ => Keeps.pure' advanced)
-    fun _ => Keeps.pure' advanced
-
-private theorem CommitFrontier.withSent {state : NodeState}
-    (frontier : CommitFrontier state) {sentIndex : NodeID -> Nat}
-    : CommitFrontier { state with sentIndex } :=
-  frontier.of_log rfl rfl
-
-/-- The log a new leader keeps: its signed prefix, or everything at startup. -/
-private theorem CommitFrontier.promotedLog {state : NodeState}
-    (frontier : CommitFrontier state)
-    : CommitFrontier
-        {
-          state with
-            log :=
-              if state.commitIndex > 0 then
-                state.log.take (lastCommittableIndex state)
-              else
-                state.log
-        } := by
-  split_rel committed := (split) with
-  | pos =>
-    have kept := frontier.keep (count := lastCommittableIndex state)
-      (by unfold lastCommittableIndex; exact Nat.le_max_left _ _) (suffix := [])
-    exact kept.of_log (by simp) rfl
-  | neg => exact frontier.of_log rfl rfl
-
 end Consensus.Proofs.Direct
 
 namespace Consensus.Proofs.Direct
@@ -3130,54 +2918,6 @@ open Ledger (
 section Handlers
 variable (caps : Caps) (self : NodeID)
 
-private theorem CommitFrontier.appendEntry {state : NodeState}
-    (frontier : CommitFrontier state) (content : EntryContent)
-    : Keeps CommitFrontier (Model.Node.appendEntry caps self state content) := by
-  unfold Model.Node.appendEntry
-  simp only [pure_bind]
-  repeat'
-    first
-    | exact Keeps.pure' ((frontier.leaderAppendState content).of_log rfl rfl)
-    | refine Keeps.ite' (fun _ => ?_) fun _ => ?_
-    | refine Keeps.seq' fun _ => ?_
-  all_goals
-    split_rel configuration := (split) with
-    | none => exact Keeps.pure' ((frontier.leaderAppendState content).of_log rfl rfl)
-    | some =>
-      refine Keeps.seq' fun _ => ?_
-      refine Keeps.seq' fun _ => ?_
-      exact Keeps.pure' ((frontier.leaderAppendState content).of_log rfl rfl)
-
-private theorem CommitFrontier.becomePrimary {state : NodeState}
-    (frontier : CommitFrontier state)
-    : Keeps CommitFrontier (Model.Node.becomePrimary caps self state) := by
-  unfold Model.Node.becomePrimary
-  refine Keeps.bind' (CommitFrontier.advanced self ?_ caps) fun _ kept =>
-      Keeps.seq' fun _ => Keeps.pure' kept
-  unfold Model.Node.primaryState
-  exact frontier.promotedLog.of_log rfl rfl
-
-private theorem CommitFrontier.electIfQuorum {state : NodeState}
-    (frontier : CommitFrontier state)
-    : Keeps CommitFrontier (Model.Node.electIfQuorum caps self state) := by
-  unfold Model.Node.electIfQuorum
-  exact Keeps.ite' (fun _ => frontier.becomePrimary caps self) fun _ => Keeps.pure' frontier
-
-private theorem CommitFrontier.becomeCandidate {state : NodeState}
-    (frontier : CommitFrontier state)
-    : Keeps CommitFrontier (Model.Node.becomeCandidate caps state self) := by
-  unfold Model.Node.becomeCandidate
-  refine Keeps.bind' (CommitFrontier.electIfQuorum caps self ?_) fun _ kept =>
-    Keeps.seq' fun _ => Keeps.pure' kept
-  exact frontier.of_log rfl rfl
-
-private theorem CommitFrontier.becomePreVoteCandidate {state : NodeState}
-    (frontier : CommitFrontier state)
-    : Keeps CommitFrontier (Model.Node.becomePreVoteCandidate caps state self) := by
-  unfold Model.Node.becomePreVoteCandidate
-  refine Keeps.ite' (fun _ => CommitFrontier.becomeCandidate caps self ?_)
-    fun _ => Keeps.seq' fun _ => Keeps.pure' ?_ <;> exact frontier.of_log rfl rfl
-
 /-- Successor nomination only sends; on success it returns its input state. -/
 private theorem Keeps.nominateSuccessor (state : NodeState)
     : Keeps (fun result => result = state)
@@ -3188,132 +2928,7 @@ private theorem Keeps.nominateSuccessor (state : NodeState)
   | some => exact Keeps.seq' fun _ => Keeps.pure' rfl
   | none => exact Keeps.pure' rfl
 
-private theorem CommitFrontier.act {state : NodeState}
-    (frontier : CommitFrontier state) (input : Input)
-    : Keeps CommitFrontier (Model.Node.act caps self state input) := by
-  split_rel input := (cases whichInput : input) with
-  | append =>
-      rename_i entries
-      unfold Model.Node.act Model.Node.appendBatch
-      exact Keeps.seq' fun _ => Keeps.bind'
-        (Keeps.foldlM' (fun current entry kept =>
-          Keeps.bind' (kept.appendEntry caps self entry.content) fun appended frontier =>
-            Keeps.foldlM'
-              (fun current (destination, endIndex) kept => by
-                unfold Model.Node.sendEntries
-                exact Keeps.seq' fun _ => Keeps.seq' fun _ => Keeps.pure' kept.withSent)
-              entry.flushes appended frontier)
-          entries state frontier)
-        fun _ kept => kept.advanced self caps
-  | sendEntries =>
-      rename_i destination endIndex
-      unfold Model.Node.act Model.Node.sendEntries
-      exact Keeps.seq' fun _ => Keeps.seq' fun _ => Keeps.pure' frontier.withSent
-  | timeout =>
-      rename_i kind
-      split_rel kind := (cases whichKind : kind) with
-      | election =>
-          unfold Model.Node.act Model.Node.startElection
-          exact Keeps.seq' fun _ => frontier.becomePreVoteCandidate caps self
-      | checkQuorum =>
-          unfold Model.Node.act Model.Node.checkQuorum
-          exact Keeps.seq' fun _ => Keeps.pure' (frontier.of_log rfl rfl)
-  | nominateSuccessor =>
-      exact (Keeps.nominateSuccessor caps self state).mono fun _ same => same ▸ frontier
-  | initAsBackup =>
-      rename_i entries
-      unfold Model.Node.act Model.Node.initAsBackup
-      refine Keeps.bind' Keeps.guard'
-        fun _ ⟨_, signed⟩ =>
-          Keeps.pure' ⟨by simp [becomeAwareOfNewTerm], fun positive => ?_⟩
-      split_rel signed := (rcases signed with empty | signature) with
-      | inl =>
-        subst empty
-        simp [becomeAwareOfNewTerm] at positive
-      | inr => simpa [becomeAwareOfNewTerm] using signature
-
-private theorem CommitFrontier.receive {state : NodeState}
-    (frontier : CommitFrontier state) (source : NodeID) (message : Message)
-    : Keeps CommitFrontier (Model.Node.receive caps self source state message) := by
-  have observed : CommitFrontier (observeTerm state message) :=
-    frontier.of_log (Concrete.observeTerm_log _ _) (Concrete.observeTerm_commitIndex _ _)
-  unfold Model.Node.receive
-  refine Keeps.ite' (fun _ => Keeps.pure' frontier) fun _ => ?_
-  dsimp only
-  generalize observeTerm state message = current at observed ⊢
-  split_rel message := (cases message) with
-  | appendEntriesRequest =>
-      rename_i request
-      exact observed.handleAppendEntriesRequest caps source
-  | appendEntriesResponse =>
-      rename_i response
-      unfold Model.Node.handleAppendEntriesResponse
-      refine Keeps.ite' (fun _ => Keeps.pure' observed) fun _ => ?_
-      refine Keeps.ite' (fun _ => ?_) fun _ => Keeps.pure' (observed.of_log rfl rfl)
-      refine Keeps.ite' (fun _ => CommitFrontier.advanced self ?_ caps)
-        fun _ => Keeps.pure' observed
-      exact observed.of_log rfl rfl
-  | requestVoteRequest =>
-      rename_i request
-      unfold Model.Node.handleRequestVoteRequest
-      exact Keeps.seq' fun _ => Keeps.pure' (by
-        split_rel vote := (split) with
-        | pos => exact observed.of_log rfl rfl
-        | neg => exact observed.of_log rfl rfl)
-  | requestVoteResponse =>
-      rename_i response
-      unfold Model.Node.handleRequestVoteResponse
-      exact Keeps.ite' (fun _ => CommitFrontier.electIfQuorum caps self (observed.of_log rfl rfl))
-        fun _ => Keeps.pure' observed
-  | requestPreVoteRequest =>
-      rename_i request
-      unfold Model.Node.handleRequestPreVoteRequest
-      exact Keeps.seq' fun _ => Keeps.pure' observed
-  | requestPreVoteResponse =>
-      rename_i response
-      unfold Model.Node.handleRequestPreVoteResponse
-      refine Keeps.ite' (fun _ => ?_) fun _ => Keeps.pure' observed
-      dsimp only
-      exact Keeps.ite' (fun _ => CommitFrontier.becomeCandidate caps self (observed.of_log rfl rfl))
-        fun _ => Keeps.pure' (observed.of_log rfl rfl)
-  | proposeRequestVoteRequest =>
-      rename_i term
-      unfold Model.Node.handleProposeRequestVoteRequest
-      exact Keeps.ite' (fun _ => CommitFrontier.becomeCandidate caps self observed)
-        fun _ => Keeps.pure' observed
-
 end Handlers
-end Consensus.Proofs.Direct
-
-namespace Consensus.Proofs.Direct
-
-set_option linter.unusedSectionVars false
-open Consensus.Proofs.Config
-open CCF
-open Model.Node
-open Ledger (
-  isSignatureAt_of_prefix isSignatureAt_take_of_le signatureIndex_le_maxCommittableIndex
-    maxCommittableIndexUpTo_le_length maxCommittableIndexUpToPositiveIsSignature
-  )
-
-private theorem commitFrontier_invariant [Config.InitialConfiguration]
-    : Direct.NodeInvariant fun _ state => CommitFrontier state := by
-  refine ⟨
-    fun node =>
-      ⟨Nat.zero_le _, fun positive => by simp [Model.initialNodeState] at positive⟩,
-    ?_
-  ⟩
-  intro self state event after outputs frontier stepped
-  split_rel event := (cases event) with
-  | internal =>
-      rename_i input
-      simp only [Model.Node.step] at stepped
-      exact frontier.act _ self _ _ _ _ stepped
-  | receive =>
-      rename_i source message
-      simp only [Model.Node.step] at stepped
-      exact frontier.receive _ self source message _ _ _ stepped
-
 end Consensus.Proofs.Direct
 
 namespace Consensus.Proofs.Direct
@@ -5387,7 +5002,7 @@ private theorem inv_initial : Inv (Frame.start initial) := by
   · intro n st mem
     have eq : st = Model.initialNodeState INITIAL_CONFIGURATION n := initialized.2.2.2.2 _ mem
     rw [eq]
-    exact Direct.commitFrontier_invariant.initial n
+    exact ⟨Nat.zero_le _, fun positive => by simp [Model.initialNodeState] at positive⟩
   · exact LogFacts.owners_step (g := LogFacts.empty) (fun _ _ h => False.elim h)
   · exact fun n st mem => .inr ⟨st, mem, rfl, rfl⟩
   · intro n st o now seen
@@ -5546,12 +5161,23 @@ private theorem backing_split {g : LogFacts.Ghost} {log : List Entry}
             exact take_prefix_take _ (Nat.le_of_lt (Nat.lt_of_not_le baseLe))
           exact ih prior (short.trans inBacking)
 
-private theorem primaryState_log_prefix (state : NodeState)
-    : (primaryState state).log <+: state.log := by
+/-- A new leader's log is a prefix of the candidate's that keeps its committed entries. -/
+private theorem primaryState_log (state : NodeState)
+    : exists n, state.commitIndex <= n /\ (primaryState state).log = state.log.take n := by
   simp only [primaryState]
   split_rel commit := (split) with
-  | pos => exact List.take_prefix _ _
-  | neg => exact List.prefix_refl _
+  | pos =>
+    exact ⟨lastCommittableIndex state, by unfold lastCommittableIndex; exact Nat.le_max_left _ _,
+      rfl⟩
+  | neg =>
+    exact ⟨max state.commitIndex state.log.length, Nat.le_max_left _ _,
+      (List.take_of_length_le (Nat.le_max_right _ _)).symm⟩
+
+private theorem primaryState_log_prefix (state : NodeState)
+    : (primaryState state).log <+: state.log := by
+  obtain ⟨n, _, eq⟩ := primaryState_log state
+  rw [eq]
+  exact List.take_prefix _ _
 
 /-- The facts of a won election used by the safety proof. -/
 private theorem Wins.facts {self : NodeID} {before' : NodeState} {event : Event}
@@ -5578,6 +5204,87 @@ private theorem Wins.facts {self : NodeID} {before' : NodeState} {event : Event}
     exact quorum
   exact ⟨advance.log, advance.term, advance.votedFor,
     fun peer => by rw [advance.matchIndex]; rfl, advance.role, advance.commit_le⟩
+
+/-- A commit frontier survives `advanceCommit`. -/
+private theorem Advance.frontier {self : NodeID} {middle state : NodeState}
+    (advance : Advance self middle state) (frontier : Direct.CommitFrontier middle)
+    : Direct.CommitFrontier state := by
+  split_rel moved := (rcases Nat.eq_or_lt_of_le advance.commit_le with same | ahead) with
+  | inl => exact frontier.of_log advance.log same.symm
+  | inr =>
+    have eq := advance.commit_eq ahead
+    obtain ⟨bound, signature, _⟩ := highestCommittableIndex_spec middle self (eq ▸ ahead)
+    exact ⟨by rw [advance.log, eq]; exact bound,
+      fun _ => by rw [advance.log, eq]; exact signature⟩
+
+private theorem primaryState_frontier {state : NodeState}
+    (frontier : Direct.CommitFrontier state)
+    : Direct.CommitFrontier (primaryState state) := by
+  obtain ⟨n, le, eq⟩ := primaryState_log state
+  exact (frontier.keep (count := n) le (suffix := [])).of_log (by rw [eq]; simp) rfl
+
+/-- A rollback point lies after the request's previous index. -/
+private theorem conflictIndex_ge {log : List Entry} {request : AppendEntriesRequest}
+    {index : Nat} (conflict : conflictIndex log request = some index)
+    : request.prevLogIndex + 1 <= index := by
+  unfold conflictIndex at conflict
+  obtain ⟨pair, found, rfl⟩ := Option.map_eq_some_iff.mp conflict
+  obtain ⟨_, offset, lt, rfl, _⟩ := List.find?_eq_some_iff_getElem.mp found
+  simp
+
+/-- Accepting a request keeps the entries up to its previous index. -/
+private theorem acceptLog_keep (log : List Entry) (request : AppendEntriesRequest)
+    : exists n suffix,
+        request.prevLogIndex <= n /\ acceptLog log request = log.take n ++ suffix := by
+  unfold acceptLog
+  simp only
+  split_rel conflict := (split) with
+  | some =>
+    rename_i index conflict
+    exact ⟨index - 1, _, Nat.le_sub_of_add_le (conflictIndex_ge conflict), rfl⟩
+  | none =>
+    exact ⟨max request.prevLogIndex log.length, _, Nat.le_max_left _ _,
+      by rw [List.take_of_length_le (Nat.le_max_right _ _)]⟩
+
+/-- Accepting a request keeps the commit frontier. -/
+private theorem Accepted.frontier {before after : NodeState}
+    {request : AppendEntriesRequest} (accepted : Accepted before request after)
+    (frontier : Direct.CommitFrontier before)
+    : Direct.CommitFrontier after := by
+  obtain ⟨_, _, commitLe, _, _, log, commit⟩ := accepted
+  obtain ⟨n, suffix, le, eq⟩ := acceptLog_keep before.log request
+  have kept : Direct.CommitFrontier { before with log := after.log } := by
+    rw [log, eq]
+    exact frontier.keep (Nat.le_trans commitLe le)
+  exact (Direct.CommitFrontier.advance
+    (bound := min request.primaryCommit (request.prevLogIndex + request.entries.length))
+    kept).of_log rfl commit
+
+/-- Every kind of step keeps the commit index within the log and at a signature. -/
+private theorem Kind.frontier {self : NodeID} {before after : NodeState} {event : Event}
+    (kind : Kind self before event after) (frontier : Direct.CommitFrontier before)
+    : Direct.CommitFrontier after := by
+  split_rel kind := (cases kind) with
+  | same =>
+    rename_i log commit
+    exact frontier.of_log log commit
+  | append =>
+    rename_i entries sent leader terms advance
+    exact advance.frontier ((frontier.extend (List.prefix_append _ entries)).of_log rfl rfl)
+  | ack =>
+    rename_i _ _ _ _ _ _ advance
+    exact advance.frontier (frontier.of_log rfl rfl)
+  | accept =>
+    rename_i _ _ _ accepted
+    exact accepted.frontier frontier
+  | elect =>
+    rename_i wins
+    obtain ⟨candidate, ⟨_, logEq, commitEq, _⟩, _, advance⟩ := wins
+    exact advance.frontier (primaryState_frontier (frontier.of_log logEq commitEq))
+  | install =>
+    rename_i entries _ _ signature _ log commit _ _
+    exact ⟨by rw [log, commit]; exact Nat.le.refl,
+      fun _ => by rw [log, commit]; exact signature⟩
 
 end Consensus.Proofs.Safety
 
@@ -7805,9 +7512,7 @@ private theorem inv_step : Inv (f.advance after) :=
     frontier := by
       intro n st mem
       split_rel frontier_now := (rcases c.now_after mem with ⟨rfl, rfl⟩ | ⟨_, old⟩) with
-      | inl =>
-        exact Direct.commitFrontier_invariant.step _ _ _ _ _
-          (c.inv.frontier _ _ c.pre_now) c.tr.ran
+      | inl => exact (Summary.kind c.sum).frontier (c.inv.frontier _ _ c.pre_now)
       | inr => exact c.inv.frontier n st old
   }
 
