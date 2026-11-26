@@ -5664,33 +5664,40 @@ private theorem self_granted {term : Nat} (le : c.pre.currentTerm <= term)
     Or.inl rfl
   ⟩
 
-/-- Every vote counted by a campaign was granted for its vote request. -/
-private theorem campaign_votes {candidate : NodeState}
+/-- A campaign's term is above the bootstrap term and no earlier than the term before the
+step, and every vote it counts was granted for its vote request. -/
+private theorem campaign_facts {candidate : NodeState}
     (campaign : Campaign c.actor c.pre c.event candidate)
-    (termEq : c.post.currentTerm = candidate.currentTerm)
-    (votedEq : c.post.votedFor = candidate.votedFor)
-    : forall voter,
-        voter ∈ candidate.votesGranted
-        -> Granted (f.advance after) voter c.actor candidate.currentTerm
-            (vals candidate.currentTerm c.pre.log c.pre.commitIndex) := by
+    : 3 <= candidate.currentTerm
+      /\ (c.pre.currentTerm < candidate.currentTerm
+          \/ (c.pre.currentTerm = candidate.currentTerm /\ c.pre.role = .candidate))
+      /\ (c.post.currentTerm = candidate.currentTerm
+          -> c.post.votedFor = candidate.votedFor
+          -> forall voter,
+              voter ∈ candidate.votesGranted
+              -> Granted (f.advance after) voter c.actor candidate.currentTerm
+                  (vals candidate.currentTerm c.pre.log c.pre.commitIndex)) := by
   split_rel campaign :=
-      (obtain ⟨_, _, _, ⟨_, freshTerm, freshVote, freshVotes⟩
+      (obtain ⟨_, _, _, ⟨active, freshTerm, freshVote, freshVotes⟩
         | ⟨preRole, sameTerm, _, more⟩⟩ := campaign) with
   | inl =>
-    intro voter mem
+    have two := c.pre_two active
+    have lt : c.pre.currentTerm < candidate.currentTerm :=
+      Nat.lt_of_lt_of_le (Nat.lt_add_one _) (Nat.le_of_eq freshTerm.symm)
+    refine ⟨Nat.le_trans (Nat.add_le_add_right two 1) (Nat.le_of_eq freshTerm.symm),
+      Or.inl lt, fun termEq votedEq voter mem => ?_⟩
     rw [freshVotes, Finset.mem_singleton] at mem
     subst mem
-    exact c.self_granted (Nat.le_trans (Nat.le_succ _) (Nat.le_of_eq freshTerm.symm)) termEq
-      (votedEq.trans freshVote)
+    exact c.self_granted (Nat.le_of_lt lt) termEq (votedEq.trans freshVote)
   | inr =>
-    intro voter mem
+    have old := c.inv.candidate c.actor c.pre c.pre_now preRole
+    refine ⟨Nat.le_trans old.1 (Nat.le_of_eq sameTerm.symm), Or.inr ⟨sameTerm.symm, preRole⟩,
+      fun _ _ voter mem => ?_⟩
     rw [sameTerm]
-    split_rel more := (by_cases old : voter ∈ c.pre.votesGranted) with
-    | pos =>
-      exact ((c.inv.candidate c.actor c.pre c.pre_now preRole).2.2.1 voter old).mono
-        after
+    split_rel more := (by_cases counted : voter ∈ c.pre.votesGranted) with
+    | pos => exact (old.2.2.1 voter counted).mono after
     | neg =>
-      obtain ⟨response, eq, responseTerm, granted⟩ := more voter mem old
+      obtain ⟨response, eq, responseTerm, granted⟩ := more voter mem counted
       obtain ⟨envelope, ok, sourceEq, targetEq, payload⟩ := c.received_ok eq
       simp only [MessageOK, payload] at ok
       obtain ⟨request, granted', _, forNow⟩ := ok granted
@@ -5701,29 +5708,13 @@ private theorem campaign_votes {candidate : NodeState}
       rw [← requestEq] at granted'
       exact granted'.mono after
 
-/-- A campaign's term is above the bootstrap term. -/
-private theorem campaign_three {candidate : NodeState}
-    (campaign : Campaign c.actor c.pre c.event candidate)
-    : 3 <= candidate.currentTerm
-      /\ (c.pre.currentTerm < candidate.currentTerm
-          \/ (c.pre.currentTerm = candidate.currentTerm /\ c.pre.role = .candidate)) := by
-  split_rel campaign :=
-      (obtain ⟨_, _, _, ⟨active, freshTerm, _⟩ | ⟨preRole, sameTerm, _⟩⟩ := campaign) with
-  | inl =>
-    have := c.pre_two active
-    exact ⟨Nat.le_trans (Nat.add_le_add_right this 1) (Nat.le_of_eq freshTerm.symm),
-      Or.inl (Nat.lt_of_lt_of_le (Nat.lt_add_one _) (Nat.le_of_eq freshTerm.symm))⟩
-  | inr =>
-    have := (c.inv.candidate c.actor c.pre c.pre_now preRole).1
-    exact ⟨Nat.le_trans this (Nat.le_of_eq sameTerm.symm), Or.inr ⟨sameTerm.symm, preRole⟩⟩
-
 /-- Winning an election records it in the updated ghost. -/
 private theorem wins_elect (wins : Wins c.actor c.pre c.event c.post)
     : ElectStep f after c.actor c.post.currentTerm c.pre.log
         c.pre.commitIndex := by
   obtain ⟨candidate, campaign, quorum, logEq, termEq, votedEq, _, role, _⟩ := Wins.facts wins
   have ⟨_, candidateLog, candidateCommit, _⟩ := campaign
-  obtain ⟨three, termCase⟩ := c.campaign_three campaign
+  obtain ⟨three, termCase, votes⟩ := c.campaign_facts campaign
   refine ⟨
     c.pre,
     c.post,
@@ -5748,7 +5739,7 @@ private theorem wins_elect (wins : Wins c.actor c.pre c.event c.post)
     exact take_prefix_take _ committable
   · intro voter mem
     rw [termEq]
-    exact c.campaign_votes campaign termEq votedEq voter mem
+    exact votes termEq votedEq voter mem
 
 private theorem led_cur : LedCur (f.advance after) := by
   intro node state term now led
@@ -5864,7 +5855,7 @@ private theorem candidate : Candidate (f.advance after) := by
     subst nodeEq stateEq
     have campaign := Summary.candidate c.sum role
     have ⟨_, logEq, commitEq, kind⟩ := campaign
-    obtain ⟨three, _⟩ := c.campaign_three campaign
+    obtain ⟨three, _, votes⟩ := c.campaign_facts campaign
     refine ⟨three, ?_, ?_, ?_, ?_⟩
     · split_rel kind := (rcases kind with ⟨_, _, voted, _⟩ | ⟨preRole, _, voted, _⟩) with
       | inl => exact voted
@@ -5877,7 +5868,7 @@ private theorem candidate : Candidate (f.advance after) := by
         | inr => rw [← voted, own]
     · intro voter mem
       rw [logEq, commitEq]
-      exact c.campaign_votes campaign rfl rfl voter mem
+      exact votes rfl rfl voter mem
     · split_rel kind := (rcases kind with ⟨_, fresh, _⟩ | ⟨preRole, same, _⟩) with
       | inl => exact c.campaign_backed logEq commitEq fresh
       | inr =>
