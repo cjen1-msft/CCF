@@ -865,13 +865,31 @@ private theorem CopyLog.advance {g bootstrap prev s k l} (copy : CopyLog g k l) 
   obtain ⟨a, ca, le, eq⟩ := anchors i pos bound
   exact ⟨a, .inl ca, le, eq⟩
 
-private theorem copyLogs_step {g bootstrap prev s} (old : CopyLogs g)
-    (current : ∀ n st, (n, st) ∈ s.nodes → CopyLog (LogFacts.advance bootstrap g prev s)
-      st.currentTerm st.log) : CopyLogs (LogFacts.advance bootstrap g prev s) := by
+/-- What every leader log satisfies: a follower may copy it, its term has a leader, and
+above the bootstrap term it extends the winning prefix of an election of its term. -/
+private structure CanonLog (g : LogFacts.Ghost) (k : Nat) (l : List Entry) : Prop where
+  copy : CopyLog g k l
+  owner : ∃ n, g.led INITIAL_PRIMARY n k
+  winning : BOOTSTRAP_TERM < k →
+    ∃ n p i, g.elected n k p i ∧ p.take (maxCommittableIndex p) <+: l
+
+private def CanonLogs (g : LogFacts.Ghost) : Prop :=
+  ∀ k l, g.canon k l → CanonLog g k l
+
+/-- Earlier leader logs keep their facts; the logs of this state's leaders supply theirs. -/
+private theorem canonLogs_step {g prev s} (old : CanonLogs g)
+    (current : ∀ n st k,
+      (LogFacts.advance INITIAL_PRIMARY g prev s).canonNow INITIAL_PRIMARY s n st k →
+        CanonLog (LogFacts.advance INITIAL_PRIMARY g prev s) k st.log) :
+    CanonLogs (LogFacts.advance INITIAL_PRIMARY g prev s) := by
   intro k l canon
   split_rel canon := (rcases canon with past | ⟨n, st, now, rfl⟩) with
-  | inl => exact (old k l past).advance
-  | inr => exact now.2.1 ▸ current n st now.1
+  | inl =>
+    obtain ⟨copy, ⟨n, led⟩, winning⟩ := old k l past
+    refine ⟨copy.advance, ⟨n, led.imp_right fun ⟨p, i, e⟩ => ⟨p, i, .inl e⟩⟩, fun gt => ?_⟩
+    obtain ⟨n, p, i, elect, sub⟩ := winning gt
+    exact ⟨n, p, i, .inl elect, sub⟩
+  | inr => exact current n st k now
 
 private def Completeness (frame : Frame) : Prop :=
   forall term part node later log commit,
@@ -966,7 +984,7 @@ private structure Inv (frame : Frame) : Prop where
   rankedElections : RankedElections frame.logs frame.votes
   canon_mono : CanonMono frame
   chains : LogFacts.Chain frame.logs
-  winningPrefix : LogFacts.WinningPrefix frame.logs
+  canonLogs : CanonLogs frame.logs
   commit_backed : CommitBacked frame
   persist : Persist frame
   match_ack : MatchAck frame
@@ -974,10 +992,8 @@ private structure Inv (frame : Frame) : Prop where
   message_terms : MessageTerms frame
   leader_logs : LeaderLogs frame
   comparable : Comparable frame
-  copyLogs : CopyLogs frame.logs
   distinct : (frame.current.nodes.map Prod.fst).Nodup
   frontier : ∀ n st, Now frame n st → Direct.CommitFrontier st
-  owners : LogFacts.Owners INITIAL_PRIMARY frame.logs
   observed : ∀ n st, Now frame n st → Seen frame n (observe st)
   term_mono : TermMono frame
 
@@ -994,13 +1010,18 @@ private theorem Inv.anchor {h : Frame} (inv : Inv h) : Anchor h :=
 private theorem Inv.rooted {h : Frame} (inv : Inv h) : RootedLogs h :=
   fun node state now => (inv.node_logs node state now).rooted
 
+private theorem Inv.copyLogs {h : Frame} (inv : Inv h) : CopyLogs h.logs :=
+  fun k l canon => (inv.canonLogs k l canon).copy
+
+private theorem Inv.winningPrefix {h : Frame} (inv : Inv h) : LogFacts.WinningPrefix h.logs :=
+  fun k l canon gt => (inv.canonLogs k l canon).winning gt
+
 private theorem Inv.copyLog {h : Frame} (i : Inv h) {k l} (canon : Canon h k l) :
-    CopyLog h.logs k l := i.copyLogs k l canon
+    CopyLog h.logs k l := (i.canonLogs k l canon).copy
 
 private theorem Inv.owner {h : Frame} (inv : Inv h) {k l} (canon : h.logs.canon k l) :
-    ∃ n, Led h n k := by
-  obtain ⟨n, led⟩ := inv.owners k l canon
-  exact ⟨n, led.imp_right fun ⟨p, i, e⟩ => ⟨p, i, e⟩⟩
+    ∃ n, Led h n k :=
+  (inv.canonLogs k l canon).owner
 
 /-- A leader's term is at least the bootstrap term. -/
 private theorem led_floor {g : LogFacts.Ghost} {v : VoteFacts.Ghost} (certs : ElectionCerts g v)
@@ -4823,9 +4844,11 @@ private theorem inv_initial : Inv (Frame.start initial) := by
     rw [(initial_canon initialized (ca)).2,
       (initial_canon initialized (cb)).2]
     exact Or.inl (List.prefix_refl _)
-  · intro k l canon gt
-    have boot := (initial_canon initialized (canon)).1
-    exact (Nat.not_lt_of_ge (Nat.le_of_eq boot) gt).elim
+  · apply canonLogs_step (g := LogFacts.empty) (prev := none) (s := initial)
+      (fun _ _ h => False.elim h)
+    rintro n st k ⟨now, rfl, _, led⟩
+    refine ⟨currentCopyLog rooted terms sorted anchor n st now, ⟨n, led⟩, fun gt => ?_⟩
+    exact (Nat.not_lt_of_ge (Nat.le_of_eq (led_single led).1) gt).elim
   · intro node state now
     have zero : state.commitIndex = 0 := by rw [stateOf now]; rfl
     have backed (term : Nat) : Backed (Frame.start initial) state.log state.commitIndex term :=
@@ -4859,13 +4882,11 @@ private theorem inv_initial : Inv (Frame.start initial) := by
   · intro first second left right leftCommit _
     rw [initial_commit initialized leftCommit]
     exact Or.inl List.nil_prefix
-  · exact copyLogs_step (g := LogFacts.empty) (fun _ _ h => False.elim h) (currentCopyLog rooted terms sorted anchor)
   · exact initialized.2.2.1
   · intro n st mem
     have eq : st = Model.initialNodeState INITIAL_CONFIGURATION n := initialized.2.2.2.2 _ mem
     rw [eq]
     exact ⟨Nat.zero_le _, fun positive => by simp [Model.initialNodeState] at positive⟩
-  · exact LogFacts.owners_step (g := LogFacts.empty) (fun _ _ h => False.elim h)
   · exact fun n st mem => .inr ⟨st, mem, rfl, rfl⟩
   · intro n st o now seen
     rw [initial_seen initialized seen, stateOf now]
@@ -6572,15 +6593,6 @@ private theorem chains : LogFacts.Chain (f.advance after).logs := by
   rintro n st k ⟨now, rfl, role, led⟩ l canon
   exact (c.canon_mono n st now role led).1 l canon
 
-private theorem winningPrefix : LogFacts.WinningPrefix (f.advance after).logs := by
-  apply LogFacts.winningPrefix_step c.inv.winningPrefix
-  rintro n st k ⟨now, rfl, role, led⟩ gt
-  split_rel led := (rcases led with boot | ⟨l, i, elect⟩) with
-  | inl => exact (Nat.not_lt_of_ge (Nat.le_of_eq boot.1) gt).elim
-  | inr =>
-    have e := elect
-    exact ⟨l, i, elect, (c.canon_mono n st now role (.inr ⟨l, i, e⟩)).2 l i e⟩
-
 /-- Every log stays one a follower may copy: a prefix of the old log, the leader's own
 extension of it, or a prefix of a leader log. -/
 private theorem node_logs : NodeLogs (f.advance after) := by
@@ -6603,14 +6615,25 @@ private theorem node_logs : NodeLogs (f.advance after) := by
       exact (copy.prefix (List.take_prefix n leaderLog) (Nat.le_refl _)).mono after
   | inr => exact (c.inv.node_logs node state old).mono after
 
+/-- Every leader log is copyable, has a leader, and extends its election's winning prefix. -/
+private theorem canonLogs : CanonLogs (f.advance after).logs := by
+  apply canonLogs_step c.inv.canonLogs
+  rintro n st k ⟨now, rfl, role, led⟩
+  refine ⟨c.node_logs n st now, ⟨n, led⟩, fun gt => ?_⟩
+  split_rel led := (rcases led with boot | ⟨l, i, elect⟩) with
+  | inl => exact (Nat.not_lt_of_ge (Nat.le_of_eq boot.1) gt).elim
+  | inr =>
+    exact ⟨n, l, i, elect, (c.canon_mono n st now role (.inr ⟨l, i, elect⟩)).2 l i elect⟩
+
+private theorem winningPrefix : LogFacts.WinningPrefix (f.advance after).logs :=
+  fun k l canon gt => (c.canonLogs k l canon).winning gt
+
 private theorem copyLogs : CopyLogs (f.advance after).logs :=
-  copyLogs_step c.inv.copyLogs c.node_logs
+  fun k l canon => (c.canonLogs k l canon).copy
 
 private theorem canon_floor {k : Nat} {l : List Entry} (canon : Canon (f.advance after) k l) :
     2 ≤ k := by
-  have owners : LogFacts.Owners INITIAL_PRIMARY (f.advance after).logs :=
-    LogFacts.owners_step c.inv.owners
-  obtain ⟨n, led⟩ := owners k l canon
+  obtain ⟨n, led⟩ := (c.canonLogs k l canon).owner
   exact led_floor c.electionCerts led
 
 private theorem completeness : Completeness (f.advance after) :=
@@ -7329,7 +7352,7 @@ private theorem inv_step : Inv (f.advance after) :=
     rankedElections := c.rankedElections
     canon_mono := c.canon_mono
     chains := c.chains
-    winningPrefix := c.winningPrefix
+    canonLogs := c.canonLogs
     commit_backed := c.commit_backed
     persist := c.persist
     match_ack := c.match_ack
@@ -7337,8 +7360,6 @@ private theorem inv_step : Inv (f.advance after) :=
     message_terms := c.message_terms
     leader_logs := c.leader_logs
     comparable := c.comparable
-    copyLogs := copyLogs_step c.inv.copyLogs c.node_logs
-    owners := LogFacts.owners_step c.inv.owners
     distinct := c.keys_after
     observed := fun _ st mem => .inr ⟨st, mem, rfl, rfl⟩
     term_mono := by

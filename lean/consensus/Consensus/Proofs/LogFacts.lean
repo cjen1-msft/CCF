@@ -58,19 +58,6 @@ def advance (bootstrap : NodeID) (g : Ghost) (prev : Option Model.State) (s : Mo
   return { g with canon := fun k l => g.canon k l ∨
     ∃ n st, g.canonNow bootstrap s n st k ∧ st.log = l }
 
-/-- A canonical log has a leader in its term; no sending snapshot is required. -/
-def Owners (bootstrap : NodeID) (g : Ghost) : Prop :=
-  ∀ k l, g.canon k l → ∃ n, g.led bootstrap n k
-
-theorem owners_step {bootstrap g prev s} (old : Owners bootstrap g) :
-    Owners bootstrap (advance bootstrap g prev s) := by
-  intro k l canon
-  split_rel canon := (rcases canon with past | ⟨n, st, now, _⟩) with
-  | inl =>
-    obtain ⟨n, led⟩ := old k l past
-    exact ⟨n, led.imp_right fun ⟨p, i, e⟩ => ⟨p, i, .inl e⟩⟩
-  | inr => exact ⟨n, now.2.2.2⟩
-
 def Chain (g : Ghost) : Prop :=
   ∀ k a b, g.canon k a → g.canon k b → a <+: b ∨ b <+: a
 
@@ -79,20 +66,6 @@ the original proof used to recover by visiting the instant the leader log was se
 def WinningPrefix (g : Ghost) : Prop :=
   ∀ k l, g.canon k l → Model.BOOTSTRAP_TERM < k →
     ∃ n p i, g.elected n k p i ∧ p.take (maxCommittableIndex p) <+: l
-
-theorem winningPrefix_step {bootstrap g prev s} (old : WinningPrefix g)
-    (wins : ∀ n st k, (advance bootstrap g prev s).canonNow bootstrap s n st k →
-      Model.BOOTSTRAP_TERM < k → ∃ p i, (advance bootstrap g prev s).elected n k p i ∧
-        p.take (maxCommittableIndex p) <+: st.log) :
-    WinningPrefix (advance bootstrap g prev s) := by
-  intro k l canon gt
-  split_rel canon := (rcases canon with past | ⟨n, st, now, rfl⟩) with
-  | inl =>
-    obtain ⟨n, p, i, elect, sub⟩ := old k l past gt
-    exact ⟨n, p, i, .inl elect, sub⟩
-  | inr =>
-    obtain ⟨p, i, elect, sub⟩ := wins n st k now gt
-    exact ⟨n, p, i, elect, sub⟩
 
 theorem chain_step {bootstrap g prev s} (old : Chain g)
     (grows : ∀ n st k, (advance bootstrap g prev s).canonNow bootstrap s n st k →
