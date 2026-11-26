@@ -3321,16 +3321,9 @@ property those moves keep. -/
 private theorem foldl_select_step (P : Nat -> Nat -> Prop) [forall a b, Decidable (P a b)]
     (Q : Nat -> Prop) (values : List Nat) (init : Nat) (start : Q init)
     (step : forall acc value, value ∈ values -> Q acc -> P acc value -> Q value)
-    : Q (values.foldl (fun acc value => if P acc value then value else acc) init) := by
-  split_rel values := (induction values generalizing init) with
-  | nil => exact start
-  | cons =>
-      rename_i head tail ih
-      simp only [List.foldl_cons]
-      refine ih _ ?_ fun acc value mem => step acc value (List.mem_cons_of_mem _ mem)
-      split_rel selected := (split) with
-      | isTrue => exact step init head (List.mem_cons.mpr (Or.inl rfl)) start ‹_›
-      | isFalse => exact start
+    : Q (values.foldl (fun acc value => if P acc value then value else acc) init) :=
+  List.foldlRecOn values _ start fun acc held value member =>
+    iteInduction (fun selected => step acc value member held selected) fun _ => held
 
 private theorem highestCommittableIndex_signature (state : NodeState) (self : NodeID)
     (ahead : state.commitIndex < highestCommittableIndex state self)
