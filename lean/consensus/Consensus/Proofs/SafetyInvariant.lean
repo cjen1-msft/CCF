@@ -504,7 +504,7 @@ private def AEReply (self source : NodeID) (state : NodeState)
   after.currentTerm = state.currentTerm
   /\ after.votedFor = state.votedFor
   /\ after.matchIndex = state.matchIndex
-  /\ (after.role = state.role \/ after.role = .follower \/ after.role = .none)
+  /\ (after.role = .primary -> state.role = .primary)
   /\ (after.role = .candidate -> after = state)
   /\ ((after.log = state.log
         /\ after.commitIndex = state.commitIndex
@@ -1590,7 +1590,7 @@ private theorem fromLeader_loop (self : NodeID) (limit : Nat) (entries : List En
                 role,
                 primaryKnown
             }
-          /\ (role = state.role \/ role = .none)
+          /\ (Not (role = .none) -> role = state.role)
           /\ state.commitIndex <= commitIndex
           /\ commitIndex
               <= max state.commitIndex
@@ -1604,7 +1604,7 @@ private theorem fromLeader_loop (self : NodeID) (limit : Nat) (entries : List En
         state.role,
         state.primaryKnown,
         by simp,
-        Or.inl rfl,
+        fun _ => rfl,
         Nat.le.refl,
         Nat.le_max_left _ _
       ⟩
@@ -1626,15 +1626,12 @@ private theorem fromLeader_loop (self : NodeID) (limit : Nat) (entries : List En
         obtain ⟨commitIndex, retired, role, known, eq, roleCase, lower, upper⟩ := ih _
         rw [eq]
         simp only [List.append_assoc, List.cons_append, List.nil_append] at lower upper roleCase ⊢
-        refine ⟨commitIndex, retired, role, known, rfl, ?_,
+        exact ⟨commitIndex, retired, role, known, rfl,
+          fun kept => (roleCase kept).trans
+            (roleCase₀.resolve_right fun cleared => kept ((roleCase kept).trans cleared)),
           Nat.le_trans (Nat.le_max_left _ _) lower,
           Nat.le_trans upper (Nat.max_le.mpr ⟨Nat.max_le.mpr ⟨Nat.le_max_left _ _,
             Nat.le_trans mono (Nat.le_max_right _ _)⟩, Nat.le_max_right _ _⟩)⟩
-        split_rel roleCase := (rcases roleCase with same | none) with
-        | inl =>
-          rw [same]
-          exact roleCase₀
-        | inr => exact Or.inr none
       | neg =>
         simp only [signature, Bool.false_eq_true, ↓reduceIte]
         obtain ⟨commitIndex, retired, role, known, eq, roleCase, lower, upper⟩ := ih _
@@ -1671,7 +1668,7 @@ private theorem handleAppendEntiresFromPrimary_eq (self : NodeID) (state : NodeS
               lastLogIndex := request.prevLogIndex + request.entries.length
             }
           )
-        /\ (role = state.role \/ role = .none) := by
+        /\ (Not (role = .none) -> role = state.role) := by
   intro log
   obtain ⟨commitIndex, retired, role, known, eq, roleCase, lower, upper⟩ :=
     fromLeader_loop self
@@ -1687,11 +1684,8 @@ private theorem handleAppendEntiresFromPrimary_eq (self : NodeID) (state : NodeS
     congr 2
     exact Nat.le_antisymm (Nat.max_le.mpr ⟨upper, Nat.le_max_right _ _⟩)
       (Nat.max_le.mpr ⟨Nat.le_trans lower (Nat.le_max_left _ _), Nat.le_max_right _ _⟩)
-  · split_rel roleCase' := (rcases roleCase' with same | none) with
-    | inl =>
-      rw [same]
-      exact roleCase
-    | inr => exact Or.inr none
+  · exact fun kept => (roleCase'.resolve_right kept).trans
+      (roleCase fun cleared => kept ((roleCase'.resolve_right kept).trans cleared))
 
 /-- A rollback point lies after the request's previous index. -/
 private theorem firstTermConflictIndex_ge {state : NodeState}
@@ -3302,6 +3296,12 @@ private theorem Advance.role {self : NodeID} {middle state : NodeState}
     : state.role = middle.role \/ state.role = .none :=
   advance.2.2.2.2.2.2.1
 
+/-- The role is the old one unless committing a retirement cleared it. -/
+private theorem Advance.role_kept {self : NodeID} {middle state : NodeState}
+    (advance : Advance self middle state) (kept : Not (state.role = .none))
+    : state.role = middle.role :=
+  advance.role.resolve_right kept
+
 private theorem Advance.commit_le {self : NodeID} {middle state : NodeState}
     (advance : Advance self middle state)
     : middle.commitIndex <= state.commitIndex :=
@@ -3526,10 +3526,10 @@ private theorem campaign_summary {self : NodeID} {before candidate after : NodeS
     have termEq : after.currentTerm = candidate.currentTerm := by
       rw [advance.term]; rfl
     have elected : Wins self before event after := ⟨candidate, campaign, quorum, advance⟩
-    have notCandidate : Not (after.role = .candidate) := by
-      split_rel role := (rcases advance.role with eq | eq) with
-      | inl => rw [eq] <;> simp [primaryState]
-      | inr => rw [eq] <;> simp
+    have notCandidate : Not (after.role = .candidate) := fun candidate' => by
+      have kept := advance.role_kept (by rw [candidate']; simp)
+      rw [candidate'] at kept
+      simp [primaryState] at kept
     refine ⟨termEq ▸ termLe, fun same voted votedEq => ?_, fun _ => Or.inl engaged,
       fun candidate' => (notCandidate candidate').elim, fun _ => Or.inr elected,
       fun _ leader same => (notLeaderKeep leader (termEq ▸ same)).elim,
@@ -4116,10 +4116,10 @@ private theorem appendEntriesResponse_summary (before : NodeState) (source : Nod
       Sends.pure' (quiet _ rfl rfl rfl rfl rfl rfl rfl)
     refine Sends.ite' (fun term => ?_) fun _ => Sends.pure' (quiet before rfl rfl rfl rfl rfl rfl rfl)
     refine Sends.mono (advanceCommit_sends self _) fun after sent ⟨advance, nominated⟩ => ?_
-    have notCandidate : Not (after.role = .candidate) := by
-      split_rel role := (rcases advance.role with eq | eq) with
-      | inl => rw [eq] <;> simp [leader]
-      | inr => rw [eq] <;> simp
+    have notCandidate : Not (after.role = .candidate) := fun candidate => by
+      have kept := advance.role_kept (by rw [candidate]; simp)
+      rw [candidate] at kept
+      simp [leader] at kept
     refine ⟨Nat.le_of_eq advance.term.symm, fun _ voted eq => by rw [advance.votedFor]; exact eq,
       fun _ => Or.inl (by simp [Engaged, leader]), fun c => (notCandidate c).elim,
       fun _ => Or.inl ⟨leader, advance.term⟩, fun _ _ _ peer => ?_,
@@ -4156,7 +4156,7 @@ private theorem fromLeader_spec (self : NodeID) (state : NodeState)
       /\ result.1.votedFor = state.votedFor
       /\ result.1.matchIndex = state.matchIndex
       /\ result.1.votesGranted = state.votesGranted
-      /\ (result.1.role = state.role \/ result.1.role = .none)
+      /\ (Not (result.1.role = .none) -> result.1.role = state.role)
       /\ result.1.log
           = state.log ++ request.entries.drop (state.log.length - request.prevLogIndex)
       /\ result.1.commitIndex
@@ -4171,7 +4171,8 @@ private theorem fromLeader_spec (self : NodeID) (state : NodeState)
             lastLogIndex := request.prevLogIndex + request.entries.length
           } := by
   obtain ⟨_, _, _, eq, roleCase⟩ := Ledger.handleAppendEntiresFromPrimary_eq self state request
-  simp [eq, roleCase]
+  simp [eq]
+  exact roleCase
 
 private theorem aeReply (self source : NodeID) (z : NodeState)
     (r : AppendEntriesRequest) (le : r.term <= z.currentTerm)
@@ -4207,11 +4208,11 @@ private theorem aeReply (self source : NodeID) (z : NodeState)
     split_rel stepDown := (split) with
     | pos => rfl
     | neg => rfl
-  have wRole : w.role = z.role \/ w.role = .follower := by
+  have wLead : w.role = .primary -> z.role = .primary := by
     rw [← hw]
     split_rel stepDown := (split) with
     | pos => simp [becomeAwareOfNewTerm]
-    | neg => simp
+    | neg => exact id
   have wCand : w.role = .candidate -> w = z := by
     rw [← hw]
     split_rel stepDown := (split) with
@@ -4242,21 +4243,11 @@ private theorem aeReply (self source : NodeID) (z : NodeState)
               lastLogIndex := r.prevLogIndex + r.entries.length }))
       (term : after.currentTerm = w.currentTerm) (voted : after.votedFor = w.votedFor)
       (matchEq : after.matchIndex = w.matchIndex)
-      (role : after.role = w.role \/ after.role = .none)
+      (role : Not (after.role = .none) -> after.role = w.role)
       (cand : after.role = .candidate -> after = w) =>
     (⟨term.trans wTerm, voted.trans wVoted, matchEq.trans wMatch,
-      by
-        split_rel role := (rcases role with role | role) with
-        | inl =>
-          rw [role]
-          split_rel wRole := (rcases wRole with r | r) with
-          | inl => simp [*]
-          | inr => simp [*]
-        | inr => rw [role]; simp [*],
-      fun c => (cand c).trans (wCand (by
-        split_rel role := (rcases role with role | role) with
-        | inl => rw [role] at c; exact c
-        | inr => rw [role] at c; cases c)), rest⟩
+      fun leader => wLead ((role (by rw [leader]; simp)).symm.trans leader),
+      fun c => (cand c).trans (wCand ((role (by rw [c]; simp)).symm.trans c)), rest⟩
       : AEReply self source z r after sent)
   refine Sends.ite' (fun reject => ?_) fun accept => ?_
   · have nack : forall payload, (exists response, payload = Message.appendEntriesResponse response
@@ -4266,7 +4257,7 @@ private theorem aeReply (self source : NodeID) (z : NodeState)
       fun payload isNack => Sends.bind' (Sends.send _ _ _) fun _ sent eq => Sends.pure' (by
         subst eq
         refine common w _ (Or.inl ⟨wLog, wCommit, fun e member => ?_⟩) rfl rfl rfl
-          (Or.inl rfl) fun _ => rfl
+          (fun _ => rfl) fun _ => rfl
         simp at member
         subst member
         exact ⟨rfl, isNack⟩)
@@ -4278,7 +4269,7 @@ private theorem aeReply (self source : NodeID) (z : NodeState)
     (fun _ =>
       Sends.pure'
         (common _ [] (Or.inl ⟨wLog, wCommit, by simp⟩)
-          rfl rfl rfl (Or.inl rfl) fun c => (notCand c).elim))
+          rfl rfl rfl (fun _ => rfl) fun c => (notCand c).elim))
     fun go => ?_
   have matches_ : appendEntryMatchesLog z r := by
     have m : appendEntryMatchesLog w r := Classical.not_not.mp (not_or.mp accept).2
@@ -4309,10 +4300,9 @@ private theorem aeReply (self source : NodeID) (z : NodeState)
     refine Sends.bind' (Sends.send _ _ _) fun _ sent eq => Sends.pure' ?_
     subst eq
     refine common _ _ (Or.inr ⟨same, commitLe, matches_, ?_, ?_, _, rfl, rfl, rfl, ?_⟩)
-      (term.trans vTerm) (voted.trans vVoted) (matchEq.trans vMatch) (vRole ▸ role) fun c => by
-        split_rel role := (rcases role with role | role) with
-        | inl => rw [role] at c; exact (notCand (vRole ▸ c)).elim
-        | inr => rw [role] at c; cases c
+      (term.trans vTerm) (voted.trans vVoted) (matchEq.trans vMatch)
+      (fun kept => (role kept).trans vRole)
+      fun c => (notCand (((role (by rw [c]; simp)).trans vRole).symm.trans c)).elim
     · rw [log, vLog]
       rfl
     · rw [commit, vCommit, wCommit]
@@ -4385,36 +4375,27 @@ private theorem appendEntriesRequest_summary (self : NodeID) (before : NodeState
     refine Sends.mono (aeReply self source _ request (Nat.le.refl)) fun after sent reply => ?_
     obtain ⟨kind, sends⟩ := aeReply_summary (before := before) (z := bumpedState before request.term) rfl rfl
       (Nat.le_of_lt bump) reply
-    obtain ⟨term, _, _, role, _, _⟩ := reply
-    have follower : after.role = .follower \/ after.role = .none := by
-      split_rel role := (rcases role with eq | eq | eq) with
-      | inl => rw [eq] <;> simp [bumpedState]
-      | inr_inl => rw [eq] <;> simp
-      | inr_inr => rw [eq] <;> simp
-    exact bumped_summary (term ▸ bump) (by
-      split_rel follower := (rcases follower with f | f) with
-      | inl => simp [f]
-      | inr => simp [f])
-      (by
-        split_rel follower := (rcases follower with f | f) with
-        | inl => simp [f]
-        | inr => simp [f])
+    obtain ⟨term, _, _, lead, cand, _⟩ := reply
+    exact bumped_summary (term ▸ bump)
+      (fun candidate => by
+        rw [cand candidate] at candidate
+        simp [bumpedState] at candidate)
+      (fun leader => by
+        have := lead leader
+        simp [bumpedState] at this)
       ⟨source, _, rfl, trivial, term ▸ Nat.le.refl⟩ kind sends
   | inr =>
     rw [eq]
     refine Sends.mono (aeReply self source _ request le) fun after sent reply => ?_
     obtain ⟨kind, sends⟩ := aeReply_summary (before := before) rfl rfl Nat.le.refl reply
-    obtain ⟨term, voted, matchEq, role, cand, _⟩ := reply
+    obtain ⟨term, voted, matchEq, lead, cand, _⟩ := reply
     refine ⟨Nat.le_of_eq term.symm, fun _ voted' eq => voted ▸ eq,
       fun _ => Or.inr (Or.inr (Or.inl ⟨source, _, rfl, trivial, term ▸ le⟩)), fun c => ?_,
       fun leader => ?_, fun _ _ _ peer => Or.inl (congrFun matchEq peer), kind, sends⟩
     · have eq := cand c
       rw [eq] at c ⊢
       exact ⟨c, rfl, rfl, Or.inr ⟨c, rfl, Or.inl rfl, fun voter member => Or.inl member⟩⟩
-    · split_rel role := (rcases role with eq | eq | eq) with
-      | inl => exact Or.inl ⟨eq ▸ leader, term⟩
-      | inr_inl => rw [eq] at leader; cases leader
-      | inr_inr => rw [eq] at leader; cases leader
+    · exact Or.inl ⟨lead leader, term⟩
 
 private theorem BatchState.push {self : NodeID} {before state : NodeState}
     {sent : List Model.Envelope} (batch : BatchState self before state sent)
@@ -4521,20 +4502,17 @@ private theorem appendBatch_summary (self : NodeID) (state : NodeState)
   obtain ⟨⟨entries, sentIndex, eq, terms⟩, beats⟩ := batch
   have term : after.currentTerm = state.currentTerm := by rw [advance.term, eq]
   have log : after.log = appended.log := advance.log
-  have role : after.role = .primary \/ after.role = .none := by
-    split_rel role := (rcases advance.role with r | r) with
-    | inl => rw [r, eq]; exact Or.inl leader
-    | inr => exact Or.inr r
+  have notCandidate : Not (after.role = .candidate) := fun candidate => by
+    have kept := advance.role_kept (by rw [candidate]; simp)
+    rw [candidate, eq] at kept
+    exact (by simp : Not (Role.candidate = Role.primary)) (kept.trans leader)
   have commit : state.commitIndex <= after.commitIndex := by
     have := advance.commit_le; rw [eq] at this; exact this
   refine ⟨
     Nat.le_of_eq term.symm,
     fun _ voted votedEq => by rw [advance.votedFor, eq]; exact votedEq,
     fun _ => Or.inl (by simp [Engaged, leader]),
-    fun c => by
-      split_rel role := (rcases role with r | r) with
-      | inl => simp [r] at c
-      | inr => simp [r] at c,
+    fun candidate => (notCandidate candidate).elim,
     fun _ => Or.inl ⟨leader, term⟩,
     fun _ _ _ peer => Or.inl (by rw [advance.matchIndex, eq]),
     Kind.append entries sentIndex leader terms (eq ▸ advance),
@@ -4547,10 +4525,7 @@ private theorem appendBatch_summary (self : NodeID) (state : NodeState)
     obtain ⟨request, payload, ok⟩ := from_.ok
     refine ⟨from_.1, ?_⟩
     rw [payload]
-    exact ⟨ok, by
-      split_rel role := (rcases role with r | r) with
-      | inl => simp [r]
-      | inr => simp [r], Or.inl ⟨leader, term⟩⟩
+    exact ⟨ok, notCandidate, Or.inl ⟨leader, term⟩⟩
   | inr =>
     obtain ⟨source, payload⟩ := nominated e new
     refine ⟨source, ?_⟩
@@ -5516,10 +5491,10 @@ private theorem post_log
   | append =>
       rename_i entries sent leader terms advance
       obtain ⟨log, term, role⟩ := Advance.facts advance
-      refine Or.inr (Or.inl ⟨entries, log, terms, leader, term, ?_⟩)
-      split_rel role := (rcases role with role | role) with
-      | inl => rw [role] <;> simp [leader]
-      | inr => rw [role] <;> simp
+      refine Or.inr (Or.inl ⟨entries, log, terms, leader, term, fun candidate => ?_⟩)
+      have kept := role.resolve_right (by rw [candidate]; simp)
+      rw [candidate] at kept
+      simp [leader] at kept
   | ack =>
       rename_i _ _ _ _ _ _ advance
       obtain ⟨log, _, _⟩ := Advance.facts advance
@@ -6741,7 +6716,6 @@ private theorem advance_backed {middle : NodeState}
         c.post.currentTerm := by
   have log := advance.log
   have term := advance.term
-  have postRole := advance.role
   split_rel advance :=
       (rcases Nat.eq_or_lt_of_le advance.commit_le with same | lt) with
   | inl =>
@@ -6764,17 +6738,10 @@ private theorem advance_backed {middle : NodeState}
                     \/ middle.matchIndex voter >= highestCommittableIndex middle
                         c.actor :=
       ⟨_, quorum, fun _ mem => (Finset.mem_filter.mp mem).2⟩
-    have notCandidate : Not (c.post.role = .candidate) := by
-      split_rel postRole := (rcases postRole with postRole | postRole) with
-      | inl =>
-        rw [postRole]
-        rw [role]
-        intro h
-        cases h
-      | inr =>
-        rw [postRole]
-        intro h
-        cases h
+    have notCandidate : Not (c.post.role = .candidate) := fun candidate => by
+      have kept := advance.role_kept (by rw [candidate]; simp)
+      rw [candidate, role] at kept
+      cases kept
     have step : CommitStep (f.advance after) c.actor c.post c.post.currentTerm
         middle.commitIndex c.post.commitIndex := by
       refine ⟨⟨c.post_now, rfl, notCandidate, led⟩, Nat.le_of_lt lt, ?_, ?_, ?_, voters, ?_, ?_⟩
