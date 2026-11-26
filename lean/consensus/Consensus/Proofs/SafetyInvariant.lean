@@ -388,6 +388,22 @@ private def SendOK (self : NodeID) (before : NodeState) (event : Event)
                   /\ after.votedFor = some envelope.target)
       | message => message.term = after.currentTerm
 
+/-- Why a node that takes part in elections after a step, or sends a term-bumping
+message in it, has a term of at least two: it took part before, already had such a
+term, received a term-bumping message, or installed a signed snapshot. -/
+private def Activated (before : NodeState) (event : Event) (after : NodeState) : Prop :=
+  Engaged before
+  \/ 2 <= before.currentTerm
+  \/ (exists source message,
+        event = .receive source message
+        /\ Bumping message
+        /\ message.term <= after.currentTerm)
+  \/ exists entries,
+      event = .internal (.initAsBackup entries)
+      /\ 0 < entries.length
+      /\ isSignatureAt entries entries.length = true
+      /\ after.currentTerm = termAt entries entries.length
+
 /-- Everything the safety proof needs to know about one local step. -/
 private structure Summary (self : NodeID) (before : NodeState) (event : Event)
     (after : NodeState) (sent : List Model.Envelope)
@@ -396,19 +412,10 @@ private structure Summary (self : NodeID) (before : NodeState) (event : Event)
   vote_keep
     : after.currentTerm = before.currentTerm
       -> forall voted, before.votedFor = some voted -> after.votedFor = some voted
-  active
-    : (Engaged after \/ exists envelope, envelope ∈ sent /\ Bumping envelope.payload)
-      -> Engaged before
-          \/ 2 <= before.currentTerm
-          \/ (exists source message,
-                event = .receive source message
-                /\ Bumping message
-                /\ message.term <= after.currentTerm)
-          \/ exists entries,
-              event = .internal (.initAsBackup entries)
-              /\ 0 < entries.length
-              /\ isSignatureAt entries entries.length = true
-              /\ after.currentTerm = termAt entries entries.length
+  active : Engaged after -> Activated before event after
+  bumps
+    : (exists envelope, envelope ∈ sent /\ Bumping envelope.payload)
+      -> Activated before event after
   candidate : after.role = .candidate -> Campaign self before event after
   leader
     : after.role = .primary
@@ -3590,7 +3597,7 @@ private theorem campaign_summary {self : NodeID} {before candidate after : NodeS
   split_rel result := (rcases outcome with ⟨afterEq, nothing⟩ | ⟨quorum, advance, leaderStart⟩) with
   | inl =>
     subst afterEq nothing
-    exact ⟨termLe, voteKeep, fun _ => Or.inl engaged, fun _ => campaign,
+    exact ⟨termLe, voteKeep, fun _ => Or.inl engaged, fun _ => Or.inl engaged, fun _ => campaign,
       fun leader => (by rw [campaign.1] at leader; cases leader),
       fun _ leader same => (notLeaderKeep ⟨leader, same⟩).elim,
       Kind.same campaign.2.1 campaign.2.2.1,
@@ -3605,7 +3612,7 @@ private theorem campaign_summary {self : NodeID} {before candidate after : NodeS
       have kept := advance.role_kept (by rw [candidate']; simp)
       rw [candidate'] at kept
       simp [primaryState] at kept
-    refine ⟨termEq ▸ termLe, fun same voted votedEq => ?_, fun _ => Or.inl engaged,
+    refine ⟨termEq ▸ termLe, fun same voted votedEq => ?_, fun _ => Or.inl engaged, fun _ => Or.inl engaged,
       fun candidate' => (notCandidate candidate').elim, fun _ => Or.inr elected,
       fun _ leader same => (notLeaderKeep ⟨leader, termEq ▸ same⟩).elim,
       Kind.elect elected, fun e member => ?_⟩
@@ -3634,25 +3641,16 @@ private theorem quiet_summary {self : NodeID} {before after : NodeState}
     (voted : after.votedFor = before.votedFor)
     (votes : after.votesGranted = before.votesGranted)
     (matchEq : after.matchIndex = before.matchIndex)
-    (active
+    (bumps
       : (exists envelope, envelope ∈ sent /\ Bumping envelope.payload)
-        -> Engaged before
-            \/ 2 <= before.currentTerm
-            \/ (exists source message,
-                  event = .receive source message
-                  /\ Bumping message
-                  /\ message.term <= after.currentTerm)
-            \/ exists entries,
-                event = .internal (.initAsBackup entries)
-                /\ 0 < entries.length
-                /\ isSignatureAt entries entries.length = true
-                /\ after.currentTerm = termAt entries entries.length)
+        -> Activated before event after)
     (sends : forall e, e ∈ sent -> SendOK self before event after e)
-    : Summary self before event after sent := by
-  refine ⟨
+    : Summary self before event after sent :=
+  ⟨
     Nat.le_of_eq term.symm,
     fun _ voted' votedEq => voted ▸ votedEq,
-    fun either => ?_,
+    fun engaged => Or.inl (by simpa only [Engaged, role, term, log] using engaged),
+    bumps,
     fun candidate =>
       ⟨
         candidate,
@@ -3671,9 +3669,6 @@ private theorem quiet_summary {self : NodeID} {before after : NodeState}
     Kind.same log commit,
     sends
   ⟩
-  split_rel either := (rcases either with engaged | bumping) with
-  | inl => exact Or.inl (by simpa only [Engaged, role, term, log] using engaged)
-  | inr => exact active bumping
 
 /-- No envelope in an empty send list is a term-bumping message. -/
 private theorem no_bumping_sends {P : Prop}
@@ -3697,7 +3692,7 @@ private theorem bumped_summary {self : NodeID} {before after : NodeState}
   ⟨
     Nat.le_of_lt lt,
     fun same => (Nat.lt_irrefl _ (Nat.lt_of_lt_of_le lt (Nat.le_of_eq same))).elim,
-    fun _ => Or.inr (Or.inr (Or.inl active)),
+    fun _ => Or.inr (Or.inr (Or.inl active)), fun _ => Or.inr (Or.inr (Or.inl active)),
     fun candidate => (notCandidate candidate).elim,
     fun leader => (notLeader leader).elim,
     fun leader => (notLeader leader).elim,
@@ -3782,7 +3777,7 @@ private theorem checkQuorum_summary (state : NodeState) (input : Input)
   refine ⟨
     Nat.le.refl,
     fun _ voted eq => eq,
-    fun _ => Or.inl (by simp [Engaged, leader]),
+    fun _ => Or.inl (by simp [Engaged, leader]), fun _ => Or.inl (by simp [Engaged, leader]),
     fun c => by simp at c,
     fun c => by simp at c,
     fun c => by simp at c,
@@ -3845,7 +3840,7 @@ private theorem startElection_summary (state : NodeState)
         trivial
   · refine Sends.bind' (broadcast_sends self _ _) fun _ sent requests => Sends.pure' ?_
     simp only [List.append_nil]
-    refine ⟨Nat.le.refl, fun _ voted eq => eq, fun _ => Or.inl engaged, fun c => by simp at c,
+    refine ⟨Nat.le.refl, fun _ voted eq => eq, fun _ => Or.inl engaged, fun _ => Or.inl engaged, fun c => by simp at c,
       fun c => by simp at c, fun c => by simp at c, Kind.same rfl rfl, fun e member => ?_⟩
     obtain ⟨source, _, payload⟩ := requests e member
     refine ⟨source, ?_⟩
@@ -3900,7 +3895,7 @@ private theorem voteRequest_summary (before : NodeState) (source : NodeID)
     | pos =>
       rename_i granted
       simp only [decide_eq_true_eq] at granted
-      refine ⟨Nat.le.refl, fun _ voted votedEq => ?_, fun _ => Or.inr (Or.inr (Or.inl active)),
+      refine ⟨Nat.le.refl, fun _ voted votedEq => ?_, fun _ => Or.inr (Or.inr (Or.inl active)), fun _ => Or.inr (Or.inr (Or.inl active)),
         fun candidate => ⟨candidate, rfl, rfl, Or.inr ⟨candidate, rfl, granted.2.2.2,
           fun voter member fresh => absurd member fresh⟩⟩,
         fun leader => Or.inl ⟨leader, rfl⟩, fun _ _ _ => Or.inl rfl, Kind.same rfl rfl,
@@ -3988,7 +3983,9 @@ private theorem initAsBackup_summary (before : NodeState) (entries : List Entry)
     refine ⟨
       by simp [becomeAwareOfNewTerm, zero, termAt, entryAt?],
       fun _ voted eq => by simpa [becomeAwareOfNewTerm, zero, termAt, entryAt?] using eq,
-      fun active => ?_,
+      fun engaged => (engaged.2 ⟨by simp [becomeAwareOfNewTerm], by simp [becomeAwareOfNewTerm,
+        termAt, entryAt?], by simp [becomeAwareOfNewTerm]⟩).elim,
+      no_bumping_sends,
       fun c => by simp [becomeAwareOfNewTerm] at c,
       fun c => by simp [becomeAwareOfNewTerm] at c,
       fun c => by simp [becomeAwareOfNewTerm] at c,
@@ -3996,10 +3993,6 @@ private theorem initAsBackup_summary (before : NodeState) (entries : List Entry)
         (by simp [becomeAwareOfNewTerm, noCommit]),
       by simp
     ⟩
-    split_rel active := (rcases active with engaged | bumping) with
-    | inl => exact (engaged.2 ⟨by simp [becomeAwareOfNewTerm], by simp [becomeAwareOfNewTerm,
-        termAt, entryAt?], by simp [becomeAwareOfNewTerm]⟩).elim
-    | inr => exact no_bumping_sends bumping
   | inr =>
     have signature : isSignatureAt entries entries.length = true := by
       split_rel signed := (rcases signed with nil | signature) with
@@ -4008,6 +4001,8 @@ private theorem initAsBackup_summary (before : NodeState) (entries : List Entry)
         simp at positive
       | inr => exact signature
     refine ⟨by simp [becomeAwareOfNewTerm, zero], fun same voted eq => ?_,
+      fun _ => Or.inr (Or.inr (Or.inr ⟨entries, rfl, positive, signature,
+        by simp [becomeAwareOfNewTerm]⟩)),
       fun _ => Or.inr (Or.inr (Or.inr ⟨entries, rfl, positive, signature,
         by simp [becomeAwareOfNewTerm]⟩)),
       fun c => by simp [becomeAwareOfNewTerm] at c, fun c => by simp [becomeAwareOfNewTerm] at c,
@@ -4126,7 +4121,7 @@ private theorem appendEntriesResponse_quiet (before : NodeState) (source : NodeI
     rw [candidate] at kept
     simp [leader] at kept
   refine ⟨Nat.le_of_eq advance.term.symm, fun _ voted eq => by rw [advance.votedFor]; exact eq,
-    fun _ => Or.inl (by simp [Engaged, leader]), fun c => (notCandidate c).elim,
+    fun _ => Or.inl (by simp [Engaged, leader]), fun _ => Or.inl (by simp [Engaged, leader]), fun c => (notCandidate c).elim,
     fun _ => Or.inl ⟨leader, advance.term⟩,
     fun _ _ _ => Or.inr ⟨source, response, rfl, success, term, advance.matchIndex⟩,
     Kind.ack source response rfl leader success term advance, fun e member => ?_⟩
@@ -4161,7 +4156,7 @@ private theorem appendEntriesResponse_summary (before : NodeState) (source : Nod
       (by simp [bumpedState])
     refine ⟨Nat.le_of_lt bump,
       fun same => (Nat.lt_irrefl _ (Nat.lt_of_lt_of_le bump (Nat.le_of_eq same))).elim,
-      fun _ => Or.inl (by simp [Engaged, leader]), fun c => by simp [bumpedState] at c,
+      fun _ => Or.inl (by simp [Engaged, leader]), fun _ => Or.inl (by simp [Engaged, leader]), fun c => by simp [bumpedState] at c,
       fun c => by simp [bumpedState] at c, fun c => by simp [bumpedState] at c,
       Kind.same rfl rfl, by simp⟩
   | neg =>
@@ -4395,7 +4390,7 @@ private theorem appendEntriesRequest_summary (self : NodeID) (before : NodeState
       fun after sent reply => ?_
     obtain ⟨term, voted, matchEq, lead, cand, kind, sends⟩ := reply
     refine ⟨Nat.le_of_eq term.symm, fun _ voted' eq => voted ▸ eq,
-      fun _ => Or.inr (Or.inr (Or.inl ⟨source, _, rfl, trivial, term ▸ le⟩)), fun c => ?_,
+      fun _ => Or.inr (Or.inr (Or.inl ⟨source, _, rfl, trivial, term ▸ le⟩)), fun _ => Or.inr (Or.inr (Or.inl ⟨source, _, rfl, trivial, term ▸ le⟩)), fun c => ?_,
       fun leader => ?_, fun _ _ _ => Or.inl matchEq, kind, sends⟩
     · have eq := cand c
       rw [eq] at c ⊢
@@ -4518,7 +4513,7 @@ private theorem appendBatch_summary (self : NodeID) (state : NodeState)
   refine ⟨
     Nat.le_of_eq term.symm,
     fun _ voted votedEq => by rw [advance.votedFor, eq]; exact votedEq,
-    fun _ => Or.inl (by simp [Engaged, leader]),
+    fun _ => Or.inl (by simp [Engaged, leader]), fun _ => Or.inl (by simp [Engaged, leader]),
     fun candidate => (notCandidate candidate).elim,
     fun _ => Or.inl ⟨leader, term⟩,
     fun _ _ _ => Or.inl (by rw [advance.matchIndex, eq]),
@@ -5349,13 +5344,11 @@ private theorem pre_two (active : Engaged c.pre) : 2 <= c.pre.currentTerm :=
   c.inv.active c.actor c.pre c.pre_now active
 
 /-- An engaged node, or a sender of a term-bumping message, has term at least two. -/
-private theorem post_two
-    (active
-      : Engaged c.post \/ exists envelope, envelope ∈ c.sent /\ Bumping envelope.payload)
+private theorem post_two (activated : Activated c.pre c.event c.post)
     : 2 <= c.post.currentTerm := by
   have le := c.term_le
   split_rel active :=
-      (rcases Summary.active c.sum active with role | two | ⟨source, message, eq, bumping, bound⟩
+      (rcases activated with role | two | ⟨source, message, eq, bumping, bound⟩
         | ⟨entries, stash, positive, signature, termEq⟩) with
   | inl => exact Nat.le_trans (c.pre_two role) le
   | inr_inl => exact Nat.le_trans two le
@@ -5543,7 +5536,7 @@ private theorem active : Active (f.advance after) := by
   split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨other, old⟩) with
   | inl =>
     subst nodeEq stateEq
-    exact c.post_two (Or.inl role)
+    exact c.post_two (Summary.active c.sum role)
   | inr => exact c.inv.active node state old role
 
 omit c in
@@ -7260,7 +7253,7 @@ private theorem message_terms : MessageTerms (f.advance after) := by
   split_rel mem_network := (rcases c.tr.mem_network pending with old | new) with
   | inl => exact c.inv.message_terms envelope old bumping
   | inr =>
-    have two := c.post_two (Or.inr ⟨envelope, new, bumping⟩)
+    have two := c.post_two (Summary.bumps c.sum ⟨envelope, new, bumping⟩)
     obtain ⟨_, ok⟩ := Summary.sends c.sum envelope new
     split_rel h := (cases h : envelope.payload) with
     | appendEntriesRequest =>
