@@ -2659,24 +2659,19 @@ private theorem activeConfigurations_overlap {left right : List Entry}
   unfold activeConfigurations
   simp only
   rw [count leftEq leftLater leftLe, count rightEq rightLater rightLe]
-  have leftBound := length_filter_le common leftCommit
-  have rightBound := length_filter_le common rightCommit
   have last : common.length - 1 < common.length := Nat.sub_one_lt (Nat.ne_of_gt commonPos)
-  split_rel le_total := (rcases Nat.le_total leftCommit rightCommit with ordered | ordered) with
-  | inl =>
-    have mono := length_filter_index_mono common ordered
-    have chosenLt := Nat.lt_of_le_of_lt (Nat.sub_le_sub_right rightBound 1) last
-    exact ⟨common[_ - 1]'chosenLt, inDrop chosenLt leftEq (Nat.sub_le_sub_right mono 1),
-      inDrop chosenLt rightEq Nat.le.refl,
-      chosen_bound sorted rightCommit commonPos
-        (Nat.le_trans (Nat.le_max_right _ _) within) member lowLe⟩
-  | inr =>
-    have mono := length_filter_index_mono common ordered
-    have chosenLt := Nat.lt_of_le_of_lt (Nat.sub_le_sub_right leftBound 1) last
-    exact ⟨common[_ - 1]'chosenLt, inDrop chosenLt leftEq Nat.le.refl,
-      inDrop chosenLt rightEq (Nat.sub_le_sub_right mono 1),
-      chosen_bound sorted leftCommit commonPos
-        (Nat.le_trans (Nat.le_max_left _ _) within) member lowLe⟩
+  -- The configuration chosen by the larger commit index is active for both logs.
+  have chosenLt
+      : (common.filter fun configuration =>
+            configuration.index <= max leftCommit rightCommit).length - 1
+        < common.length :=
+    Nat.lt_of_le_of_lt (Nat.sub_le_sub_right (length_filter_le common _) 1) last
+  exact ⟨common[_ - 1]'chosenLt,
+    inDrop chosenLt leftEq
+      (Nat.sub_le_sub_right (length_filter_index_mono common (Nat.le_max_left _ _)) 1),
+    inDrop chosenLt rightEq
+      (Nat.sub_le_sub_right (length_filter_index_mono common (Nat.le_max_right _ _)) 1),
+    chosen_bound sorted (max leftCommit rightCommit) commonPos within member lowLe⟩
 
 /-- Two strict majorities of one configuration share a member. -/
 private theorem majorities_intersect {configuration : Configuration}
@@ -2748,24 +2743,25 @@ private theorem rooted_overlap {root : Entry}
         /\ configuration.index <= max (max leftCommit rightCommit) 1 := by
   have leftHead := leftRooted.head leftNonempty
   have rightHead := rightRooted.head rightNonempty
-  have agree' : left.take (max k 1) = right.take (max k 1) := by
-    split_rel eq_zero_or_pos := (rcases Nat.eq_zero_or_pos k with zero | positive) with
-    | inl =>
-      subst zero
-      simp [leftHead, rightHead]
-    | inr => rwa [Nat.max_eq_left positive]
-  have rooted : (right.take (max k 1)).take 1 = [root] := by
-    rw [List.take_take, Nat.min_eq_left (Nat.le_max_right _ _), rightHead]
+  -- Both logs start with the root, so they agree on the root followed by the rest of the
+  -- agreed prefix: on their first `1 + (k - 1)` entries, which cover the first `k`.
+  have covers : k <= 1 + (k - 1) := by
+    rw [Nat.add_comm]
+    exact Nat.le_succ_of_pred_le (Nat.le_refl _)
+  have agree' : left.take (1 + (k - 1)) = right.take (1 + (k - 1)) := by
+    rw [List.take_add, List.take_add, leftHead, rightHead, ← List.drop_take,
+      ← List.drop_take, agree]
+  have rooted : (right.take (1 + (k - 1))).take 1 = [root] := by
+    rw [List.take_take, Nat.min_eq_left (Nat.le_add_right 1 _), rightHead]
   -- The root's configuration, at index one, is among the agreed entries.
-  obtain ⟨rest, eq, _⟩ := configurationHistory_split (right.take (max k 1)) 1
+  obtain ⟨rest, eq, _⟩ := configurationHistory_split (right.take (1 + (k - 1))) 1
   obtain ⟨nodes, some⟩ := Option.isSome_iff_exists.mp configured
   have genesis : ({ index := 1, nodes } : Configuration)
-      ∈ configurationHistory (right.take (max k 1)) := by
+      ∈ configurationHistory (right.take (1 + (k - 1))) := by
     rw [eq, rooted]
     simp [configurationHistory, some]
-  exact activeConfigurations_overlap agree' (Nat.le_trans leftLe (Nat.le_max_left _ _))
-    (Nat.le_trans rightLe (Nat.le_max_left _ _)) (Nat.le_max_left _ _) genesis
-    (Nat.le_max_right _ _)
+  exact activeConfigurations_overlap agree' (Nat.le_trans leftLe covers)
+    (Nat.le_trans rightLe covers) (Nat.le_max_left _ _) genesis (Nat.le_max_right _ _)
 
 /-- Quorums for two rooted logs agreeing on both committed prefixes share a
 voter; a configuration-bearing root supplies a common configuration. -/
@@ -6947,12 +6943,12 @@ private theorem wins_backing (wins : Wins c.actor c.pre c.event c.post)
   have elect := c.wins_elect wins
   have winning := (c.electStep elect).2.2.2.2.2.2.1
   obtain ⟨candidate, ⟨_, candidateLog, candidateCommit, _⟩, _, advance, _⟩ := wins
-  have committable : c.pre.commitIndex <= maxCommittableIndex c.pre.log := by
-    split_rel eq_zero_or_pos := (rcases Nat.eq_zero_or_pos c.pre.commitIndex with zero | positive) with
-    | inl => exact Nat.le_trans (Nat.le_of_eq zero) (Nat.zero_le _)
-    | inr =>
-      exact signatureIndex_le_maxCommittableIndex
-        ((c.inv.frontier _ _ c.pre_now).2 positive)
+  -- A commit index beyond the latest signature would be a positive one, at a signature.
+  have committable : c.pre.commitIndex <= maxCommittableIndex c.pre.log :=
+    Nat.le_of_not_lt fun beyond =>
+      Nat.not_le_of_gt beyond
+        (signatureIndex_le_maxCommittableIndex
+          ((c.inv.frontier _ _ c.pre_now).2 (Nat.lt_of_le_of_lt (Nat.zero_le _) beyond)))
   have agree : c.post.log.take c.pre.commitIndex = c.pre.log.take c.pre.commitIndex := by
     rw [take_eq_of_prefix winning
         (by rw [List.length_take]; exact Nat.le_min.mpr ⟨committable, c.frontier_pre⟩),
