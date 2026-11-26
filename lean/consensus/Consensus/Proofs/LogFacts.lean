@@ -9,17 +9,17 @@ open Model.Node
 
 @[expose] public section
 
-/-- Relations over proof witnesses, not snapshots or positions in a run. -/
+/-- Relations over proof witnesses, not snapshots or positions in a run. Committed
+prefixes are not recorded: they are determined by the leader logs and observations
+(`Commit` in `SafetyInvariant.lean`). -/
 structure Ghost where
   seen : NodeID → Nat → List Entry → Prop
   grant : NodeID → NodeID → Nat → RequestVoteRequest → Prop
   elected : NodeID → Nat → List Entry → Nat → Prop
   canon : Nat → List Entry → Prop
-  committed : Nat → List Entry → Prop
 
 def empty : Ghost :=
-  ⟨fun _ _ _ => False, fun _ _ _ _ => False, fun _ _ _ _ => False,
-   fun _ _ => False, fun _ _ => False⟩
+  ⟨fun _ _ _ => False, fun _ _ _ _ => False, fun _ _ _ _ => False, fun _ _ => False⟩
 
 def requestAt (term : Nat) (log : List Entry) (commit : Nat) : RequestVoteRequest where
   term
@@ -46,15 +46,8 @@ def Ghost.canonNow (g : Ghost) (bootstrap : NodeID) (s : Model.State)
     (n : NodeID) (st : NodeState) (k : Nat) : Prop :=
   (n, st) ∈ s.nodes ∧ st.currentTerm = k ∧ st.role ≠ .candidate ∧ g.led bootstrap n k
 
-def Ghost.commitAt (g : Ghost) (bootstrap : NodeID) (s : Model.State)
-    (n : NodeID) (st : NodeState) (k base i : Nat) : Prop :=
-  g.canonNow bootstrap s n st k ∧ base ≤ i ∧ i ≤ st.log.length ∧
-    isSignatureAt st.log i = true ∧ termAt st.log i = k ∧
-    ∃ voters, hasQuorum ((activeConfigurations st.log base).filter (·.index ≤ i)) voters ∧
-      ∀ v ∈ voters, ∃ l, g.seen v k l ∧ st.log.take i <+: l
-
 /-- Initialisation has no incoming step; it can observe logs, but not grants or elections.
-New elections may count new grants. New commits may use only *old* committed backing. -/
+New elections may count new grants. -/
 def advance (bootstrap : NodeID) (g : Ghost) (prev : Option Model.State) (s : Model.State) : Ghost := Id.run do
   let g := { g with grant := fun v c k r => g.grant v c k r ∨
     ∃ p, prev = some p ∧ GrantAt p s v c k r ∧ (v = c ∨ ∃ l, g.seen c k l) }
@@ -62,14 +55,8 @@ def advance (bootstrap : NodeID) (g : Ghost) (prev : Option Model.State) (s : Mo
     ∃ p, prev = some p ∧ ElectionAt p s g.grant n k l i }
   let g := { g with seen := fun n k l => g.seen n k l ∨
     ∃ st, (n, st) ∈ s.nodes ∧ st.currentTerm = k ∧ st.log = l }
-  let g := { g with canon := fun k l => g.canon k l ∨
+  return { g with canon := fun k l => g.canon k l ∨
     ∃ n st, g.canonNow bootstrap s n st k ∧ st.log = l }
-  return { g with committed := fun k l => g.committed k l ∨
-    ∃ n st base i, g.commitAt bootstrap s n st k base i ∧ l = st.log.take i ∧
-      (base = 0 ∨ ∃ earlier part, g.committed earlier part ∧ earlier ≤ k ∧ st.log.take base <+: part) }
-
-def Origin (g : Ghost) : Prop :=
-  ∀ k p, g.committed k p → ∃ l, g.canon k l ∧ p <+: l
 
 /-- A canonical log has a leader in its term; no sending snapshot is required. -/
 def Owners (bootstrap : NodeID) (g : Ghost) : Prop :=
@@ -107,30 +94,6 @@ theorem winningPrefix_step {bootstrap g prev s} (old : WinningPrefix g)
     obtain ⟨p, i, elect, sub⟩ := wins n st k now gt
     exact ⟨n, p, i, elect, sub⟩
 
-def Complete (g : Ghost) : Prop :=
-  ∀ k p n t l i, g.committed k p → g.elected n t l i → k < t → p <+: l
-
-def Later (g : Ghost) : Prop :=
-  ∀ k t p l, g.committed k p → g.canon t l → k < t → p <+: l
-
-theorem later_of_complete {g : Ghost} (wins : WinningPrefix g) (complete : Complete g)
-    (signed : ∀ k p, g.committed k p →
-      Model.BOOTSTRAP_TERM ≤ k ∧ isSignatureAt p p.length = true)
-    (kept : ∀ {p l : List Entry}, p <+: l → isSignatureAt p p.length = true →
-      p <+: l.take (maxCommittableIndex l)) : Later g := by
-  intro k t p l commit canon lt
-  obtain ⟨floor, sig⟩ := signed k p commit
-  obtain ⟨n, e, i, elect, sub⟩ := wins t l canon (Nat.lt_of_le_of_lt floor lt)
-  exact (kept (complete k p n t e i commit elect lt) sig).trans sub
-
-theorem origin_step {bootstrap g prev s} (old : Origin g) :
-    Origin (advance bootstrap g prev s) := by
-  intro k p c
-  rcases c with past | ⟨n, st, _, i, step, rfl, _⟩
-  · obtain ⟨l, canon, sub⟩ := old _ _ past
-    exact ⟨l, Or.inl canon, sub⟩
-  · exact ⟨st.log, Or.inr ⟨n, st, step.1, rfl⟩, List.take_prefix ..⟩
-
 theorem chain_step {bootstrap g prev s} (old : Chain g)
     (grows : ∀ n st k, (advance bootstrap g prev s).canonNow bootstrap s n st k →
       ∀ l, (advance bootstrap g prev s).canon k l → l <+: st.log) :
@@ -142,22 +105,6 @@ theorem chain_step {bootstrap g prev s} (old : Chain g)
     | inl => exact old k a b past' past
     | inr => exact .inr (grows n st k now b (.inl past))
   | inr => exact .inl (grows n st k now a ca)
-
-/-- These are the inputs the original comparison proof actually uses. The same-term
-and different-term cases need no positions, witnesses' histories, or temporal induction. -/
-theorem comparable (g : Ghost)
-    (backed : Origin g) (chain : Chain g)
-    (later : Later g)
-    {k t p q} (hp : g.committed k p) (hq : g.committed t q) : p <+: q ∨ q <+: p := by
-  obtain ⟨a, ca, pa⟩ := backed k p hp
-  obtain ⟨b, cb, qb⟩ := backed t q hq
-  split_rel terms := (rcases Nat.lt_trichotomy k t with lt | rfl | gt) with
-  | inl => exact List.prefix_or_prefix_of_prefix (later _ _ _ _ hp cb lt) qb
-  | inr_inl =>
-    split_rel chain := (rcases chain k a b ca cb with sub | sub) with
-    | inl => exact List.prefix_or_prefix_of_prefix (pa.trans sub) qb
-    | inr => exact List.prefix_or_prefix_of_prefix pa (qb.trans sub)
-  | inr_inr => exact List.prefix_or_prefix_of_prefix pa (later _ _ _ _ hq ca gt)
 
 end
 end Consensus.Proofs.LogFacts
