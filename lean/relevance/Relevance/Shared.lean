@@ -402,11 +402,11 @@ partial def siteDisjuncts (inp : SharedIn) (ui : Nat) (at_ : SharedAt) (args : A
   if u.isRoot then
     let r? ← withExtended at_.lctx (xs ++ ys) do
       let mut conds := at_.conds
-      let mut extra := #[]
+      let mut extra := at_.condProps
       if let some c := cl then
         if (← frameWitness? c.premS).isSome then return none
         conds := conds ++ c.prems
-        extra := #[mkNot (mkAndN c.premS)]
+        extra := extra.push (mkNot (mkAndN c.premS))
       let (_, finish) ← closedPart inp ui at_.walking conds args extra eqs
       return some (← finish none)
     match r? with
@@ -421,13 +421,13 @@ partial def siteDisjuncts (inp : SharedIn) (ui : Nat) (at_ : SharedAt) (args : A
   for useCl in (if cl.isSome then [false, true] else [false]) do
     let r? ← withExtended at_.lctx (xs ++ ys) do
       let mut conds := at_.conds
-      let mut extra := #[]
+      let mut extra := at_.condProps
       if useCl then
         let c := cl.get!
         let premS ← premSOf inp c
         if (← frameWitness? premS).isSome then return none
         conds := conds ++ c.prems
-        extra := #[mkNot (mkAndN premS)]
+        extra := extra.push (mkNot (mkAndN premS))
       some <$> closedPart inp ui at_.walking conds args extra eqs
     let some (ms, finish) := r? |
       nFramed := nFramed + 1

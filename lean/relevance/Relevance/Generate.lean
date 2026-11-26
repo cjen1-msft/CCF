@@ -252,7 +252,7 @@ def analyse (cfg : Config) (roots : Array Name) : MetaM Result := do
                          stop := (if lvl == .other then tops else #[]) ++ cfg.derive,
                          unit := if cfg.shared then some { decl := root } else none }
       let st := { st with path := #[], calls := {}, inProgress := #[], stack := #[],
-                          condStack := #[], region := false }
+                          condStack := #[], condPropStack := #[], region := false }
       let (e, st) ← ((walk (v.beta xs)).run ctx).run st
       let lctx ← getLCtx
       let ur : UnitRec := { unit := { decl := root }, walked := true, params := xs, lctx,
@@ -278,7 +278,7 @@ def analyse (cfg : Config) (roots : Array Name) : MetaM Result := do
       if st.units.any (·.unit == u) then continue
       let pre := (st.sites.find? (·.callee == u)).bind (·.preArg)
       let st0 := { st with path := #[], calls := {}, inProgress := #[], stack := #[],
-                           condStack := #[], region := false }
+                           condStack := #[], condPropStack := #[], region := false }
       let (ur, st') ← ((walkUnit ctx u pre).run ctx).run st0
       st := { st' with units := st'.units.push ur }
   return { res with branches := st.branches, splits := st.splits,

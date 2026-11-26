@@ -142,3 +142,71 @@ example : RelevanceTests.Toy.Generated.sig { sent := [], high := 1 } (.send 1)
     { sent := [1], high := 1 } .bounded_inv_step_member_inl := by
   unfold_ns RelevanceTests.Toy.Generated
   simp [RelevanceTests.Toy.step]
+
+/-! Regression tests: splits without explicit equation hypotheses (`cases`, `rcases`, `induction`)
+retain the constructor discriminator on every arm. -/
+namespace RelevanceTests.Toy.Discr
+
+structure Step (_s _t : Nat) : Prop where
+  ok : True
+
+structure Inv (_s : Nat) : Prop where
+  ok : True
+
+namespace Proof
+
+theorem casesNoEq (s t : Nat) (_h : Step s t) : True := by
+  split_rel flag := (cases s) with
+  | zero => trivial
+  | succ => trivial
+
+theorem rcasesNoEq (s t : Nat) (_h : Step s t) : True := by
+  split_rel flag := (rcases s with _ | n) with
+  | zero => trivial
+  | succ => trivial
+
+theorem listInd (xs : List Nat) : True := by
+  split_rel items := (induction xs) with
+  | nil => trivial
+  | cons => trivial
+
+theorem viaListInd (s t : Nat) (_h : Step s t) : True :=
+  listInd (List.replicate s 0)
+
+end Proof
+
+end RelevanceTests.Toy.Discr
+
+#guard_msgs (drop info) in
+relevance_generate RelevanceTests.Toy.Discr.Generated
+  (scope := RelevanceTests.Toy.Discr.Proof) (package := [RelevanceTests.Toy.Discr])
+  (roots := [RelevanceTests.Toy.Discr.Proof.casesNoEq,
+             RelevanceTests.Toy.Discr.Proof.rcasesNoEq,
+             RelevanceTests.Toy.Discr.Proof.viaListInd])
+  (step := fun (s t : Nat) => RelevanceTests.Toy.Discr.Step s t)
+  (state := fun (s : Nat) => RelevanceTests.Toy.Discr.Inv s)
+  (shared := true) (requireRecorded := true)
+
+example : ¬ RelevanceTests.Toy.Discr.Generated.sig 1 1 .casesNoEq_flag_zero := by
+  unfold_ns RelevanceTests.Toy.Discr.Generated
+  simp
+
+example : RelevanceTests.Toy.Discr.Generated.sig 0 1 .casesNoEq_flag_zero := by
+  unfold_ns RelevanceTests.Toy.Discr.Generated
+  exact ⟨rfl, ⟨trivial⟩⟩
+
+example : ¬ RelevanceTests.Toy.Discr.Generated.sig 1 1 .rcasesNoEq_flag_zero := by
+  unfold_ns RelevanceTests.Toy.Discr.Generated
+  simp
+
+example : RelevanceTests.Toy.Discr.Generated.sig 0 1 .rcasesNoEq_flag_zero := by
+  unfold_ns RelevanceTests.Toy.Discr.Generated
+  exact ⟨⟨trivial⟩, rfl⟩
+
+example : ¬ RelevanceTests.Toy.Discr.Generated.sig 1 1 .listInd_items_nil := by
+  unfold_ns RelevanceTests.Toy.Discr.Generated
+  simp [List.replicate]
+
+example : RelevanceTests.Toy.Discr.Generated.sig 0 1 .listInd_items_nil := by
+  unfold_ns RelevanceTests.Toy.Discr.Generated
+  exact ⟨trivial, rfl⟩

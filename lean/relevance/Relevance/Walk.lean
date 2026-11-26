@@ -140,6 +140,7 @@ structure SharedAt where
   unit : WalkUnit
   lctx : LocalContext
   conds : Array Expr
+  condProps : Array Expr := #[]
   clause : Option Clause
   bound : Bool
   walking : Array FVarId
@@ -297,6 +298,8 @@ structure Ctx where
   walking : Array FVarId := #[]
   /-- The local variables in scope at the enclosing recorded split. -/
   atSplit : Std.HashSet FVarId := {}
+  /-- Discriminator propositions synthesized from eliminators inside the enclosing recorded split. -/
+  splitProps : Array Expr := #[]
   /-- Shared walk: the unit being walked, and whether it is a lemma (not a root). -/
   unit : Option WalkUnit := none
   lemmaUnit : Bool := false
@@ -306,6 +309,7 @@ structure St where
   curSplit : Nat := 0
   stack : Array Nat := #[]
   condStack : Array Expr := #[]
+  condPropStack : Array Expr := #[]
   path : Array String := #[]
   calls : Std.HashMap String Nat := {}
   inProgress : Array Name := #[]
@@ -836,11 +840,117 @@ partial def withLams (v : Expr) (k : Array Expr → Expr → M α) (acc : Array 
   | .mdata _ b => withLams b k acc
   | _ => k acc v
 
-/-- Where the shared walk is, with the conditions `conds` added to the enclosing ones. -/
-def sharedAt (conds : Array Expr) : M SharedAt := do
+/-- Where the shared walk is, with the conditions `conds` and synthesized propositions `condProps`
+added to the enclosing ones. -/
+def sharedAt (conds : Array Expr) (condProps : Array Expr := #[]) : M SharedAt := do
   let ctx ← read
-  return { unit := ctx.unit.getD default, lctx := ← getLCtx, conds := (← get).condStack ++ conds,
+  return { unit := ctx.unit.getD default, lctx := ← getLCtx,
+           conds := (← get).condStack ++ conds,
+           condProps := (← get).condPropStack ++ condProps,
            clause := ctx.clause, bound := !ctx.bound.isEmpty, walking := ctx.walking }
+
+structure SplitElimMinor where
+  argIdx : Nat
+  ctor : Name
+  nfields : Nat
+
+structure SplitElimInfo where
+  major : Expr
+  params : Array Expr
+  indices : Array Expr
+  indLevels : List Lean.Level
+  isPropInd : Bool
+  minors : Array SplitElimMinor
+
+/-- Eliminator metadata needed to synthesize missing constructor/index equalities inside a
+recorded split region (for splitters like `induction` or `rcases` that do not introduce an
+equality binder). -/
+def splitElimInfo? (c : Name) (args : Array Expr) : MetaM (Option SplitElimInfo) := do
+  let env ← getEnv
+  if c == ``Nat.casesAuxOn && args.size ≥ 4 then
+    return some {
+      major := args[1]!, params := #[], indices := #[], indLevels := [], isPropInd := false,
+      minors := #[{ argIdx := 2, ctor := ``Nat.zero, nfields := 0 },
+                  { argIdx := 3, ctor := ``Nat.succ, nfields := 1 }] }
+  if c == ``Nat.recAux && args.size ≥ 4 then
+    return some {
+      major := args[3]!, params := #[], indices := #[], indLevels := [], isPropInd := false,
+      minors := #[{ argIdx := 1, ctor := ``Nat.zero, nfields := 0 },
+                  { argIdx := 2, ctor := ``Nat.succ, nfields := 1 }] }
+  let isRec := match env.find? c with | some (.recInfo _) => true | _ => false
+  let isElim := isCasesOnRecursor env c || isRecOnRecursor env c
+  unless isRec || isElim do return none
+  let ind := c.getPrefix
+  let some (.inductInfo iv) := env.find? ind | return none
+  if iv.ctors.length < 2 then return none
+  let (majorIdx, firstIdx, minors) ←
+    if isRec then
+      let some (.recInfo ri) := env.find? c | return none
+      let firstMinor := ri.getFirstMinorIdx
+      let ms := ri.rules.toArray.zipIdx.map fun (rule, j) =>
+        { argIdx := firstMinor + j, ctor := rule.ctor, nfields := rule.nfields : SplitElimMinor }
+      pure (ri.getMajorIdx, ri.getFirstIndexIdx, ms)
+    else
+      let majorIdx := iv.numParams + 1 + iv.numIndices
+      let firstMinor := majorIdx + 1
+      let mut ms := #[]
+      for (ctor, j) in iv.ctors.toArray.zipIdx do
+        let some (.ctorInfo cv) := env.find? ctor | return none
+        ms := ms.push { argIdx := firstMinor + j, ctor, nfields := cv.numFields }
+      pure (majorIdx, iv.numParams + 1, ms)
+  if args.size ≤ majorIdx then return none
+  if minors.any (·.argIdx ≥ args.size) then return none
+  let major := args[majorIdx]!
+  let params := args.extract 0 iv.numParams
+  let indices := args.extract firstIdx majorIdx
+  let majorTy ← whnf (← inferType major)
+  let indLevels := match majorTy.getAppFn with | .const _ ls => ls | _ => []
+  let isPropInd ← try isProof major catch _ => pure false
+  return some { major, params, indices, indLevels, isPropInd, minors }
+
+/-- Build constructor/index equalities for minor `ctor` applied to `fields`. -/
+def discrProps (info : SplitElimInfo) (ctor : Name) (fields : Array Expr) :
+    MetaM (Array Expr) := do
+  let ctorApp := mkAppN (mkConst ctor info.indLevels) (info.params ++ fields)
+  let mut out := #[]
+  if !info.isPropInd then
+    let majorTy ← inferType info.major
+    let ctorTy ← inferType ctorApp
+    let eq ← if info.indices.isEmpty || (← withNewMCtxDepth (isDefEq majorTy ctorTy)) then
+        mkEq info.major ctorApp
+      else
+        mkHEq info.major ctorApp
+    out := out.push eq
+  else if !info.indices.isEmpty then
+    let ctorTy ← whnf (← inferType ctorApp)
+    let ctorArgs := ctorTy.getAppArgs
+    if ctorArgs.size ≥ info.params.size + info.indices.size then
+      let ctorIdxs := ctorArgs.extract info.params.size (info.params.size + info.indices.size)
+      for (idx, cidx) in info.indices.zip ctorIdxs do
+        if idx == cidx then continue
+        if ← (try isProof idx catch _ => pure false) then continue
+        let idxTy ← inferType idx
+        let cidxTy ← inferType cidx
+        let eq ← if ← withNewMCtxDepth (isDefEq idxTy cidxTy) then
+            mkEq idx cidx
+          else
+            mkHEq idx cidx
+        out := out.push eq
+  return out
+
+private def isTrivialEq (ty : Expr) : Bool :=
+  match ty.eq? with
+  | some (_, lhs, rhs) => lhs == rhs
+  | none =>
+    match ty.heq? with
+    | some (_, lhs, _, rhs) => lhs == rhs
+    | none => false
+
+private def hasDefEqProp (tys : Array Expr) (ty : Expr) : MetaM Bool := do
+  for t in tys do
+    if t == ty then return true
+    if ← (try withNewMCtxDepth (isDefEq t ty) catch _ => pure false) then return true
+  return false
 
 /-- Shared walk: the theorem in scope at the head of `e` (through `let`-bound proofs), with its
 proof and arguments, when `e` reduces through it to an application of constructor `ctor`. -/
@@ -1074,8 +1184,36 @@ partial def walkApp (e : Expr) : M Expr := do
           root := (← read).root, path := (← get).path, decl := ← curDecl, head := c,
           major := ← oneLine major, cond := ← oneLine p, internal }
         modify fun st => { st with unrecorded := st.unrecorded.push rec_ }
+    if (← get).region then
+      if let some info ← (try splitElimInfo? c args catch _ => pure none) then
+        let mut out := #[]
+        for (a, i) in args.zipIdx do
+          if let some m := info.minors.find? (·.argIdx == i) then
+            if hasBranchMark a then
+              out := out.push (← walkElimMinor info m a)
+              continue
+          out := out.push (← walk a)
+        return mkAppN f out
     return mkAppN f (← walkArgs args)
   | _ => return mkAppN (← walk f) (← walkArgs args)
+
+/-- Walk a minor premise of an eliminator inside a recorded split region, peeling its constructor
+fields so that missing constructor/index equalities are attached to `splitProps`. -/
+partial def walkElimMinor (info : SplitElimInfo) (m : SplitElimMinor) (e : Expr) : M Expr :=
+  go e m.nfields #[]
+where
+  go (e : Expr) (rem : Nat) (fields : Array Expr) : M Expr := do
+    if rem == 0 then
+      let ps ← try discrProps info m.ctor fields catch ex => do
+        logWarning m!"relevance: could not build discriminator for {m.ctor}: {ex.toMessageData}"
+        pure #[]
+      return ← withReader (fun c => { c with splitProps := c.splitProps ++ ps }) (walk e)
+    match e with
+    | .mdata _ b => go b rem fields
+    | .lam n t b bi => withLocalDecl n bi t fun x => do
+      let r ← go (b.instantiate1 x) (rem - 1) (fields.push x)
+      mkLambdaFVars #[x] r
+    | _ => walk e
 
 /-- Shared walk: record a call of unit `callee` (proof `v`) with `args` at this point. Data
 arguments are walked here; a proof argument is walked here when the callee's proof uses it (or,
@@ -1124,7 +1262,7 @@ partial def walkSplit (name coveredBy p : Expr) : M Expr := do
     region := true, curSplit := id, splits := st.splits.push rec_
     chains := st.chains.insert id chains }
   let atSplit := (← getLCtx).foldl (init := {}) fun s d => s.insert d.fvarId
-  try withReader (fun c => { c with atSplit }) (walk p)
+  try withReader (fun c => { c with atSplit, splitProps := #[] }) (walk p)
   finally modify fun s => { s with region := st.region, curSplit := st.curSplit }
 
 /-- Generate a lemma `∀ root binders, ∀ telescope, goal` proved by `body`; record it. -/
@@ -1257,10 +1395,35 @@ partial def walkBranch (f α tag dead p : Expr) : M Expr := do
   unless deadE.isConstOf ``Bool.false ||
       (dead && body.isAppOfArity ``False.elim 2) do
     throwError "relevance: branch {st.splits[splitId]!.name}/{tag} has an uncertified dead flag"
-  let condStrs ← conds.mapM fun c => do oneLine (← inferType c)
-  let id := st.branches.size
   let ctx ← read
-  let sharedHere ← if ctx.unit.isSome then some <$> sharedAt conds else pure none
+  -- Also collect unmarked Prop hypotheses introduced by the splitter's eliminators (for example
+  -- `h : s = 0` that `cases` substituted and cleared from the tactic context), and any remaining
+  -- synthesized constructor/index equalities for eliminators without an equality binder.
+  let mut seenTys : Array Expr := #[]
+  for c in conds do
+    seenTys := seenTys.push (← zetaAll (← inferType c))
+  let lctx ← getLCtx
+  for d in lctx do
+    if ctx.atSplit.contains d.fvarId || d.isImplementationDetail then continue
+    if d.isLet (allowNondep := true) then continue
+    if conds.any (· == d.toExpr) then continue
+    unless ← isProp d.type do continue
+    let ty ← zetaAll d.type
+    if isTrivialEq ty then continue
+    if ← hasDefEqProp seenTys ty then continue
+    conds := conds.push d.toExpr
+    seenTys := seenTys.push ty
+  let mut condProps : Array Expr := #[]
+  for p in ctx.splitProps do
+    let ty ← zetaAll p
+    if isTrivialEq ty then continue
+    if ← hasDefEqProp seenTys ty then continue
+    condProps := condProps.push ty
+    seenTys := seenTys.push ty
+  let condStrs := (← conds.mapM fun c => do oneLine (← inferType c)) ++
+    (← condProps.mapM fun p => oneLine p)
+  let id := st.branches.size
+  let sharedHere ← if ctx.unit.isSome then some <$> sharedAt conds condProps else pure none
   let rec_ : BranchRec := {
     root := ctx.root, level := ctx.level, path := st.path, decl := ← curDecl,
     split := st.splits[splitId]!.name, tag, dead, splitId,
@@ -1271,13 +1434,17 @@ partial def walkBranch (f α tag dead p : Expr) : M Expr := do
   modify fun s => { s with splits := s.splits.modify splitId fun r =>
     { r with branches := r.branches.push id } }
   let outer := (← get).condStack
+  let outerProps := (← get).condPropStack
   -- shared walk of a lemma: the predicate is computed from the call sites (`Shared.lean`)
   if ctx.lemmaUnit then
     modify fun s => { s with
       branches := s.branches.modify id fun b => { b with role := "shared" },
-      region := false, stack := s.stack.push id, condStack := s.condStack ++ conds }
-    let body' ← try walk body finally
-      modify fun s => { s with region := st.region, stack := st.stack, condStack := outer }
+      region := false, stack := s.stack.push id,
+      condStack := s.condStack ++ conds,
+      condPropStack := s.condPropStack ++ condProps }
+    let body' ← try withReader (fun c => { c with splitProps := #[] }) (walk body) finally
+      modify fun s => { s with region := st.region, stack := st.stack,
+                               condStack := outer, condPropStack := outerProps }
     return mkApp4 f α (mkStrLit tag) deadE (condApps.foldr (·.app ·) body')
   -- predicate: conditions of all enclosing branches (still in scope) and this one
   let compute (cs extra : Array Expr) : M (Option (Expr × Tele)) := do
@@ -1287,9 +1454,10 @@ partial def walkBranch (f α tag dead p : Expr) : M Expr := do
   -- the telescope of the branch lemma, with the extra conjuncts of the predicate
   let mut lemmaConds : Option (Array Expr × Array Expr) := none
   let mut frame : Option (Array Expr × Array Expr) := none
+  let allProps := outerProps ++ condProps
   let (role, pred) ← match ctx.level, ctx.clause with
       | .step, some cl =>
-        let extra := #[mkNot (mkAndN cl.premS)]
+        let extra := allProps.push (mkNot (mkAndN cl.premS))
         lemmaConds := some (outer ++ conds ++ cl.prems, extra)
         if let some ws ← frameWitness? cl.premS then
           frame := some (cl.premS, ws)
@@ -1297,13 +1465,13 @@ partial def walkBranch (f α tag dead p : Expr) : M Expr := do
         else if dead then pure ("effect", none)
         else pure ("effect", ← compute (outer ++ conds ++ cl.prems) extra)
       | .step, none =>
-        lemmaConds := some (outer ++ conds, #[])
+        lemmaConds := some (outer ++ conds, allProps)
         if ctx.bound.isEmpty then
-          pure ("step-own", ← if dead then pure none else compute (outer ++ conds) #[])
+          pure ("step-own", ← if dead then pure none else compute (outer ++ conds) allProps)
         else pure ("unattributed", none)
       | .state, _ =>
-        lemmaConds := some (outer ++ conds, #[])
-        pure ("state", ← if dead then pure none else compute (outer ++ conds) #[])
+        lemmaConds := some (outer ++ conds, allProps)
+        pure ("state", ← if dead then pure none else compute (outer ++ conds) allProps)
       | _, _ => pure ("other", none)
   let predStr ← match pred with
     | some (e, _) => oneLine e
@@ -1321,9 +1489,12 @@ partial def walkBranch (f α tag dead p : Expr) : M Expr := do
   if let some t := tele? then modify fun s => { s with teles := s.teles.insert id (t, stmt) }
   modify fun s => { s with
     branches := s.branches.modify id fun b => { b with pred := pred.map (·.1), predStr, role },
-    region := false, stack := s.stack.push id, condStack := s.condStack ++ conds }
-  let body' ← try walk body finally
-    modify fun s => { s with region := st.region, stack := st.stack, condStack := outer }
+    region := false, stack := s.stack.push id,
+    condStack := s.condStack ++ conds,
+    condPropStack := s.condPropStack ++ condProps }
+  let body' ← try withReader (fun c => { c with splitProps := #[] }) (walk body) finally
+    modify fun s => { s with region := st.region, stack := st.stack,
+                             condStack := outer, condPropStack := outerProps }
   let rebuiltMark := mkApp4 f α (mkStrLit tag) deadE (condApps.foldr (·.app ·) body')
   let ns := ctx.cfg.ns
   if ns.isAnonymous || ctx.unit.isSome then return rebuiltMark
@@ -1336,7 +1507,7 @@ partial def walkBranch (f α tag dead p : Expr) : M Expr := do
   -- branch lemma: proved by the rebuilt body if it closes over the telescope, else by the
   -- original body
   let bodies := if body' == body then #[(body, false)] else #[(body', true), (body, false)]
-  let extraL := if pred.isSome && role == "effect" then extra else #[]
+  let extraL := if pred.isSome then extra else #[]
   let out ← match ← tieLemma id "branch" (ns ++ Name.mkSimple s!"branch_{id}") tele α bodies
       extraL with
     | some (name, args) =>
