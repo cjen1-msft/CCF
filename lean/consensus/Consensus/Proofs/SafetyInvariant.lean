@@ -5471,18 +5471,23 @@ private theorem makeRequestVoteRequest_eq (state : NodeState)
     : makeRequestVoteRequest state = vals state.currentTerm state.log state.commitIndex :=
   rfl
 
-/-- A candidate's own log is up to date for its vote request. -/
-private theorem vals_upToDate {state : NodeState} (term : Nat)
+/-- A candidate's own vote request ranks at least as high as its log. -/
+private theorem vals_outranks {state : NodeState} (term : Nat)
     (sorted : state.log.Pairwise fun first second => first.term <= second.term)
     (frontier : state.commitIndex <= state.log.length)
-    : voteLogUpToDate state (vals term state.log state.commitIndex) := by
-  have mono : maxCommittableTerm state.log
-      <= termAt state.log (max state.commitIndex (maxCommittableIndex state.log)) :=
-    termAt_mono sorted (Nat.le_max_right _ _)
-      (Nat.max_le.mpr ⟨frontier, maxCommittableIndexBounded state.log⟩)
-  split_rel lt_or_eq_of_le := (rcases Nat.lt_or_eq_of_le mono with lt | eq) with
-  | inl => exact Or.inl lt
-  | inr => exact Or.inr ⟨eq, Nat.le_max_right _ _⟩
+    : LogFacts.Outranks (vals term state.log state.commitIndex) state.log :=
+  ⟨termAt_mono sorted (Nat.le_max_right _ _)
+      (Nat.max_le.mpr ⟨frontier, maxCommittableIndexBounded state.log⟩),
+    fun _ => Nat.le_max_right _ _⟩
+
+/-- A vote request that a log is up to date for ranks at least as high as the log. -/
+private theorem outranks_of_upToDate {state : NodeState} {request : RequestVoteRequest}
+    (upToDate : voteLogUpToDate state request)
+    : LogFacts.Outranks request state.log := by
+  simp only [voteLogUpToDate, CCF.TxID.le] at upToDate
+  split_rel up_to_date := (rcases upToDate with lt | ⟨eq, le⟩) with
+  | inl => exact ⟨Nat.le_of_lt lt, fun same => absurd same (Nat.ne_of_lt lt)⟩
+  | inr => exact ⟨Nat.le_of_eq eq, fun _ => le⟩
 
 end Consensus.Proofs.Safety
 
@@ -5607,14 +5612,8 @@ private theorem rankAtGrant {v n t r k l i}
     have rank := termAt_mono (c.inv.sorted v st preMem) index (maxCommittableIndexBounded _)
     rw [termAt_of_prefix sub bound, termAt_take Nat.le.refl, atI] at rank
     change k ≤ maxCommittableTerm st.log at rank
-    simp only [voteLogUpToDate, CCF.TxID.le] at up
-    left
-    unfold VoteRank
-    split_rel up_to_date := (rcases up with lt | ⟨eq, le⟩) with
-    | inl =>
-      exact ⟨Nat.le_of_lt (Nat.lt_of_le_of_lt rank lt),
-        fun same => absurd (same ▸ rank) (Nat.not_le_of_gt lt)⟩
-    | inr => exact ⟨Nat.le_trans rank (Nat.le_of_eq eq), fun _ => Nat.le_trans index le⟩
+    exact .inl ⟨Nat.le_trans rank up.1,
+      fun same => Nat.le_trans index (up.2 (Nat.le_antisymm up.1 (same ▸ rank)))⟩
   | inr =>
     obtain ⟨e, l', lo, hi, canon, missing⟩ := lost
     exact .inr ⟨e, l', atI ▸ lo, Nat.le_trans hi le, canon, missing⟩
@@ -5674,7 +5673,7 @@ private theorem self_granted {term : Nat} (le : c.pre.currentTerm <= term)
       le,
       termEq,
       voted,
-      vals_upToDate term c.pre_sorted c.frontier_pre
+      vals_outranks term c.pre_sorted c.frontier_pre
     ⟩,
     Or.inl rfl
   ⟩
@@ -7339,7 +7338,8 @@ private theorem new_message {envelope : Model.Envelope} (new : envelope ∈ c.se
       rw [sourceEq]
       obtain ⟨o, seen, atT⟩ := seen
       exact .inr ⟨f.current, rfl, ⟨c.pre, c.post, c.tr.pre_mem,
-        c.tr.post_mem, c.term_le, rfl, voted, upToDate⟩, .inr ⟨o.log, atT ▸ seen⟩⟩
+        c.tr.post_mem, c.term_le, rfl, voted, outranks_of_upToDate upToDate⟩,
+        .inr ⟨o.log, atT ▸ seen⟩⟩
   | requestPreVoteRequest => simp only [MessageOK, h]
   | requestPreVoteResponse => simp only [MessageOK, h]
   | proposeRequestVoteRequest => simp only [MessageOK, h]

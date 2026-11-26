@@ -28,9 +28,17 @@ def requestAt (term : Nat) (log : List Entry) (commit : Nat) : RequestVoteReques
   lastCommittableTerm := termAt log (max commit (maxCommittableIndex log))
   lastCommittableIndex := max commit (maxCommittableIndex log)
 
+/-- The request ranks at least as high as `log`: its last committable term is no earlier,
+and at equal terms its last committable index is no earlier. This is `voteLogUpToDate` as
+a bound and an implication. -/
+def Outranks (r : RequestVoteRequest) (log : List Entry) : Prop :=
+  maxCommittableTerm log ≤ r.lastCommittableTerm ∧
+    (maxCommittableTerm log = r.lastCommittableTerm →
+      maxCommittableIndex log ≤ r.lastCommittableIndex)
+
 def GrantAt (s t : Model.State) (v c : NodeID) (k : Nat) (r : RequestVoteRequest) : Prop :=
   ∃ x y, (v, x) ∈ s.nodes ∧ (v, y) ∈ t.nodes ∧ x.currentTerm ≤ k ∧
-    y.currentTerm = k ∧ y.votedFor = some c ∧ voteLogUpToDate x r
+    y.currentTerm = k ∧ y.votedFor = some c ∧ Outranks r x.log
 
 def ElectionAt (s t : Model.State) (grants : NodeID → NodeID → Nat → RequestVoteRequest → Prop)
     (n : NodeID) (k : Nat) (log : List Entry) (commit : Nat) : Prop :=
