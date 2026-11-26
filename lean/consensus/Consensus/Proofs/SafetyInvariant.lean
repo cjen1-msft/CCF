@@ -600,20 +600,22 @@ private theorem preserve {s t : Model.State} {g : Ghost} (prior : Inv s g)
       exact keep termEq c (prior.keeps b old a pre (eq.trans termEq.symm) c v)
   refine ⟨fun _ h _ mem => (current h mem).1, fun _ h _ mem => (current h mem).2, ?_⟩
   intro n k a b left right
-  have compare {x y : NodeID} (left : ⟨n, k, some x⟩ ∈ advance g t)
-      {st : NodeState} (mem : (n, st) ∈ t.nodes) (term : st.currentTerm = k)
-      (vote : st.votedFor = some y) : x = y :=
-    Option.some.inj (((current left mem).2 term.symm _ rfl).symm.trans vote)
-  split_rel right := (rcases mem_advance.1 right with ⟨n', st, mem, eq⟩ | oldR) with
-  | inl =>
-    obtain rfl : n' = n := congrArg Stamp.voter eq
-    exact compare left mem (congrArg Stamp.term eq) (congrArg Stamp.vote eq)
-  | inr =>
-    split_rel left := (rcases mem_advance.1 left with ⟨n', st, mem, eq⟩ | oldL) with
-    | inl =>
-      obtain rfl : n' = n := congrArg Stamp.voter eq
-      exact (compare right mem (congrArg Stamp.term eq) (congrArg Stamp.vote eq)).symm
-    | inr => exact prior.unique n k a b oldL oldR
+  -- A voter now in term `k` has one current vote, which both stamps name. Otherwise
+  -- neither stamp is of its current state, so both are old.
+  split_rel voting := (by_cases voting : ∃ st, (n, st) ∈ t.nodes ∧ st.currentTerm = k) with
+  | pos =>
+    obtain ⟨st, mem, term⟩ := voting
+    have first := (current left mem).2 term.symm a rfl
+    have second := (current right mem).2 term.symm b rfl
+    exact Option.some.inj (first.symm.trans second)
+  | neg =>
+    have old {x : NodeID} (stamp : ⟨n, k, some x⟩ ∈ advance g t) : ⟨n, k, some x⟩ ∈ g := by
+      split_rel stamp := (rcases mem_advance.1 stamp with ⟨n', st, mem, eq⟩ | old) with
+      | inl =>
+        obtain rfl : n' = n := congrArg Stamp.voter eq
+        exact absurd ⟨st, mem, congrArg Stamp.term eq⟩ voting
+      | inr => exact old
+    exact prior.unique n k a b (old left) (old right)
 
 private theorem initial (s : Model.State)
     (uniqueNow : ∀ n a b, (n, a) ∈ s.nodes → (n, b) ∈ s.nodes → a = b) :
