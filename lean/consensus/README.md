@@ -130,7 +130,7 @@ A theorem proved in any other module reaches it as an axiom without a value, so 
 [`hidden-proofs.lean`](../consensus-coverage/scripts/hidden-proofs.lean) fails if any `Consensus.Proofs` constant in the kernel closure of the four roots has no visible body.
 Its one named exception is the derived decidable equality on ballot stamps, which stays beside `VoteFacts.Stamp`.
 
-The current generator emits 268 step questions and 2 state questions (272 coordinates with both endpoints), and `Inv` has 23 clauses.
+The current generator emits 255 step questions and 2 state questions (259 coordinates with both endpoints), and `Inv` has 23 clauses.
 The exact family, witness, and support results below were checked on the earlier schema of 516 step questions, 16 state questions (548 coordinates) and 30 clauses; the `ConsensusCoverage` modules that prove them have not yet been ported to the current schema.
 Historical search statistics are indicated separately.
 
