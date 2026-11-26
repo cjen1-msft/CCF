@@ -3549,45 +3549,42 @@ private theorem electIfQuorum_sends (candidate : NodeState)
   exact Sends.mono (becomePrimary_sends self candidate) fun _ _ done =>
     Or.inr ⟨won.1, won.2.1, done⟩
 
-private theorem becomeCandidate_sends (state : NodeState)
+/-- Electing on a quorum leaves the candidate unchanged or makes it the leader. -/
+private theorem electIfQuorum_result (before candidate : NodeState)
+    : Sends (fun state sent => CampaignResult self before candidate state sent)
+        (electIfQuorum (Capabilities.record self : Caps) self candidate) := by
+  unfold electIfQuorum
+  refine Sends.ite' (fun won => ?_) fun _ => Sends.pure' (Or.inl ⟨rfl, by simp⟩)
+  exact Sends.mono (becomePrimary_sends self candidate) fun _ _ ⟨advance, started⟩ =>
+    Or.inr ⟨won.2.1, advance, fun e member => Or.inl (started e member)⟩
+
+/-- A fresh candidate also broadcasts its vote request. -/
+private theorem becomeCandidate_result (state : NodeState)
+    (before : NodeState) (term : state.currentTerm = before.currentTerm)
     : Sends
         (fun next sent =>
-          ((next = freshCandidate self state
-              /\ forall e,
-                  e ∈ sent
-                  -> e.source = self
-                      /\ e.payload
-                          = .requestVoteRequest
-                              (makeRequestVoteRequest (freshCandidate self state)))
-            \/ (hasQuorum ((freshCandidate self state).activeConfigurations) {self}
-                /\ Advance self (primaryState (freshCandidate self state)) next
-                /\ forall e,
-                    e ∈ sent
-                    -> LeaderStart self (state.currentTerm + 1) next e
-                        \/ (e.source = self
-                            /\ e.payload
-                                = .requestVoteRequest
-                                    (makeRequestVoteRequest
-                                      (freshCandidate self state))))))
+          CampaignResult self before (freshCandidate self state) next sent)
         (becomeCandidate (Capabilities.record self : Caps) state self) := by
   unfold becomeCandidate
   refine Sends.bind' (electIfQuorum_sends self (freshCandidate self state))
     fun next sent elected => ?_
   refine Sends.bind' (broadcast_sends self _ _) fun _ later requests => Sends.pure' ?_
   simp only [List.append_nil]
+  have lt : before.currentTerm < (freshCandidate self state).currentTerm := by
+    simp [freshCandidate, term]
   split_rel elected := (rcases elected with ⟨nextEq, sentEq⟩ | ⟨_, quorum, advance, started⟩) with
   | inl =>
     subst nextEq sentEq
     exact Or.inl ⟨rfl, fun e member => by
       have := requests e (by simpa using member)
-      exact ⟨this.1, this.2.2⟩⟩
+      exact ⟨this.1, this.2.2, lt⟩⟩
   | inr =>
-    refine Or.inr ⟨by simpa [freshCandidate] using quorum, advance, fun e member => ?_⟩
+    refine Or.inr ⟨quorum, advance, fun e member => ?_⟩
     split_rel mem_append := (rcases List.mem_append.mp member with old | new) with
-    | inl => exact Or.inl (by simpa [freshCandidate] using started e old)
+    | inl => exact Or.inl (started e old)
     | inr =>
       have := requests e new
-      exact Or.inr ⟨this.1, this.2.2⟩
+      exact Or.inr ⟨this.1, this.2.2, lt⟩
 
 end Effects
 end Consensus.Proofs.Safety
@@ -3770,25 +3767,6 @@ open CCF
 open Model.Node
 section Election
 variable (self : NodeID)
-
-private theorem becomeCandidate_result (state : NodeState)
-    (before : NodeState) (term : state.currentTerm = before.currentTerm)
-    : Sends
-        (fun next sent =>
-          CampaignResult self before (freshCandidate self state) next sent)
-        (becomeCandidate (Capabilities.record self : Caps) state self) := by
-  refine Sends.mono (becomeCandidate_sends self state) fun next sent done => ?_
-  have lt : before.currentTerm < (freshCandidate self state).currentTerm := by
-    simp [freshCandidate, term]
-  split_rel done := (rcases done with ⟨same, requests⟩ | ⟨quorum, advance, started⟩) with
-  | inl =>
-    subst same
-    exact Or.inl ⟨rfl, fun e member => ⟨(requests e member).1, (requests e member).2, lt⟩⟩
-  | inr =>
-    refine Or.inr ⟨by simpa [freshCandidate] using quorum, advance, fun e member => ?_⟩
-    split_rel started := (rcases started e member with start | ⟨source, payload⟩) with
-    | inl => exact Or.inl start
-    | inr => exact Or.inr ⟨source, payload, lt⟩
 
 /-- A node that can start an election has a ledger, so it is engaged. -/
 private theorem canStartElection_engaged {state : NodeState} {self : NodeID}
@@ -4070,21 +4048,6 @@ private theorem initAsBackup_summary (before : NodeState) (entries : List Entry)
     | pos => simpa [becomeAwareOfNewTerm, zero, termZero] using eq
     | neg => simp [becomeAwareOfNewTerm, zero, termZero] at same
 
-private theorem elect_result {before candidate after : NodeState}
-    {sent : List Model.Envelope}
-    (elected
-      : (after = candidate /\ sent = [])
-        \/ (candidate.role = .candidate
-            /\ hasQuorum (candidate.activeConfigurations) candidate.votesGranted
-            /\ Advance self (primaryState candidate) after
-            /\ forall e, e ∈ sent -> LeaderStart self candidate.currentTerm after e))
-    : CampaignResult self before candidate after sent := by
-  split_rel elected := (rcases elected with ⟨stateEq, sentEq⟩ | ⟨_, quorum, advance, started⟩) with
-  | inl =>
-    subst stateEq sentEq
-    exact Or.inl ⟨rfl, by simp⟩
-  | inr => exact Or.inr ⟨quorum, advance, fun e member => Or.inl (started e member)⟩
-
 private theorem voteResponse_summary (before : NodeState) (source : NodeID)
     (response : RequestVoteResponse)
     : Sends
@@ -4121,8 +4084,8 @@ private theorem voteResponse_summary (before : NodeState) (source : NodeID)
         subst same
         exact Or.inr ⟨response, rfl, won.2.1, won.2.2⟩
       | inr => exact Or.inl old
-    exact Sends.mono (electIfQuorum_sends self _) fun after sent elected =>
-      campaign_summary campaign (elect_result self elected)
+    exact Sends.mono (electIfQuorum_result self before _) fun after sent result =>
+      campaign_summary campaign result
 
 private theorem preVoteResponse_summary (before : NodeState) (source : NodeID)
     (response : RequestVoteResponse)
