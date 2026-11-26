@@ -277,14 +277,14 @@ private def Campaign (self : NodeID) (before : NodeState) (event : Event)
         /\ candidate.votesGranted = {self})
       \/ (before.role = .candidate
           /\ candidate.currentTerm = before.currentTerm
-          /\ (candidate.votedFor = before.votedFor \/ before.votedFor = none)
+          /\ (before.votedFor = none \/ before.votedFor = candidate.votedFor)
           /\ forall voter,
               voter ∈ candidate.votesGranted
-              -> voter ∈ before.votesGranted
-                  \/ exists response,
-                      event = .receive voter (.requestVoteResponse response)
-                      /\ response.term = before.currentTerm
-                      /\ response.voteGranted = true))
+              -> Not (voter ∈ before.votesGranted)
+              -> exists response,
+                  event = .receive voter (.requestVoteResponse response)
+                  /\ response.term = before.currentTerm
+                  /\ response.voteGranted = true))
 
 /-- The events on which a node can win an election: an election timeout, a vote, a
 pre-vote that starts a won campaign, or a proposal to campaign. -/
@@ -417,13 +417,14 @@ private structure Summary (self : NodeID) (before : NodeState) (event : Event)
   matchIndex
     : after.role = .primary -> before.role = .primary
       -> after.currentTerm = before.currentTerm
-      -> forall peer,
-          after.matchIndex peer = before.matchIndex peer
-          \/ exists response,
-              event = .receive peer (.appendEntriesResponse response)
+      -> after.matchIndex = before.matchIndex
+          \/ exists source response,
+              event = .receive source (.appendEntriesResponse response)
               /\ response.success = true
               /\ response.term = before.currentTerm
-              /\ after.matchIndex peer = response.lastLogIndex
+              /\ after.matchIndex
+                  = Function.update before.matchIndex source
+                      (max (before.matchIndex source) response.lastLogIndex)
   kind : Kind self before event after
   sends : forall envelope, envelope ∈ sent -> SendOK self before event after envelope
 
@@ -3624,9 +3625,9 @@ private theorem campaign_summary {self : NodeID} {before candidate after : NodeS
     split_rel campaign := (rcases campaign.2.2.2 with fresh | kept) with
     | inl => exact (Nat.succ_ne_self _ (fresh.2.1.symm.trans same)).elim
     | inr =>
-      split_rel kept := (rcases kept.2.2.1 with eq | none) with
-      | inl => rw [eq]; exact votedEq
-      | inr => rw [none] at votedEq; cases votedEq
+      split_rel kept := (rcases kept.2.2.1 with none | eq) with
+      | inl => rw [none] at votedEq; cases votedEq
+      | inr => rw [← eq]; exact votedEq
   unfold CampaignResult at result
   split_rel result := (rcases result with ⟨afterEq, requests⟩ | ⟨quorum, advance, started⟩) with
   | inl =>
@@ -3706,12 +3707,12 @@ private theorem quiet_summary {self : NodeID} {before after : NodeState}
           ⟨
             role ▸ candidate,
             term,
-            Or.inl voted,
-            fun voter member => Or.inl (votes ▸ member)
+            Or.inr voted.symm,
+            fun voter member fresh => absurd (votes ▸ member) fresh
           ⟩
       ⟩,
     fun leader => Or.inl ⟨role ▸ leader, term⟩,
-    fun _ _ _ peer => Or.inl (congrFun matchEq peer),
+    fun _ _ _ => Or.inl matchEq,
     Kind.same log commit,
     sends
   ⟩
@@ -3934,16 +3935,13 @@ private theorem voteRequest_summary (before : NodeState) (source : NodeID)
       rename_i granted
       simp only [decide_eq_true_eq] at granted
       refine ⟨Nat.le.refl, fun _ voted votedEq => ?_, fun _ => Or.inr (Or.inr (Or.inl active)),
-        fun candidate => ⟨candidate, rfl, rfl, Or.inr ⟨candidate, rfl, ?_,
-          fun voter member => Or.inl member⟩⟩,
-        fun leader => Or.inl ⟨leader, rfl⟩, fun _ _ _ _ => Or.inl rfl, Kind.same rfl rfl,
+        fun candidate => ⟨candidate, rfl, rfl, Or.inr ⟨candidate, rfl, granted.2.2.2,
+          fun voter member fresh => absurd member fresh⟩⟩,
+        fun leader => Or.inl ⟨leader, rfl⟩, fun _ _ _ => Or.inl rfl, Kind.same rfl rfl,
         fun e member => ?_⟩
       · split_rel granted := (rcases granted.2.2.2 with none | some) with
         | inl => rw [none] at votedEq; cases votedEq
         | inr => rw [some] at votedEq; exact votedEq
-      · split_rel granted := (rcases granted.2.2.2 with none | some) with
-        | inl => exact Or.inr none
-        | inr => exact Or.inl some.symm
       · simp at member
         subst member
         exact ⟨rfl, rfl, fun _ => ⟨request, rfl, granted.1, granted.2.1, rfl⟩⟩
@@ -4080,12 +4078,12 @@ private theorem voteResponse_summary (before : NodeState) (source : NodeID)
         no_bumping_sends (by simp))
     have campaign : Campaign self before (.receive source (.requestVoteResponse response))
         { before with votesGranted := insert source before.votesGranted } := by
-      refine ⟨won.1, rfl, rfl, Or.inr ⟨won.1, rfl, Or.inl rfl, fun voter member => ?_⟩⟩
+      refine ⟨won.1, rfl, rfl, Or.inr ⟨won.1, rfl, Or.inr rfl, fun voter member fresh => ?_⟩⟩
       split_rel mem_insert := (rcases Finset.mem_insert.mp member with same | old) with
       | inl =>
         subst same
-        exact Or.inr ⟨response, rfl, won.2.1, won.2.2⟩
-      | inr => exact Or.inl old
+        exact ⟨response, rfl, won.2.1, won.2.2⟩
+      | inr => exact absurd old fresh
     exact Sends.mono (electIfQuorum_result self before _) fun after sent result =>
       campaign_summary campaign result trivial
 
@@ -4158,22 +4156,13 @@ private theorem appendEntriesResponse_quiet (before : NodeState) (source : NodeI
     simp [leader] at kept
   refine ⟨Nat.le_of_eq advance.term.symm, fun _ voted eq => by rw [advance.votedFor]; exact eq,
     fun _ => Or.inl (by simp [Engaged, leader]), fun c => (notCandidate c).elim,
-    fun _ => Or.inl ⟨leader, advance.term⟩, fun _ _ _ peer => ?_,
+    fun _ => Or.inl ⟨leader, advance.term⟩,
+    fun _ _ _ => Or.inr ⟨source, response, rfl, success, term, advance.matchIndex⟩,
     Kind.ack source response rfl leader success term advance, fun e member => ?_⟩
-  · rw [advance.matchIndex]
-    split_rel same := (by_cases same : peer = source) with
-    | pos =>
-      subst same
-      simp only [Function.update_self]
-      split_rel max_eq_or :=
-          (rcases Std.max_eq_or (a := before.matchIndex peer) (b := response.lastLogIndex) with eq | eq) with
-      | inl => rw [eq]; exact Or.inl rfl
-      | inr => rw [eq]; exact Or.inr ⟨response, rfl, success, term, rfl⟩
-    | neg => exact Or.inl (by simp [Function.update, same])
-  · obtain ⟨source', payload⟩ := nominated e member
-    refine ⟨source', ?_⟩
-    rw [payload]
-    exact advance.term.symm
+  obtain ⟨source', payload⟩ := nominated e member
+  refine ⟨source', ?_⟩
+  rw [payload]
+  exact advance.term.symm
 
 private theorem appendEntriesResponse_summary (before : NodeState) (source : NodeID)
     (response : AppendEntriesResponse)
@@ -4456,10 +4445,11 @@ private theorem appendEntriesRequest_summary (self : NodeID) (before : NodeState
     obtain ⟨term, voted, matchEq, lead, cand, _⟩ := reply
     refine ⟨Nat.le_of_eq term.symm, fun _ voted' eq => voted ▸ eq,
       fun _ => Or.inr (Or.inr (Or.inl ⟨source, _, rfl, trivial, term ▸ le⟩)), fun c => ?_,
-      fun leader => ?_, fun _ _ _ peer => Or.inl (congrFun matchEq peer), kind, sends⟩
+      fun leader => ?_, fun _ _ _ => Or.inl matchEq, kind, sends⟩
     · have eq := cand c
       rw [eq] at c ⊢
-      exact ⟨c, rfl, rfl, Or.inr ⟨c, rfl, Or.inl rfl, fun voter member => Or.inl member⟩⟩
+      exact ⟨c, rfl, rfl, Or.inr ⟨c, rfl, Or.inr rfl,
+        fun voter member fresh => absurd member fresh⟩⟩
     · exact Or.inl ⟨lead leader, term⟩
 
 private theorem BatchState.push {self : NodeID} {before state : NodeState}
@@ -4580,7 +4570,7 @@ private theorem appendBatch_summary (self : NodeID) (state : NodeState)
     fun _ => Or.inl (by simp [Engaged, leader]),
     fun candidate => (notCandidate candidate).elim,
     fun _ => Or.inl ⟨leader, term⟩,
-    fun _ _ _ peer => Or.inl (by rw [advance.matchIndex, eq]),
+    fun _ _ _ => Or.inl (by rw [advance.matchIndex, eq]),
     Kind.append entries sentIndex leader terms (eq ▸ advance),
     fun e member => ?_
   ⟩
@@ -5797,11 +5787,12 @@ private theorem campaign_votes {candidate : NodeState}
   | inr =>
     intro voter mem
     rw [sameTerm]
-    split_rel more := (rcases more voter mem with old | ⟨response, eq, responseTerm, granted⟩) with
-    | inl =>
+    split_rel more := (by_cases old : voter ∈ c.pre.votesGranted) with
+    | pos =>
       exact ((c.inv.candidate c.actor c.pre c.pre_now preRole).2.2.1 voter old).mono
         after
-    | inr =>
+    | neg =>
+      obtain ⟨response, eq, responseTerm, granted⟩ := more voter mem old
       obtain ⟨envelope, ok, sourceEq, targetEq, payload⟩ := c.received_ok eq
       simp only [MessageOK, payload] at ok
       obtain ⟨request, granted', _, forNow⟩ := ok granted
@@ -5997,11 +5988,11 @@ private theorem candidate : Candidate (f.advance after) := by
       | inl => exact voted
       | inr =>
         have own := (c.inv.candidate c.actor c.pre c.pre_now preRole).2.1
-        split_rel voted := (rcases voted with voted | none) with
-        | inl => rw [voted, own]
-        | inr =>
+        split_rel voted := (rcases voted with none | voted) with
+        | inl =>
           rw [own] at none
           cases none
+        | inr => rw [← voted, own]
     · intro voter mem
       rw [logEq, commitEq]
       exact c.campaign_votes campaign rfl rfl voter mem
@@ -7204,20 +7195,37 @@ private theorem match_ack : MatchAck (f.advance after) := by
     split_rel leader := (rcases Summary.leader c.sum leader with ⟨preLeader, termEq⟩ | wins) with
     | inl =>
       rw [termEq]
+      have kept (positive : 0 < c.pre.matchIndex peer) :=
+        (c.inv.match_ack c.actor c.pre peer c.pre_now preLeader different positive).mono after
       split_rel matchIndex :=
-          (rcases Summary.matchIndex c.sum leader preLeader termEq peer with
-            same | ⟨response, received, success, responseTerm, matchEq⟩) with
+          (rcases Summary.matchIndex c.sum leader preLeader termEq with
+            same | ⟨source, response, received, success, responseTerm, matchEq⟩) with
       | inl =>
         rw [same] at positive ⊢
-        exact (c.inv.match_ack c.actor c.pre peer c.pre_now preLeader different
-          positive).mono after
+        exact kept positive
       | inr =>
-        rw [matchEq]
-        obtain ⟨envelope, ok, sourceEq, _, payload⟩ := c.received_ok received
-        simp only [MessageOK, payload] at ok
-        have acked := ok success
-        rw [sourceEq, responseTerm] at acked
-        exact acked.mono after
+        -- The response raises the sender's match index to what it acknowledged, if higher.
+        rw [matchEq] at positive ⊢
+        split_rel fromSource := (by_cases fromSource : peer = source) with
+        | pos =>
+          subst fromSource
+          rw [Function.update_self] at positive ⊢
+          split_rel max_eq_or :=
+              (rcases Std.max_eq_or (a := c.pre.matchIndex peer) (b := response.lastLogIndex) with
+                choice | choice) with
+          | inl =>
+            rw [choice] at positive ⊢
+            exact kept positive
+          | inr =>
+            rw [choice]
+            obtain ⟨envelope, ok, sourceEq, _, payload⟩ := c.received_ok received
+            simp only [MessageOK, payload] at ok
+            have acked := ok success
+            rw [sourceEq, responseTerm] at acked
+            exact acked.mono after
+        | neg =>
+          rw [Function.update_of_ne fromSource] at positive ⊢
+          exact kept positive
     | inr =>
       obtain ⟨_, _, _, _, _, _, zero, _⟩ := Wins.facts wins
       rw [zero] at positive
