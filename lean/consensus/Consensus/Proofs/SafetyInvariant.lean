@@ -175,9 +175,9 @@ private def acceptLog (log : List Entry) (request : AppendEntriesRequest) : List
     | none => log
   kept ++ request.entries.drop (kept.length - request.prevLogIndex)
 
-/-- A log is empty or starts with `root`. -/
+/-- A nonempty log starts with `root`. -/
 private def Rooted (root : Entry) (log : List Entry) : Prop :=
-  log = [] \/ log.take 1 = [root]
+  log ≠ [] -> log.take 1 = [root]
 
 end Consensus.Proofs.Safety
 
@@ -2733,31 +2733,22 @@ private theorem hasQuorum_majority {configurations : List Configuration}
 private theorem Rooted.prefix {root : Entry} {small large : List Entry}
     (rooted : Rooted root large) (sub : small <+: large)
     : Rooted root small := by
-  split_rel small := (rcases small with _ | ⟨first, rest⟩) with
-  | inl => exact Or.inl rfl
-  | inr =>
-    refine Or.inr ?_
-    obtain ⟨suffix, rfl⟩ := sub
-    split_rel rooted := (rcases rooted with empty | head) with
-    | inl => simp at empty
-    | inr => simpa using head
+  intro nonempty
+  have positive := List.length_pos_iff.mpr nonempty
+  rw [← take_eq_of_prefix sub (Nat.succ_le_of_lt positive)]
+  exact rooted fun empty => nonempty (List.prefix_nil.mp (empty ▸ sub))
 
 private theorem Rooted.append {root : Entry} {log : List Entry} (rooted : Rooted root log)
     (nonempty : log ≠ []) (entries : List Entry)
     : Rooted root (log ++ entries) := by
-  split_rel rooted := (rcases rooted with empty | head) with
-  | inl => exact absurd empty nonempty
-  | inr =>
-    refine Or.inr ?_
-    have := List.length_pos_iff.mpr nonempty
-    rw [List.take_append_of_le_length (Nat.succ_le_of_lt this), head]
+  intro _
+  have := List.length_pos_iff.mpr nonempty
+  rw [List.take_append_of_le_length (Nat.succ_le_of_lt this), rooted nonempty]
 
 private theorem Rooted.head {root : Entry} {log : List Entry} (rooted : Rooted root log)
     (nonempty : log ≠ [])
-    : log.take 1 = [root] := by
-  split_rel rooted := (rcases rooted with empty | head) with
-  | inl => exact absurd empty nonempty
-  | inr => exact head
+    : log.take 1 = [root] :=
+  rooted nonempty
 
 private theorem hasQuorum_nonempty {log : List Entry} {commit : Nat}
     {voters : Finset NodeID} (quorum : hasQuorum (activeConfigurations log commit) voters)
@@ -4754,8 +4745,8 @@ private theorem inv_initial : Inv (Frame.start initial) := by
     split_rel isLeader := (by_cases isLeader : node = INITIAL_PRIMARY) with
     | pos =>
       subst isLeader
-      exact Or.inr (by simp [initialLocal])
-    | neg => exact Or.inl (by simp [initialLocal, isLeader])
+      exact fun _ => by simp [initialLocal]
+    | neg => exact fun nonempty => absurd (by simp [initialLocal, isLeader]) nonempty
   have terms : Terms (Frame.start initial) := by
     intro node state now entry member
     rw [stateOf now] at member ⊢
