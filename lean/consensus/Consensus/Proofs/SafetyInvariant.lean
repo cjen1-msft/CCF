@@ -5475,6 +5475,14 @@ private theorem pre_sorted
     : c.pre.log.Pairwise fun first second => first.term <= second.term :=
   c.inv.sorted c.actor c.pre c.pre_now
 
+/-- A received AppendEntries request was sent by the leader of its term, from its log. -/
+private theorem accept_evidence {source : NodeID} {request : AppendEntriesRequest}
+    (eq : c.event = .receive source (.appendEntriesRequest request))
+    : exists leaderLog : List Entry, AppendEvidence f source c.actor request leaderLog := by
+  obtain ⟨envelope, ok, sourceEq, targetEq, payload⟩ := c.received_ok eq
+  simp only [MessageOK, payload, sourceEq, targetEq] at ok
+  exact ok
+
 /-- An accepted request copies its sender's log up to the end of the batch,
 keeping the follower's suffix exactly when the follower already agreed. -/
 private theorem accept_shape {source : NodeID} {request : AppendEntriesRequest}
@@ -5493,9 +5501,7 @@ private theorem accept_shape {source : NodeID} {request : AppendEntriesRequest}
                       = leaderLog.take (request.prevLogIndex + request.entries.length))))
         /\ c.pre.log.take request.prevLogIndex
             = leaderLog.take request.prevLogIndex := by
-  obtain ⟨envelope, ok, sourceEq, targetEq, payload⟩ := c.received_ok eq
-  simp only [MessageOK, payload, sourceEq, targetEq] at ok
-  obtain ⟨leaderLog, evidence⟩ := ok
+  obtain ⟨leaderLog, evidence⟩ := c.accept_evidence eq
   refine ⟨leaderLog, evidence, ?_⟩
   obtain ⟨_, _, canon, prevBound, prevTerm, entries, _⟩ := evidence
   obtain ⟨_, _, _, followerBound, termEq, logEq, _⟩ := accepted
@@ -6382,7 +6388,7 @@ private theorem keep_log (sameTerm : c.post.currentTerm = c.pre.currentTerm)
   | accept =>
     rename_i source request eq accepted
     exfalso
-    obtain ⟨_, evidence, _⟩ := c.accept_shape eq accepted
+    obtain ⟨_, evidence⟩ := c.accept_evidence eq
     have : source = c.actor :=
       c.inv.election_safety source c.actor request.term evidence.led
         (by rw [accepted.1, sameTerm]; exact led)
@@ -6469,6 +6475,80 @@ private theorem canon_mono : CanonMono (f.advance after) := by
     rw [state_unique c.keys_after now' now]
     exact List.prefix_refl _
 
+/-- A leader that appends entries of its term keeps a copyable log: the extended log
+becomes the leader log of its term. -/
+private theorem append_copy {entries : List Entry} {sent : NodeID -> Nat}
+    (leader : c.pre.role = .primary)
+    (terms : forall entry, entry ∈ entries -> entry.term = c.pre.currentTerm)
+    (advance
+      : Advance c.actor { c.pre with log := c.pre.log ++ entries, sentIndex := sent } c.post)
+    : CopyLog (f.advance after).logs c.post.currentTerm c.post.log := by
+  obtain ⟨log, term, role⟩ := Advance.facts advance
+  have notCandidate : Not (c.post.role = .candidate) := fun candidate => by
+    have kept := role.resolve_right (by rw [candidate]; simp)
+    rw [candidate] at kept
+    simp [leader] at kept
+  rw [log, term]
+  refine ((c.inv.node_logs c.actor c.pre c.pre_now).mono after).append
+    (c.inv.leader_logs c.actor c.pre c.pre_now leader) terms ?_
+  exact .inr ⟨c.actor, c.post, ⟨c.post_now, term, notCandidate,
+    (c.inv.leader_led c.actor c.pre c.pre_now leader).mono after⟩, log⟩
+
+/-- The log of a node that leads its term stays copyable. A leader keeps its log, extends
+it with entries of its term, or starts from a prefix of the log it campaigned with; it
+neither accepts a request, whose sender leads the same term, nor installs a snapshot. -/
+private theorem leader_copy {node : NodeID} {state : NodeState}
+    (now : Now (f.advance after) node state)
+    (led : Led (f.advance after) node state.currentTerm)
+    : CopyLog (f.advance after).logs state.currentTerm state.log := by
+  split_rel now_after := (rcases c.now_after now with ⟨nodeEq, stateEq⟩ | ⟨other, old⟩) with
+  | inl =>
+    subst nodeEq stateEq
+    have shorter (sub : c.post.log <+: c.pre.log) :
+        CopyLog (f.advance after).logs c.post.currentTerm c.post.log :=
+      ((c.inv.node_logs c.actor c.pre c.pre_now).prefix sub c.term_le).mono after
+    split_rel kind := (cases Summary.kind c.sum) with
+    | same =>
+      rename_i log _
+      exact shorter (by rw [log]; exact List.prefix_refl _)
+    | append =>
+      rename_i entries sent leader terms advance
+      exact c.append_copy leader terms advance
+    | ack =>
+      rename_i _ _ _ _ _ _ advance
+      obtain ⟨log, _, _⟩ := Advance.facts advance
+      exact shorter (by rw [log]; exact List.prefix_refl _)
+    | accept =>
+      rename_i source request eq accepted
+      exfalso
+      obtain ⟨_, evidence⟩ := c.accept_evidence eq
+      have : source = c.actor :=
+        c.election_safety source c.actor request.term (evidence.led.mono after)
+          (by rw [accepted.1]; exact led)
+      exact evidence.different this.symm
+    | elect =>
+      rename_i wins
+      obtain ⟨_, ⟨_, candidateLog, _⟩, _, log, _⟩ := Wins.facts wins
+      exact shorter (by rw [log, ← candidateLog]; exact primaryState_log_prefix _)
+    | install =>
+      rename_i _ _ _ _ fresh _ _ _ role
+      exfalso
+      split_rel led_after := (rcases c.led_after led with old | ⟨_, _, step⟩) with
+      | inl =>
+        have floor := c.inv.leader_floor old
+        have zero : c.pre.currentTerm = 0 := fresh.2.1
+        split_rel led_cur :=
+            (rcases c.inv.led_cur c.actor c.pre _ c.pre_now old with lt | ⟨eq, _⟩) with
+        | inl => omega
+        | inr => omega
+      | inr =>
+        have roleCase := (c.electStep step).2.2.2.2.2.1
+        rw [role] at roleCase
+        split_rel roleCase := (rcases roleCase with primary | none) with
+        | inl => cases primary
+        | inr => cases none
+  | inr => exact (c.inv.node_logs node state old).mono after
+
 private theorem chains : LogFacts.Chain (f.advance after).logs := by
   apply LogFacts.chain_step c.inv.chains
   rintro n st k ⟨now, rfl, role, led⟩ l canon
@@ -6497,17 +6577,8 @@ private theorem node_logs : NodeLogs (f.advance after) := by
       rename_i log _
       exact shorter (by rw [log]; exact List.prefix_refl _)
     | append =>
-      -- The leader extends its own log, which becomes the leader log of its term.
       rename_i entries sent leader terms advance
-      obtain ⟨log, term, role⟩ := Advance.facts advance
-      have notCandidate : Not (c.post.role = .candidate) := fun candidate => by
-        have kept := role.resolve_right (by rw [candidate]; simp)
-        rw [candidate] at kept
-        simp [leader] at kept
-      rw [log, term]
-      refine (pre.mono after).append (c.inv.leader_logs c.actor c.pre c.pre_now leader) terms ?_
-      exact .inr ⟨c.actor, c.post, ⟨c.post_now, term, notCandidate,
-        (c.inv.leader_led c.actor c.pre c.pre_now leader).mono after⟩, log⟩
+      exact c.append_copy leader terms advance
     | ack =>
       rename_i _ _ _ _ _ _ advance
       obtain ⟨log, _, _⟩ := Advance.facts advance
@@ -6535,7 +6606,7 @@ private theorem node_logs : NodeLogs (f.advance after) := by
 private theorem canonLogs : CanonLogs (f.advance after).logs := by
   apply canonLogs_step c.inv.canonLogs
   rintro n st k ⟨now, rfl, role, led⟩
-  refine ⟨c.node_logs _ _ now, ⟨_, led⟩, fun gt => ?_⟩
+  refine ⟨c.leader_copy now led, ⟨_, led⟩, fun gt => ?_⟩
   split_rel led_after := (rcases c.led_after led with oldLed | ⟨l, i, step⟩) with
   | inl =>
     -- A continuing leader extends its previous log, which already held the prefix.
@@ -6874,7 +6945,7 @@ private theorem post_backing
       split_rel origin := (rcases origin with ⟨leader, termEq⟩ | wins) with
       | inl =>
         -- The sender leads the term of the request, so the receiver did not.
-        obtain ⟨_, evidence, _⟩ := c.accept_shape received accepted
+        obtain ⟨_, evidence⟩ := c.accept_evidence received
         have : source = c.actor :=
           c.inv.election_safety source c.actor request.term evidence.led
             (by rw [accepted.1, termEq]; exact c.pre_led leader)
