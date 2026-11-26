@@ -3743,15 +3743,26 @@ private theorem bumped_summary {self : NodeID} {before after : NodeState}
     sends
   ⟩
 
-private theorem observe_bumping (before : NodeState) {message : Message}
+/-- A message that always carries its sender's term either bumps the receiver to that term
+or leaves it unchanged. The receiver observes the term once, before any handler runs, so
+every handler reads the outcome here. -/
+private theorem observe_bumping {motive : NodeState -> Prop} (before : NodeState)
+    {message : Message}
     (bumping : observeTerm before message = updateTerm before message.term)
-    : (before.currentTerm < message.term
-        -> observeTerm before message = bumpedState before message.term)
-      /\ (message.term <= before.currentTerm -> observeTerm before message = before) := by
+    (bumped : before.currentTerm < message.term -> motive (bumpedState before message.term))
+    (same : message.term <= before.currentTerm -> motive before)
+    : motive (observeTerm before message) := by
   rw [bumping]
-  exact ⟨fun bump => by
-      simp [updateTerm, bump, becomeAwareOfNewTerm, bumpedState, Nat.ne_of_lt bump],
-    fun le => by simp [updateTerm, Nat.not_lt.mpr le]⟩
+  split_rel bump := (by_cases bump : before.currentTerm < message.term) with
+  | pos =>
+    have eq : updateTerm before message.term = bumpedState before message.term := by
+      simp [updateTerm, bump, becomeAwareOfNewTerm, bumpedState, Nat.ne_of_lt bump]
+    rw [eq]
+    exact bumped bump
+  | neg =>
+    have eq : updateTerm before message.term = before := by simp [updateTerm, bump]
+    rw [eq]
+    exact same (Nat.not_lt.mp bump)
 
 end Consensus.Proofs.Safety
 
@@ -3876,12 +3887,10 @@ private theorem voteRequest_summary (before : NodeState) (source : NodeID)
         (receive (Capabilities.record self : Caps) self source before
           (.requestVoteRequest request)) := by
   simp only [receive]
-  have observed := observe_bumping before (message := .requestVoteRequest request) rfl
-  split_rel observe_bumping :=
-      (rcases Nat.lt_or_ge before.currentTerm (.requestVoteRequest request : Message).term with bump | le) with
-  | inl =>
-    rw [observed.1 bump]
-    simp only [handleRequestVoteRequest]
+  refine observe_bumping
+    (motive := fun z => Sends _ (handleRequestVoteRequest (Capabilities.record self) z source request))
+    before (message := .requestVoteRequest request) rfl (fun bump => ?_) (fun le => ?_)
+  · simp only [handleRequestVoteRequest]
     refine Sends.bind' (Sends.send _ _ _) fun _ sent eq => Sends.pure' ?_
     subst eq
     have active : exists source' message,
@@ -3906,9 +3915,7 @@ private theorem voteRequest_summary (before : NodeState) (source : NodeID)
       simp at member
       subst member
       exact ⟨rfl, rfl, fun yes => by simp_all⟩
-  | inr =>
-    rw [observed.2 le]
-    simp only [handleRequestVoteRequest]
+  · simp only [handleRequestVoteRequest]
     refine Sends.bind' (Sends.send _ _ _) fun _ sent eq => Sends.pure' ?_
     subst eq
     have active : exists source' message,
@@ -3952,12 +3959,10 @@ private theorem preVoteRequest_summary (before : NodeState) (source : NodeID)
         (receive (Capabilities.record self : Caps) self source before
           (.requestPreVoteRequest request)) := by
   simp only [receive]
-  have observed := observe_bumping before (message := .requestPreVoteRequest request) rfl
-  split_rel observe_bumping :=
-      (rcases Nat.lt_or_ge before.currentTerm (.requestPreVoteRequest request : Message).term with bump | le) with
-  | inl =>
-    rw [observed.1 bump]
-    simp only [handleRequestPreVoteRequest]
+  refine observe_bumping
+    (motive := fun z => Sends _ (handleRequestPreVoteRequest (Capabilities.record self) z source request))
+    before (message := .requestPreVoteRequest request) rfl (fun bump => ?_) (fun le => ?_)
+  · simp only [handleRequestPreVoteRequest]
     refine Sends.bind' (Sends.send _ _ _) fun _ sent eq => Sends.pure' ?_
     subst eq
     refine bumped_summary bump (by simp [bumpedState]) (by simp [bumpedState])
@@ -3965,9 +3970,7 @@ private theorem preVoteRequest_summary (before : NodeState) (source : NodeID)
     simp only [List.mem_singleton, List.append_nil] at member
     subst member
     exact ⟨rfl, rfl⟩
-  | inr =>
-    rw [observed.2 le]
-    simp only [handleRequestPreVoteRequest]
+  · simp only [handleRequestPreVoteRequest]
     refine Sends.bind' (Sends.send _ _ _) fun _ sent eq => Sends.pure' ?_
     subst eq
     refine quiet_summary rfl rfl rfl rfl rfl rfl rfl
@@ -4058,18 +4061,14 @@ private theorem voteResponse_summary (before : NodeState) (source : NodeID)
     (fun _ =>
       Sends.pure' (quiet_summary rfl rfl rfl rfl rfl rfl rfl no_bumping_sends (by simp)))
     fun _ => ?_
-  have observed := observe_bumping before (message := .requestVoteResponse response) rfl
-  split_rel observe_bumping :=
-      (rcases Nat.lt_or_ge before.currentTerm (.requestVoteResponse response : Message).term with bump | le) with
-  | inl =>
-    rw [observed.1 bump]
-    simp only [handleRequestVoteResponse]
+  refine observe_bumping
+    (motive := fun z => Sends _ (handleRequestVoteResponse (Capabilities.record self) self z source response))
+    before (message := .requestVoteResponse response) rfl (fun bump => ?_) (fun le => ?_)
+  · simp only [handleRequestVoteResponse]
     refine Sends.ite' (fun won => absurd won.1 (by simp [bumpedState])) fun _ =>
       Sends.pure' (bumped_summary bump (by simp [bumpedState]) (by simp [bumpedState])
         ⟨source, _, rfl, trivial, Nat.le.refl⟩ (Kind.same rfl rfl) (by simp))
-  | inr =>
-    rw [observed.2 le]
-    simp only [handleRequestVoteResponse]
+  · simp only [handleRequestVoteResponse]
     refine Sends.ite' (fun won => ?_) fun _ =>
       Sends.pure' (quiet_summary rfl rfl rfl rfl rfl rfl rfl
         no_bumping_sends (by simp))
@@ -4097,18 +4096,14 @@ private theorem preVoteResponse_summary (before : NodeState) (source : NodeID)
     (fun _ =>
       Sends.pure' (quiet_summary rfl rfl rfl rfl rfl rfl rfl no_bumping_sends (by simp)))
     fun _ => ?_
-  have observed := observe_bumping before (message := .requestPreVoteResponse response) rfl
-  split_rel observe_bumping :=
-      (rcases Nat.lt_or_ge before.currentTerm (.requestPreVoteResponse response : Message).term with bump | le) with
-  | inl =>
-    rw [observed.1 bump]
-    simp only [handleRequestPreVoteResponse]
+  refine observe_bumping
+    (motive := fun z => Sends _ (handleRequestPreVoteResponse (Capabilities.record self) self z source response))
+    before (message := .requestPreVoteResponse response) rfl (fun bump => ?_) (fun le => ?_)
+  · simp only [handleRequestPreVoteResponse]
     refine Sends.ite' (fun won => absurd won.1 (by simp [bumpedState])) fun _ =>
       Sends.pure' (bumped_summary bump (by simp [bumpedState]) (by simp [bumpedState])
         ⟨source, _, rfl, trivial, Nat.le.refl⟩ (Kind.same rfl rfl) (by simp))
-  | inr =>
-    rw [observed.2 le]
-    simp only [handleRequestPreVoteResponse]
+  · simp only [handleRequestPreVoteResponse]
     refine Sends.ite' (fun won => ?_) fun _ =>
       Sends.pure' (quiet_summary rfl rfl rfl rfl rfl rfl rfl
         no_bumping_sends (by simp))
@@ -4119,19 +4114,11 @@ private theorem preVoteResponse_summary (before : NodeState) (source : NodeID)
     exact Sends.mono (becomeCandidate_result self _ before rfl) fun after sent result =>
       campaign_summary (fresh_campaign engaged rfl rfl rfl) result trivial
 
+/-- Only a primary observes the term of an AppendEntries response. -/
 private theorem observe_response (before : NodeState) (response : AppendEntriesResponse)
-    : (before.role = .primary -> before.currentTerm < response.term
-        -> observeTerm before (.appendEntriesResponse response)
-            = bumpedState before response.term)
-      /\ (before.role = .primary -> Not (before.currentTerm < response.term)
-          -> observeTerm before (.appendEntriesResponse response) = before)
-      /\ (Not (before.role = .primary)
-          -> observeTerm before (.appendEntriesResponse response) = before) :=
-  ⟨fun leader bump => by
-      simp [observeTerm, updateTerm, becomeAwareOfNewTerm, leader, bump, bumpedState,
-        Nat.ne_of_lt bump],
-    fun leader bump => by simp [observeTerm, updateTerm, leader, bump],
-    fun leader => by simp [observeTerm, leader]⟩
+    (follower : Not (before.role = .primary))
+    : observeTerm before (.appendEntriesResponse response) = before := by
+  simp [observeTerm, follower]
 
 /-- A response handled in the receiver's own term. -/
 private theorem appendEntriesResponse_quiet (before : NodeState) (source : NodeID)
@@ -4195,25 +4182,24 @@ private theorem appendEntriesResponse_summary (before : NodeState) (source : Nod
     (fun _ =>
       Sends.pure' (quiet_summary rfl rfl rfl rfl rfl rfl rfl no_bumping_sends (by simp)))
     fun _ => ?_
-  have observed := observe_response before response
   split_rel leader := (by_cases leader : before.role = .primary) with
   | pos =>
-    split_rel bump := (by_cases bump : before.currentTerm < response.term) with
-    | pos =>
-      rw [observed.1 leader bump]
-      simp only [handleAppendEntriesResponse]
-      refine Sends.ite' (fun _ => Sends.pure' ?_) fun notFollower => absurd notFollower
-        (by simp [bumpedState])
-      refine ⟨Nat.le_of_lt bump,
-        fun same => (Nat.lt_irrefl _ (Nat.lt_of_lt_of_le bump (Nat.le_of_eq same))).elim,
-        fun _ => Or.inl (by simp [Engaged, leader]), fun c => by simp [bumpedState] at c,
-        fun c => by simp [bumpedState] at c, fun c => by simp [bumpedState] at c,
-        Kind.same rfl rfl, by simp⟩
-    | neg =>
-      rw [observed.2.1 leader bump]
-      exact appendEntriesResponse_quiet self before source response
+    refine observe_bumping
+      (motive := fun z => Sends _
+        (handleAppendEntriesResponse (Capabilities.record self) self z source response))
+      before (message := .appendEntriesResponse response)
+      (by simp [observeTerm, leader, Message.term]) (fun bump => ?_)
+      (fun _ => appendEntriesResponse_quiet self before source response)
+    simp only [handleAppendEntriesResponse]
+    refine Sends.ite' (fun _ => Sends.pure' ?_) fun notFollower => absurd notFollower
+      (by simp [bumpedState])
+    refine ⟨Nat.le_of_lt bump,
+      fun same => (Nat.lt_irrefl _ (Nat.lt_of_lt_of_le bump (Nat.le_of_eq same))).elim,
+      fun _ => Or.inl (by simp [Engaged, leader]), fun c => by simp [bumpedState] at c,
+      fun c => by simp [bumpedState] at c, fun c => by simp [bumpedState] at c,
+      Kind.same rfl rfl, by simp⟩
   | neg =>
-    rw [observed.2.2 leader]
+    rw [observe_response before response leader]
     exact appendEntriesResponse_quiet self before source response
 
 end Election
@@ -4444,12 +4430,10 @@ private theorem appendEntriesRequest_summary (self : NodeID) (before : NodeState
         (receive (Capabilities.record self) self source before
           (.appendEntriesRequest request)) := by
   simp only [receive]
-  have observed := observe_bumping before (message := .appendEntriesRequest request) rfl
-  split_rel observe_bumping :=
-      (rcases Nat.lt_or_ge before.currentTerm (.appendEntriesRequest request : Message).term with bump | le) with
-  | inl =>
-    rw [observed.1 bump]
-    refine Sends.mono (aeReply self source _ request (Nat.le.refl)) fun after sent reply => ?_
+  refine observe_bumping
+    (motive := fun z => Sends _ (handleAppendEntriesRequest (Capabilities.record self) self source z request))
+    before (message := .appendEntriesRequest request) rfl (fun bump => ?_) (fun le => ?_)
+  · refine Sends.mono (aeReply self source _ request (Nat.le.refl)) fun after sent reply => ?_
     obtain ⟨kind, sends⟩ := aeReply_summary (before := before) (z := bumpedState before request.term) rfl rfl
       (Nat.le_of_lt bump) reply
     obtain ⟨term, _, _, lead, cand, _⟩ := reply
@@ -4461,9 +4445,7 @@ private theorem appendEntriesRequest_summary (self : NodeID) (before : NodeState
         have := lead leader
         simp [bumpedState] at this)
       ⟨source, _, rfl, trivial, term ▸ Nat.le.refl⟩ kind sends
-  | inr =>
-    rw [observed.2 le]
-    refine Sends.mono (aeReply self source _ request le) fun after sent reply => ?_
+  · refine Sends.mono (aeReply self source _ request le) fun after sent reply => ?_
     obtain ⟨kind, sends⟩ := aeReply_summary (before := before) rfl rfl Nat.le.refl reply
     obtain ⟨term, voted, matchEq, lead, cand, _⟩ := reply
     refine ⟨Nat.le_of_eq term.symm, fun _ voted' eq => voted ▸ eq,
