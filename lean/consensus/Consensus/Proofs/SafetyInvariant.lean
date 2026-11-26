@@ -6291,11 +6291,16 @@ private theorem certificates_agree {g : LogFacts.Ghost} {v : VoteFacts.Ghost}
       (carry : ∀ t p, Commit g t p → t < k → p <+: y) : x.take j = y.take j := by
     obtain ⟨e, p, com, lt, sub⟩ := back
     exact take_of_prefix_length (sub.trans (carry e p com lt)) (List.length_take_of_le front)
-  have agree : ∃ j, l.take j = l'.take j ∧ i ≤ j ∧ i' ≤ j := by
-    split_rel le_total := (rcases Nat.le_total i' i with le | le) with
-    | inl => exact ⟨i, takeEq a.frontier a.backing carriedB, Nat.le_refl _, le⟩
-    | inr => exact ⟨i', (takeEq b.frontier b.backing carriedA).symm, le, Nat.le_refl _⟩
-  obtain ⟨j, eq, le, le'⟩ := agree
+  -- Each log holds the other's committed prefix, so the two agree up to both commit
+  -- indices: on the first `i` entries followed by the rest of the first `i'`.
+  have first : l.take i = l'.take i := takeEq a.frontier a.backing carriedB
+  have second : l.take i' = l'.take i' := (takeEq b.frontier b.backing carriedA).symm
+  have eq : l.take (i + (i' - i)) = l'.take (i + (i' - i)) := by
+    rw [List.take_add, List.take_add, ← List.drop_take, ← List.drop_take, first, second]
+  have le : i ≤ i + (i' - i) := Nat.le_add_right _ _
+  have le' : i' ≤ i + (i' - i) := by
+    rw [Nat.add_comm]
+    exact Nat.le_add_of_sub_le (Nat.le_refl _)
   obtain ⟨xs, q, observed⟩ := a.quorum
   obtain ⟨ys, q', observed'⟩ := b.quorum
   obtain ⟨voter, mem, mem'⟩ := quorums_intersect GENESIS_configured a.rooted b.rooted eq le le' q q'
