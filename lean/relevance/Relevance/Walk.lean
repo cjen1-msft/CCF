@@ -775,12 +775,24 @@ def withCalls : List Name → M α → M α
   | c :: cs, k => withCall c (withCalls cs k)
 
 /-- The theorem in scope that `c` names, with its proof, if it may be inlined here. -/
+def isProofDecl (ci : ConstantInfo) : MetaM Bool :=
+  match ci with
+  | .thmInfo _ => pure true
+  | .defnInfo _ => do
+    let env ← getEnv
+    let c := ci.name
+    if isCasesOnRecursor env c || isRecOnRecursor env c || isBRecOnRecursor env c ||
+        isAuxRecursor env c || (← isMatcher c) then
+      return false
+    try isProp ci.type catch _ => pure false
+  | _ => pure false
+
 def inlinable? (c : Name) (us : List Lean.Level) : M (Option Expr) := do
   unless ← inScope c do return none
   if (← read).stop.contains c then return none
   if (← read).unit.isNone && (← get).inProgress.contains c then return none
   let some ci := (← getEnv).find? c | return none
-  unless ci matches .thmInfo _ do return none
+  unless ← isProofDecl ci do return none
   let some v := ci.value? (allowOpaque := true) | return none
   return some (v.instantiateLevelParams ci.levelParams us)
 
@@ -1159,7 +1171,7 @@ partial def walkApp (e : Expr) : M Expr := do
         return ← walkObligations c us args
     if (← inScope c) && !(← read).stop.contains c then
       if let some ci := (← getEnv).find? c then
-        if ci matches .thmInfo _ then
+        if ← isProofDecl ci then
           if (← get).inProgress.contains c then
             return mkAppN f (← walkArgs args)
           match ci.value? (allowOpaque := true) with
@@ -1185,15 +1197,22 @@ partial def walkApp (e : Expr) : M Expr := do
           major := ← oneLine major, cond := ← oneLine p, internal }
         modify fun st => { st with unrecorded := st.unrecorded.push rec_ }
     if (← get).region then
-      if let some info ← (try splitElimInfo? c args catch _ => pure none) then
-        let mut out := #[]
-        for (a, i) in args.zipIdx do
-          if let some m := info.minors.find? (·.argIdx == i) then
-            if hasBranchMark a then
+      let info? ← try splitElimInfo? c args catch _ => pure none
+      let mut out := #[]
+      for (a, i) in args.zipIdx do
+        if hasBranchMark a then
+          if let some info := info? then
+            if let some m := info.minors.find? (·.argIdx == i) then
               out := out.push (← walkElimMinor info m a)
               continue
           out := out.push (← walk a)
-        return mkAppN f out
+        else
+          -- Arguments that lead to no branchMark of this split are outside the split's
+          -- eliminator spine and must still be audited for unrecorded splits.
+          modify fun s => { s with region := false }
+          let a' ← try walk a finally modify fun s => { s with region := true }
+          out := out.push a'
+      return mkAppN f out
     return mkAppN f (← walkArgs args)
   | _ => return mkAppN (← walk f) (← walkArgs args)
 
@@ -1249,6 +1268,8 @@ where
 partial def walkSplit (name coveredBy p : Expr) : M Expr := do
   let st ← get
   let some name := strLit? name | walk p
+  unless hasBranchMark p do
+    throwError "relevance: split {name} has no branch markers"
   let refutation ← try
       pure ((← whnfR (← instantiateMVars (← inferType p))).isConstOf ``False)
     catch _ => pure false

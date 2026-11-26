@@ -154,14 +154,48 @@ def classify (cfg : Config) (xs : Array Expr) (derived := true) : MetaM (Level �
     if let some vs ← derivedState cfg xs then return (.state, vs)
   return (.other, #[])
 
-def theoremsUsed (cfg : Config) (c : Name) : CoreM (Array Name) := do
+def theoremsUsed (cfg : Config) (c : Name) : MetaM (Array Name) := do
   unless cfg.followTheorems do return #[]
   let some ci := (← getEnv).find? c | return #[]
   let some v := ci.value? (allowOpaque := true) | return #[]
   let env ← getEnv
-  return v.getUsedConstants.filter fun d =>
-    cfg.scope.isPrefixOf ((privateToUserName? d).getD d) &&
-      (env.find? d matches some (.thmInfo _))
+  let mut out := #[]
+  for d in v.getUsedConstants do
+    if cfg.scope.isPrefixOf ((privateToUserName? d).getD d) then
+      if let some dci := env.find? d then
+        if ← isProofDecl dci then out := out.push d
+  return out
+
+/-- In-scope proof declarations (theorems and proof-valued defs) in the kernel closure of the
+roots, together with any in-scope constants in that closure whose body is not visible to the
+generator (unless listed in `allowHidden`). -/
+def proofAudit (scope : Name) (roots allowHidden : Array Name) :
+    MetaM (Array Name × Array Name) := do
+  let env ← getEnv
+  let user (c : Name) : Name := (privateToUserName? c).getD c
+  let mut seen : NameSet := {}
+  let mut todo := roots
+  let mut names := #[]
+  let mut hidden := #[]
+  while !todo.isEmpty do
+    let c := todo.back!
+    todo := todo.pop
+    if seen.contains c then continue
+    seen := seen.insert c
+    let some ci := env.find? c | continue
+    let own := scope.isPrefixOf (user c) || roots.contains c
+    todo := todo ++ ci.type.getUsedConstants
+    if let .inductInfo v := ci then todo := todo ++ v.ctors.toArray
+    match ci.value? (allowOpaque := true) with
+    | some v =>
+      todo := todo ++ v.getUsedConstants
+      if own && (← isProofDecl ci) then
+        names := names.push c
+    | none =>
+      if own && !allowHidden.contains c &&
+          ci matches .axiomInfo _ | .thmInfo _ | .defnInfo _ | .opaqueInfo _ then
+        hidden := hidden.push c
+  return (names, hidden)
 
 /-- Theorems in scope in the kernel closure of the roots, including dependencies
 of definition bodies and theorem statements, not just direct calls. -/
@@ -581,6 +615,9 @@ syntax (name := relevanceGenerate) "relevance_generate " ident (ppLine relArg)* 
       | `true => pure true
       | `false => pure false
       | _ => throwErrorAt s "relevance_generate: requireRecorded expects true or false"
+  let allowHidden ← match args.get? "allowHidden" with
+    | none => pure #[]
+    | some s => (idents s).mapM fun n => liftCoreM <| realizeGlobalConstNoOverload (mkIdent n)
   let cfg : Config := { scope, package, stepPat, statePat, stateCtor, ns, preOf, postOf, derive,
                         shared }
   let r ← liftTermElabM <| analyse cfg roots
@@ -591,8 +628,14 @@ syntax (name := relevanceGenerate) "relevance_generate " ident (ppLine relArg)* 
           s!"\n  {u.decl} ({u.head})"
         throwError "relevance_generate: {walk.unrecorded.size} unrecorded split(s):{String.join sites}"
     checkRecorded r
+    let (closure, hidden) ← liftTermElabM <| proofAudit cfg.scope roots allowHidden
+    unless hidden.isEmpty do
+      let env ← getEnv
+      let items := (hidden.qsort (·.toString < ·.toString)).toList.take 8 |>.map fun c =>
+        let mod := (env.getModuleIdxFor? c).map fun i => env.header.moduleNames[i.toNat]!
+        s!"\n  {(privateToUserName? c).getD c} (in {mod.getD .anonymous})"
+      throwError "relevance_generate: {hidden.size} hidden in-scope constant(s) without visible body:{String.join items}"
     let audited ← liftTermElabM do
-      let closure ← proofTheorems cfg.scope roots
       analyse { cfg with followTheorems := false, shared := false, ns := .anonymous,
                          stateCtor := none, derive := #[] } closure
     checkRecorded audited
@@ -631,7 +674,7 @@ syntax (name := relevanceGenerate) "relevance_generate " ident (ppLine relArg)* 
         todo := todo.pop
         if seen.contains c then continue
         seen := seen.insert c
-        todo := todo ++ (← liftCoreM <| theoremsUsed cfg c)
+        todo := todo ++ (← liftTermElabM <| theoremsUsed cfg c)
       closures := closures.push (root, seen)
     let rootsOf (d : Name) : String :=
       let hits := closures.filter (·.2.contains d)
@@ -657,7 +700,7 @@ syntax (name := relevanceGenerate) "relevance_generate " ident (ppLine relArg)* 
       r.levels.foldl (fun h (c, l, top) => if l == .step && top then h.insert c else h) {}
     -- the clauses read by the theorems in scope that `starts` use, transitively, outside
     -- the theorems in `skip`
-    let readClosure (skip : Std.HashSet Name) (starts : Array Name) : CoreM (Array Name) := do
+    let readClosure (skip : Std.HashSet Name) (starts : Array Name) : MetaM (Array Name) := do
       let mut seen : Std.HashSet Name := {}
       let mut todo := starts
       let mut use : Array Name := #[]
@@ -694,10 +737,10 @@ syntax (name := relevanceGenerate) "relevance_generate " ident (ppLine relArg)* 
         under := under.insert cl.name ((under.getD cl.name #[]).push σ.at_.unit.decl)
     let mut reads : Std.HashMap Name (Array Name) := {}
     for (c, us) in under.toList do
-      reads := reads.insert c ((← liftCoreM <| readClosure stepTops us) ++ rootReads.getD c #[])
+      reads := reads.insert c ((← liftTermElabM <| readClosure stepTops us) ++ rootReads.getD c #[])
     let mut clauseClosures : Array (Name × Array Name) := #[]
     for root in roots do
-      let use ← liftCoreM <| readClosure stepLevel #[root]
+      let use ← liftTermElabM <| readClosure stepLevel #[root]
       let mut cl := use
       let mut i := 0
       while i < cl.size do

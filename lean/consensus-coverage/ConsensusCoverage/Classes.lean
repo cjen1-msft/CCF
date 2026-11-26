@@ -32,6 +32,7 @@ relevance_generate ConsensusCoverage.Classes
   (post := fun [Config.InitialConfiguration]
     (f : Frame) (after : Model.State) => f.advance after)
   (state := fun [Config.InitialConfiguration] (f : Frame) => Inv f)
+  (allowHidden := [Consensus.Proofs.VoteFacts.instDecidableEqStamp.decEq])
   (shared := true) (requireRecorded := true)
 
 end

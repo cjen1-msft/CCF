@@ -210,3 +210,62 @@ example : ¬ RelevanceTests.Toy.Discr.Generated.sig 1 1 .listInd_items_nil := by
 example : RelevanceTests.Toy.Discr.Generated.sig 0 1 .listInd_items_nil := by
   unfold_ns RelevanceTests.Toy.Discr.Generated
   exact ⟨trivial, rfl⟩
+
+/-! Regression tests: strict mode rejects unmarked splits in proof-valued defs, bare `splitMark`
+without branch markers, and hidden in-scope constants. -/
+namespace RelevanceTests.Toy.Strict
+
+namespace Proof
+
+set_option linter.defProp false in
+def insideDef {p q : Prop} (h : p ∨ q) (n : ¬ p) : q :=
+  Or.elim h (fun a => False.elim (n a)) id
+
+theorem viaDef {p q : Prop} (h : p ∨ q) (n : ¬ p) : q := insideDef h n
+
+theorem bareMark {p q : Prop} (h : p ∨ q) (n : ¬ p) : q :=
+  Relevance.splitMark "mask" "" (Or.elim h (fun a => False.elim (n a)) id)
+
+axiom hiddenFact : True
+
+theorem usesHidden : True := hiddenFact
+
+end Proof
+
+end RelevanceTests.Toy.Strict
+
+/--
+error: relevance_generate: 1 unrecorded split(s):
+  RelevanceTests.Toy.Strict.Proof.insideDef (Or.elim)
+-/
+#guard_msgs in
+relevance_generate RelevanceTests.Toy.Strict.RejectDef
+  (scope := RelevanceTests.Toy.Strict.Proof) (package := [RelevanceTests.Toy])
+  (roots := [RelevanceTests.Toy.Strict.Proof.viaDef])
+  (step := fun (s : RelevanceTests.Toy.State) (a : RelevanceTests.Toy.Action)
+    (t : RelevanceTests.Toy.State) => RelevanceTests.Toy.step s a = some t)
+  (state := fun (s : RelevanceTests.Toy.State) => RelevanceTests.Toy.Inv s)
+  (shared := true) (requireRecorded := true)
+
+/-- error: relevance: split mask has no branch markers -/
+#guard_msgs in
+relevance_generate RelevanceTests.Toy.Strict.RejectBareMark
+  (scope := RelevanceTests.Toy.Strict.Proof) (package := [RelevanceTests.Toy])
+  (roots := [RelevanceTests.Toy.Strict.Proof.bareMark])
+  (step := fun (s : RelevanceTests.Toy.State) (a : RelevanceTests.Toy.Action)
+    (t : RelevanceTests.Toy.State) => RelevanceTests.Toy.step s a = some t)
+  (state := fun (s : RelevanceTests.Toy.State) => RelevanceTests.Toy.Inv s)
+  (shared := true) (requireRecorded := true)
+
+/--
+error: relevance_generate: 1 hidden in-scope constant(s) without visible body:
+  RelevanceTests.Toy.Strict.Proof.hiddenFact (in [anonymous])
+-/
+#guard_msgs in
+relevance_generate RelevanceTests.Toy.Strict.RejectHidden
+  (scope := RelevanceTests.Toy.Strict.Proof) (package := [RelevanceTests.Toy])
+  (roots := [RelevanceTests.Toy.Strict.Proof.usesHidden])
+  (step := fun (s : RelevanceTests.Toy.State) (a : RelevanceTests.Toy.Action)
+    (t : RelevanceTests.Toy.State) => RelevanceTests.Toy.step s a = some t)
+  (state := fun (s : RelevanceTests.Toy.State) => RelevanceTests.Toy.Inv s)
+  (shared := true) (requireRecorded := true)
