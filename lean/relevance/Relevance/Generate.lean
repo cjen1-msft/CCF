@@ -407,6 +407,7 @@ def generate (ns ty setName : Name) (prefix_ : String) (items : Array (String ×
     liftCoreM <| addDecl <| .defnDecl {
       name := declName, levelParams := lps, type := ty, value := p,
       hints := .abbrev, safety := .safe }
+    liftTermElabM <| setReducibleAttribute declName
     preds := preds.push declName
   -- the set: fun xs b => casesOn b (pred₁ xs) …
   let some (_, _, p0) := items[0]? | return
@@ -426,6 +427,7 @@ def generate (ns ty setName : Name) (prefix_ : String) (items : Array (String ×
   liftCoreM <| addDecl <| .defnDecl {
     name := ns ++ setName, levelParams := lps, type := tyv, value := v,
     hints := .abbrev, safety := .safe }
+  liftTermElabM <| setReducibleAttribute (ns ++ setName)
 
 /-- Whether the proof of `d` records split `split` (a `splitMark` with that name). -/
 def recordsSplit (env : Environment) (d : Name) (split : String) : Bool :=

@@ -953,13 +953,21 @@ def discrProps (info : SplitElimInfo) (ctor : Name) (fields : Array Expr) :
         out := out.push eq
   return out
 
-private def isTrivialEq (ty : Expr) : Bool :=
+private def isTrivialEq (ty : Expr) : MetaM Bool := do
   match ty.eq? with
-  | some (_, lhs, rhs) => lhs == rhs
+  | some (_, lhs, rhs) =>
+    if lhs == rhs then return true
+    if ← (try isProof lhs catch _ => pure false) then return true
+    return false
   | none =>
     match ty.heq? with
-    | some (_, lhs, _, rhs) => lhs == rhs
-    | none => false
+    | some (α, lhs, β, rhs) =>
+      if lhs == rhs then return true
+      if ← (try isProof lhs catch _ => pure false) then
+        if ← (try withNewMCtxDepth (isDefEq α β) catch _ => pure false) then
+          return true
+      return false
+    | none => return false
 
 private def hasDefEqProp (tys : Array Expr) (ty : Expr) : MetaM Bool := do
   for t in tys do
@@ -1433,14 +1441,14 @@ partial def walkBranch (f α tag dead p : Expr) : M Expr := do
     if conds.any (· == d.toExpr) then continue
     unless ← isProp d.type do continue
     let ty ← zetaAll d.type
-    if isTrivialEq ty then continue
+    if ← isTrivialEq ty then continue
     if ← hasDefEqProp seenTys ty then continue
     conds := conds.push d.toExpr
     seenTys := seenTys.push ty
   let mut condProps : Array Expr := #[]
   for p in ctx.splitProps do
     let ty ← zetaAll p
-    if isTrivialEq ty then continue
+    if ← isTrivialEq ty then continue
     if ← hasDefEqProp seenTys ty then continue
     condProps := condProps.push ty
     seenTys := seenTys.push ty

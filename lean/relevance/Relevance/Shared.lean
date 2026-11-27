@@ -295,8 +295,194 @@ def carryTo (args ps : Array Expr) (e : Expr) : Option Expr :=
   let r := e.replace fun t => (args.findIdx? (· == t)).bind (ps[·]?)
   if (collectFVars {} r).fvarIds.all fun f => ps.any (·.fvarId! == f) then some r else none
 
+/-- Reduce beta redexes and structure-constructor projections (`(Ctor a₁ ... aₖ).i ↦ aᵢ`)
+without unfolding arbitrary user definitions. -/
+partial def betaProjReduce (e : Expr) : MetaM Expr := do
+  let e := e.headBeta
+  match e with
+  | .mdata _ b => betaProjReduce b
+  | .proj S i b =>
+    let b' ← betaProjReduce b
+    if let some r ← reduceProj? (.proj S i b') then
+      betaProjReduce r
+    else
+      return .proj S i b'
+  | .app .. =>
+    let f := e.getAppFn
+    let args ← e.getAppArgs.mapM betaProjReduce
+    if let .const c _ := f then
+      if let some pinfo := (← getEnv).getProjectionFnInfo? c then
+        if args.size > pinfo.numParams then
+          let major := args[pinfo.numParams]!
+          if let some (.ctorInfo cv) := (← getEnv).find? pinfo.ctorName then
+            if major.isAppOfArity pinfo.ctorName (cv.numParams + cv.numFields) then
+              let field := major.getAppArgs[cv.numParams + pinfo.i]!
+              let extra := args.extract (pinfo.numParams + 1) args.size
+              return ← betaProjReduce (mkAppN field extra)
+    let f' ← betaProjReduce f
+    let res := mkAppN f' args
+    if f'.isLambda then betaProjReduce res else return res
+  | .lam n t b bi =>
+    let t' ← betaProjReduce t
+    withLocalDecl n bi t' fun x => do
+      let b' ← betaProjReduce (b.instantiate1 x)
+      mkLambdaFVars #[x] b'
+  | .forallE n t b bi =>
+    let t' ← betaProjReduce t
+    withLocalDecl n bi t' fun x => do
+      let b' ← betaProjReduce (b.instantiate1 x)
+      mkForallFVars #[x] b'
+  | .letE _ _ v b _ =>
+    let v' ← betaProjReduce v
+    betaProjReduce (b.instantiate1 v')
+  | _ => return e
+
+private partial def flattenAnd (e : Expr) : Array Expr :=
+  if e.isAppOfArity ``And 2 then flattenAnd (e.getArg! 0) ++ flattenAnd (e.getArg! 1)
+  else #[e]
+
+private partial def flattenOr (e : Expr) : Array Expr :=
+  if e.isAppOfArity ``Or 2 then flattenOr (e.getArg! 0) ++ flattenOr (e.getArg! 1)
+  else #[e]
+
+/-- Try to match `eq` as `a = Ctor x` (or `Ctor x = a`) where `Ctor` is a 1-field constructor
+of a 0-param, 0-index inductive and `a` does not mention `x`. Returns `(indName, ctorName, a)`. -/
+private def unaryCtorPin? (x eq : Expr) : MetaM (Option (Name × Name × Expr)) := do
+  let some (_, lhs, rhs) := eq.eq? | return none
+  let checkPair (scrut pat : Expr) : MetaM (Option (Name × Name × Expr)) := do
+    if scrut.containsFVar x.fvarId! then return none
+    let .const ctorName [] := pat.getAppFn | return none
+    let args := pat.getAppArgs
+    unless args.size == 1 && args[0]! == x do return none
+    let some (.ctorInfo cv) := (← getEnv).find? ctorName | return none
+    let some (.inductInfo iv) := (← getEnv).find? cv.induct | return none
+    unless iv.numParams == 0 && iv.numIndices == 0 && cv.numFields == 1 do return none
+    unless ← (try withNewMCtxDepth (isDefEq (← inferType scrut) (mkConst iv.name)) catch _ => pure false) do
+      return none
+    return some (iv.name, ctorName, scrut)
+  if let some r ← checkPair lhs rhs then return some r
+  checkPair rhs lhs
+
+/-- Find a direct homogeneous `Eq` pin `x = rhs` or `rhs = x` inside `e` across `And` and
+nested `Exists` binders (ensuring `rhs` does not mention `x` or any crossed inner binder). -/
+private partial def findEqPinUnderExists (x e : Expr) (blocked : Array FVarId := #[]) :
+    MetaM (Option Expr) := do
+  if let some (_, lhs, rhs) := e.eq? then
+    let ok (t : Expr) : Bool :=
+      !t.containsFVar x.fvarId! && blocked.all (!t.containsFVar ·)
+    if lhs == x && ok rhs then return some rhs
+    if rhs == x && ok lhs then return some lhs
+    return none
+  if e.isAppOfArity ``And 2 then
+    if let some r ← findEqPinUnderExists x (e.getArg! 0) blocked then return some r
+    return ← findEqPinUnderExists x (e.getArg! 1) blocked
+  if e.isAppOfArity ``Exists 2 && e.appArg!.isLambda then
+    let dom := e.getArg! 0
+    let lam := e.appArg!
+    return ← withLocalDecl lam.bindingName! lam.bindingInfo! dom fun y =>
+      findEqPinUnderExists x (lam.bindingBody!.instantiate1 y) (blocked.push y.fvarId!)
+  return none
+
+/-- Core equivalence-preserving cleanup assuming beta/proj reduction has already been run once. -/
+private partial def cleanCore (e : Expr) (fuel : Nat := 32) : MetaM Expr := do
+  if fuel == 0 then return e
+  if e.isConstOf ``True || e.isConstOf ``False then return e
+  if let some (_, lhs, rhs) := e.eq? then
+    if lhs == rhs then return mkConst ``True
+    if ← (try isProof lhs catch _ => pure false) then return mkConst ``True
+    if lhs.isAppOfArity ``Option.some 2 && rhs.isAppOfArity ``Option.some 2 then
+      return ← cleanCore (← mkEq lhs.appArg! rhs.appArg!) (fuel - 1)
+    return e
+  if let some (α, lhs, β, rhs) := e.heq? then
+    if lhs == rhs then return mkConst ``True
+    if ← (try withNewMCtxDepth (isDefEq α β) catch _ => pure false) then
+      if ← (try isProof lhs catch _ => pure false) then return mkConst ``True
+      return ← cleanCore (← mkEq lhs rhs) (fuel - 1)
+    return e
+  if e.isAppOfArity ``Not 1 then
+    let inner ← cleanCore e.appArg! (fuel - 1)
+    if inner.isConstOf ``True then return mkConst ``False
+    if inner.isConstOf ``False then return mkConst ``True
+    return mkNot inner
+  if e.isAppOfArity ``Or 2 then
+    let parts := flattenOr e
+    let mut out : Array Expr := #[]
+    for p in parts do
+      let p' ← cleanCore p (fuel - 1)
+      if p'.isConstOf ``True then return mkConst ``True
+      if p'.isConstOf ``False then continue
+      for q in flattenOr p' do
+        unless out.contains q do out := out.push q
+    return mkOrN out
+  if e.isAppOfArity ``And 2 then
+    let parts := flattenAnd e
+    let mut out : Array Expr := #[]
+    for p in parts do
+      let p' ← cleanCore p (fuel - 1)
+      if p'.isConstOf ``False then return mkConst ``False
+      if p'.isConstOf ``True then continue
+      for q in flattenAnd p' do
+        unless out.contains q do out := out.push q
+    return mkAndN out
+  if e.isAppOfArity ``Exists 2 && e.appArg!.isLambda then
+    let dom := e.getArg! 0
+    let lam := e.appArg!
+    return ← withLocalDecl lam.bindingName! lam.bindingInfo! dom fun x => do
+      let body ← cleanCore (lam.bindingBody!.instantiate1 x) (fuel - 1)
+      if body.isConstOf ``False then return mkConst ``False
+      -- Unused Prop-typed existential: `∃ _ : P, Q` ↔ `P ∧ Q`
+      if (← isProp dom) && !body.containsFVar x.fvarId! then
+        return ← cleanCore (mkAnd dom body) (fuel - 1)
+      -- 1. Check for a homogeneous `Eq` pin `x = rhs` across `And` and nested `Exists`
+      if let some rhs' ← findEqPinUnderExists x body then
+        let substBody ← betaProjReduce (body.replaceFVars #[x] #[rhs'])
+        return ← cleanCore substBody (fuel - 1)
+      let conjs := flattenAnd body
+      -- 2. Check for a unary constructor pin `a = Ctor x` (0-param 0-index inductive)
+      for i in [:conjs.size] do
+        if let some (indName, ctorName, scrut) ← unaryCtorPin? x conjs[i]! then
+          let rest := conjs.eraseIdx! i
+          let restExpr ← cleanCore (mkAndN rest) (fuel - 1)
+          let some (.inductInfo iv) := (← getEnv).find? indName | break
+          let motive ← withLocalDeclD `scrut (mkConst indName) fun s =>
+            mkLambdaFVars #[s] (mkSort Level.zero)
+          let mut arms : Array Expr := #[]
+          let mut ok := true
+          for cn in iv.ctors do
+            let some (.ctorInfo cv) := (← getEnv).find? cn | ok := false; break
+            if cn == ctorName then
+              arms := arms.push (← mkLambdaFVars #[x] restExpr)
+            else
+              let arm ← forallTelescope cv.type fun fs _ =>
+                mkLambdaFVars fs (mkConst ``False)
+              arms := arms.push arm
+          if ok then
+            return mkAppN (mkConst (mkCasesOnName indName) [Level.one]) (#[motive, scrut] ++ arms)
+      -- 3. Hoist a `List` membership or `Nat` upper-bound guard to the front for `Decidable`
+      let isGuard (c : Expr) : Bool :=
+        (c.isAppOfArity ``Membership.mem 5 && c.getArg! 4 == x &&
+          (c.getArg! 1).isAppOfArity ``List 1 && !(c.getArg! 3).containsFVar x.fvarId!) ||
+        ((c.isAppOfArity ``LT.lt 4 || c.isAppOfArity ``LE.le 4) &&
+          (c.getArg! 0).isConstOf ``Nat && c.getArg! 2 == x && !(c.getArg! 3).containsFVar x.fvarId!)
+      let reordered :=
+        match conjs.findIdx? isGuard with
+        | some idx =>
+          if idx == 0 then body
+          else mkAndN (#[conjs[idx]!] ++ conjs.eraseIdx! idx)
+        | none => body
+      let lam' ← mkLambdaFVars #[x] reordered
+      let lam' := lam'.updateLambdaE! dom lam'.bindingBody!
+      return mkApp2 (mkConst ``Exists [← getLevel dom]) dom lam'
+  return e
+
+/-- Equivalence-preserving cleanup of a generated `shared := true` predicate: runs beta and
+structure-projection reduction once, then `cleanCore`. -/
+def cleanSharedProp (e : Expr) : MetaM Expr := do
+  cleanCore (← betaProjReduce e)
+
 /-- Group disjuncts by flags and carried premises (not clause name) into `reach` definitions
-over `xs ++ ys`, merging clause-name metadata and deduplicating identical disjuncts. -/
+over `xs ++ ys`, merging clause-name metadata, cleaning predicates, deduplicating disjuncts,
+and reusing existing `reach` constants instead of minting pure aliases. -/
 def mkReach (inp : SharedIn) (ys : Array Expr) (ds : Array Disj) :
     ShM (Array Combo) := do
   let mut out := #[]
@@ -309,11 +495,21 @@ def mkReach (inp : SharedIn) (ys : Array Expr) (ds : Array Disj) :
     let mut cns : Array Name := #[]
     for d in ds do
       if d.clause == cl && d.bound == bd && d.prem == pm then
-        unless es.contains d.e do es := es.push d.e
+        let e' ← cleanSharedProp d.e
+        unless e'.isConstOf ``False || es.contains e' do es := es.push e'
         for cn in d.cnames do
           unless cn.isAnonymous || cns.contains cn do cns := cns.push cn
     if es.isEmpty then continue
-    let v ← mkLambdaFVars (inp.xs ++ ys) (mkOrN es)
+    let disj := if es.any (·.isConstOf ``True) then mkConst ``True else mkOrN es
+    -- Pure alias check: if `disj` is literally `reach_j xs ys`, reuse `reach_j` directly!
+    let allParams := inp.xs ++ ys
+    if disj.getAppArgs == allParams then
+      if let .const existing ls := disj.getAppFn then
+        if existing.getPrefix == inp.ns && existing.getString!.startsWith "reach_" then
+          out := out.push { reach := mkConst existing ls, clause := cl, bound := bd,
+                            prem := pm, cnames := cns }
+          continue
+    let v ← mkLambdaFVars allParams disj
     let v ← instantiateMVars v
     let k := (← get).defs.size
     let name := inp.ns ++ Name.mkSimple s!"reach_{k}"
@@ -611,7 +807,8 @@ def sharedClasses (cfg : Config) (ns : Name) (level : Level) (pat : Expr)
     let mut out := #[]
     for key in keys do
       let (es, os) := acc.getD key (#[], #[])
-      let pred ← instantiateMVars (← mkLambdaFVars xs (mkOrN es))
+      let body ← cleanSharedProp (mkOrN es)
+      let pred ← instantiateMVars (← mkLambdaFVars xs body)
       let co := (← get).clauseOf
       let clauses := os.foldl (init := #[]) fun acc bi =>
         let b := branches[bi]!

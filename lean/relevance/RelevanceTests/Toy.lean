@@ -20,10 +20,12 @@ namespace RelevanceTests.Toy
 structure State where
   sent : List Nat
   high : Nat
+  deriving DecidableEq
 
 inductive Action where
   | send (n : Nat)
   | bump
+  deriving DecidableEq
 
 def step (s : State) : Action → Option State
   | .send n => if n ≤ s.high then some { s with sent := n :: s.sent } else none
@@ -313,3 +315,32 @@ example (s t : Nat) (c : RelevanceTests.Toy.DataWitness.StepCtx s t) (h : c.delt
   unfold_ns RelevanceTests.Toy.DataWitness.Generated
   rintro ⟨_, h0⟩
   exact h h0
+
+/-! Acceptance test for the generic framework: `Toy` generated with `shared := true` is directly
+decidable via `by decide` out of the box, with zero hand-written readers! -/
+#guard_msgs (drop info) in
+relevance_generate RelevanceTests.Toy.Shared
+  (scope := RelevanceTests.Toy.Proof) (package := [RelevanceTests.Toy])
+  (roots := [RelevanceTests.Toy.Proof.inv_step, RelevanceTests.Toy.Proof.at_or_below])
+  (step := fun (s : RelevanceTests.Toy.State) (a : RelevanceTests.Toy.Action)
+    (t : RelevanceTests.Toy.State) => RelevanceTests.Toy.step s a = some t)
+  (state := fun (s : RelevanceTests.Toy.State) => RelevanceTests.Toy.Inv s)
+  (shared := true) (requireRecorded := true)
+
+example : RelevanceTests.Toy.Shared.sig { sent := [], high := 1 } (.send 1)
+    { sent := [1], high := 1 } .inv_step_action_send := by decide
+
+example : ¬ RelevanceTests.Toy.Shared.sig { sent := [], high := 1 } (.send 1)
+    { sent := [1], high := 1 } .inv_step_action_bump := by decide
+
+example : RelevanceTests.Toy.Shared.sig { sent := [], high := 1 } (.send 1)
+    { sent := [1], high := 1 } .inv_step_member_inl := by decide
+
+example : ¬ RelevanceTests.Toy.Shared.sig { sent := [1], high := 1 } (.send 1)
+    { sent := [1, 1], high := 1 } .inv_step_member_inl := by decide
+
+example : RelevanceTests.Toy.Shared.ctx { sent := [0], high := 1 }
+    .at_or_below_order_inl := by decide
+
+example : ¬ RelevanceTests.Toy.Shared.ctx { sent := [1], high := 1 }
+    .at_or_below_order_inl := by decide
