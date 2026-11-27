@@ -82,8 +82,9 @@ structure Combo where
   /-- Under a clause obligation opened above the unit: the clause premises at the pre-state, over
   the unit's parameters, when every variable they mention is passed down as an argument. -/
   prem : Option (Array Expr) := none
-  /-- The clause of the obligation (`.anonymous` when not under one). -/
-  cname : Name := .anonymous
+  /-- The clauses whose obligations feed into this path kind (metadata only; not part of the
+  `mkReach` partition key, so clauses sharing a continuation share one `reach` definition). -/
+  cnames : Array Name := #[]
   deriving Inhabited
 
 /-- One disjunct of a `reach` definition or of a class: its flags, the clause premises at the
@@ -92,7 +93,7 @@ structure Disj where
   clause : Bool
   bound : Bool
   prem : Option (Array Expr) := none
-  cname : Name := .anonymous
+  cnames : Array Name := #[]
   e : Expr
   deriving Inhabited
 
@@ -294,29 +295,35 @@ def carryTo (args ps : Array Expr) (e : Expr) : Option Expr :=
   let r := e.replace fun t => (args.findIdx? (· == t)).bind (ps[·]?)
   if (collectFVars {} r).fvarIds.all fun f => ps.any (·.fvarId! == f) then some r else none
 
-/-- Group disjuncts by flags and carried premises into `reach` definitions over `xs ++ ys`. -/
+/-- Group disjuncts by flags and carried premises (not clause name) into `reach` definitions
+over `xs ++ ys`, merging clause-name metadata and deduplicating identical disjuncts. -/
 def mkReach (inp : SharedIn) (ys : Array Expr) (ds : Array Disj) :
     ShM (Array Combo) := do
   let mut out := #[]
-  let mut keys : Array (Bool × Bool × Option (Array Expr) × Name) := #[]
+  let mut keys : Array (Bool × Bool × Option (Array Expr)) := #[]
   for d in ds do
-    let k := (d.clause, d.bound, d.prem, d.cname)
+    let k := (d.clause, d.bound, d.prem)
     unless keys.contains k do keys := keys.push k
-  for (cl, bd, pm, cn) in keys do
-      let es := ds.filterMap fun d =>
-        if d.clause == cl && d.bound == bd && d.prem == pm && d.cname == cn then some d.e else none
-      if es.isEmpty then continue
-      let v ← mkLambdaFVars (inp.xs ++ ys) (mkOrN es)
-      let v ← instantiateMVars v
-      let k := (← get).defs.size
-      let name := inp.ns ++ Name.mkSimple s!"reach_{k}"
-      let ty ← inferType v
-      let lps := (collectLevelParams {} v).params.toList
-      addDecl <| .defnDecl { name, levelParams := lps, type := ty, value := v,
-                             hints := .abbrev, safety := .safe }
-      modify fun s => { s with defs := s.defs.push name }
-      out := out.push { reach := mkConst name (lps.map mkLevelParam), clause := cl, bound := bd,
-                        prem := pm, cname := cn }
+  for (cl, bd, pm) in keys do
+    let mut es : Array Expr := #[]
+    let mut cns : Array Name := #[]
+    for d in ds do
+      if d.clause == cl && d.bound == bd && d.prem == pm then
+        unless es.contains d.e do es := es.push d.e
+        for cn in d.cnames do
+          unless cn.isAnonymous || cns.contains cn do cns := cns.push cn
+    if es.isEmpty then continue
+    let v ← mkLambdaFVars (inp.xs ++ ys) (mkOrN es)
+    let v ← instantiateMVars v
+    let k := (← get).defs.size
+    let name := inp.ns ++ Name.mkSimple s!"reach_{k}"
+    let ty ← inferType v
+    let lps := (collectLevelParams {} v).params.toList
+    addDecl <| .defnDecl { name, levelParams := lps, type := ty, value := v,
+                           hints := .abbrev, safety := .safe }
+    modify fun s => { s with defs := s.defs.push name }
+    out := out.push { reach := mkConst name (lps.map mkLevelParam), clause := cl, bound := bd,
+                      prem := pm, cnames := cns }
   return out
 
 /-- Run `k` with local variables `ys` standing for the parameters `ps` (declared in `lctx`) of a
@@ -364,8 +371,9 @@ partial def up (inp : SharedIn) (vi : Nat) (S : List Nat) : ShM (Array Combo) :=
     mkReach inp ys (ds.map fun d => { d with bound := d.bound || tb })
   modify fun s => { s with memo := s.memo.insert key r, inProgress := s.inProgress.erase key }
   for c in r do
-    unless c.cname.isAnonymous do
-      modify fun s => { s with unitClauses := s.unitClauses.insert (vi, c.cname) }
+    for cn in c.cnames do
+      unless cn.isAnonymous do
+        modify fun s => { s with unitClauses := s.unitClauses.insert (vi, cn) }
   return r
 
 /-- The disjuncts of a branch or call site at `at_` in unit `ui`: per path kind into `ui`, the
@@ -412,8 +420,8 @@ partial def siteDisjuncts (inp : SharedIn) (ui : Nat) (at_ : SharedAt) (args : A
     match r? with
     | some e =>
       let prem ← carry (cl.map (·.premS))
-      out := out.push { clause := cl.isSome, bound := at_.bound, prem, e,
-                        cname := (cl.map (·.name)).getD .anonymous }
+      let cns := match cl with | some c => #[c.name] | none => #[]
+      out := out.push { clause := cl.isSome, bound := at_.bound, prem, e, cnames := cns }
     | none =>
       nFramed := nFramed + 1
       modify fun s => { s with framedSites := s.framedSites + 1 }
@@ -447,8 +455,9 @@ partial def siteDisjuncts (inp : SharedIn) (ui : Nat) (at_ : SharedAt) (args : A
           continue
       let e ← withExtended at_.lctx (xs ++ ys) (finish (some c.reach))
       let prem ← carry (if useCl then none else c.prem)
+      let cns := if useCl then #[cl.get!.name] else c.cnames
       out := out.push { clause := c.clause || useCl, bound := c.bound || at_.bound, prem, e,
-                        cname := if useCl then cl.get!.name else c.cname }
+                        cnames := cns }
   return (out, nFramed)
 end
 
@@ -571,8 +580,10 @@ def sharedClasses (cfg : Config) (ns : Name) (level : Level) (pat : Expr)
         let (dis, nFramed) ← siteDisjuncts inp ui at_ #[] #[] #[]
         let mut kinds : Array String := #[]
         for d in dis do
-          unless d.cname.isAnonymous || d.bound && !d.clause do
-            modify fun s => { s with clauseOf := s.clauseOf.insert (bi, d.cname) }
+          unless d.bound && !d.clause do
+            for cn in d.cnames do
+              unless cn.isAnonymous do
+                modify fun s => { s with clauseOf := s.clauseOf.insert (bi, cn) }
           let k := if level != .step then "state" else if d.clause then "effect"
             else if d.bound then "unattributed" else "step-own"
           unless kinds.contains k do kinds := kinds.push k
