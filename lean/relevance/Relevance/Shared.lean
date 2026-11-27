@@ -476,6 +476,15 @@ def fixedParams (inp : SharedIn) : MetaM (Array (Array (Option Expr))) := do
       if callers.isEmpty then continue
       for i in [0:inp.arity[vi]!] do
         if fixed[vi]![i]!.isSome then continue
+        let some pd := v.lctx.find? v.params[i]!.fvarId! | continue
+        let pTy ← withExtended v.lctx inp.xs (zetaAll pd.type)
+        let vFixedIds : Array FVarId := Id.run do
+          let mut f := #[]
+          for (p, j) in v.params.zipIdx do
+            if fixed[vi]![j]!.isSome then f := f.push p.fvarId!
+          return f
+        unless (collectFVars {} pTy).fvarIds.all fun f => vFixedIds.contains f do
+          continue
         let mut val : Option Expr := none
         let mut ok := true
         for si in callers do

@@ -687,6 +687,9 @@ partial def zetaHead (e : Expr) : Expr :=
 /-- The pre-state and post-state of the step whose step-pattern binders `ps` take the values
 `args`. -/
 def stepEnds (cfg : Config) (ps args : Array Expr) : MetaM (Option Expr × Option Expr) := do
+  let nBase ← lambdaTelescope cfg.stepPat fun bs _ => pure bs.size
+  let ps := ps.extract 0 nBase
+  let args := args.extract 0 nBase
   let mut es := #[]
   for (p, a) in ps.zip args do
     if (← p.fvarId!.getBinderInfo) == .default then es := es.push a

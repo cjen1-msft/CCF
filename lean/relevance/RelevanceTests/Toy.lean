@@ -269,3 +269,47 @@ relevance_generate RelevanceTests.Toy.Strict.RejectHidden
     (t : RelevanceTests.Toy.State) => RelevanceTests.Toy.step s a = some t)
   (state := fun (s : RelevanceTests.Toy.State) => RelevanceTests.Toy.Inv s)
   (shared := true) (requireRecorded := true)
+
+/-! Regression test: non-`Prop` step witnesses (such as CCF's `Ctx`) are kept as binders of `sig`
+instead of being existentially closed. -/
+namespace RelevanceTests.Toy.DataWitness
+
+structure StepCtx (s t : Nat) : Type where
+  delta : Nat
+  ok : s + delta = t
+
+structure Inv (_s : Nat) : Prop where
+  ok : True
+
+namespace Proof
+
+theorem helper (n : Nat) : True := by
+  split_rel zero := (by_cases h : n = 0) with
+  | pos => trivial
+  | neg => trivial
+
+theorem root (s t : Nat) (c : StepCtx s t) : True :=
+  helper c.delta
+
+end Proof
+
+end RelevanceTests.Toy.DataWitness
+
+#guard_msgs (drop info) in
+relevance_generate RelevanceTests.Toy.DataWitness.Generated
+  (scope := RelevanceTests.Toy.DataWitness.Proof) (package := [RelevanceTests.Toy.DataWitness])
+  (roots := [RelevanceTests.Toy.DataWitness.Proof.root])
+  (step := fun (s t : Nat) => RelevanceTests.Toy.DataWitness.StepCtx s t)
+  (state := fun (s : Nat) => RelevanceTests.Toy.DataWitness.Inv s)
+  (shared := true) (requireRecorded := true)
+
+example (s t : Nat) (c : RelevanceTests.Toy.DataWitness.StepCtx s t) (h : c.delta = 0) :
+    RelevanceTests.Toy.DataWitness.Generated.sig s t c .helper_zero_pos := by
+  unfold_ns RelevanceTests.Toy.DataWitness.Generated
+  exact ⟨trivial, h⟩
+
+example (s t : Nat) (c : RelevanceTests.Toy.DataWitness.StepCtx s t) (h : c.delta ≠ 0) :
+    ¬ RelevanceTests.Toy.DataWitness.Generated.sig s t c .helper_zero_pos := by
+  unfold_ns RelevanceTests.Toy.DataWitness.Generated
+  rintro ⟨_, h0⟩
+  exact h h0

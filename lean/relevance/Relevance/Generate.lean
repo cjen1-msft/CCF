@@ -136,12 +136,26 @@ def derivedState (cfg : Config) (xs : Array Expr) : MetaM (Option (Array Expr)) 
       if let #[keep] := found then return some keep
   return none
 
+/-- If `stepPat` returns a non-`Prop` witness type (such as `Ctx f after : Type`), extend its
+lambda binders with `(stepWitness : body)` so the witness is kept as a predicate parameter
+instead of existentially closed at every call site. -/
+def stepSigPattern (stepPat : Expr) : MetaM Expr :=
+  lambdaTelescope stepPat fun ps body => do
+    if ← isProp body then
+      return stepPat
+    withLocalDeclD `stepWitness body fun w =>
+      mkLambdaFVars (ps.push w) body
+
 /-- The theorem's level and, for step and state levels, the root binders matched by the pattern.
+When the matched step hypothesis has a non-`Prop` type, it is included in the kept binders.
 With `derived`, a theorem with a hypothesis that a theorem of `cfg.derive` turns into the state
 pattern is state-level too. -/
 def classify (cfg : Config) (xs : Array Expr) (derived := true) : MetaM (Level × Array Expr) := do
   for x in xs do
-    if let some vs ← matchPat cfg.stepPat (← inferType x) then return (.step, vs)
+    let ty ← inferType x
+    if let some vs ← matchPat cfg.stepPat ty then
+      if ← isProp ty then return (.step, vs)
+      else return (.step, vs.push x)
   for x in xs do
     if let some vs ← matchPat cfg.statePat (← inferType x) then
       let some sv := vs.back? | continue
@@ -273,11 +287,12 @@ def analyse (cfg : Config) (roots : Array Name) : MetaM Result := do
     res := { res with levels := res.levels.push (c, levels.getD c .other, tops.contains c) }
   let mut st : St := {}
   let mut rederived := #[]
+  let stepSigPat ← stepSigPattern cfg.stepPat
   for root in tops ++ others do
     let ci ← getConstInfo root
     let some v := ci.value? (allowOpaque := true) | throwError "relevance: no proof for {root}"
     let pat := match levels.getD root .other with
-      | .step => cfg.stepPat
+      | .step => stepSigPat
       | _ => cfg.statePat
     let (st', rd) ← lambdaTelescope pat fun ps _ => forallTelescope ci.type fun xs _ => do
       let (lvl, keep) ← classify cfg xs (!derivation.contains root)
@@ -644,7 +659,8 @@ syntax (name := relevanceGenerate) "relevance_generate " ident (ppLine relArg)* 
     let walked := r.units.filter (·.walked)
     let rootUnits := r.units.filter (·.isRoot)
     let use (bi : Nat) := counted r.branches[bi]!
-    let st ← liftTermElabM <| sharedClasses cfg ns .step stepPat r.branches r.sites r.units use 0
+    let stepSigPat ← liftTermElabM <| stepSigPattern stepPat
+    let st ← liftTermElabM <| sharedClasses cfg ns .step stepSigPat r.branches r.sites r.units use 0
     let sa ← liftTermElabM <| sharedClasses cfg ns .state statePat r.branches r.sites r.units use st.defs
     let items (cs : Array SharedClass) : Array (String × String × Expr) :=
       let names := uniqueNames (cs.map fun c => sanitize s!"{c.decl.components.getLast!}_{c.split}_{c.tag}")
@@ -827,7 +843,7 @@ syntax (name := relevanceGenerate) "relevance_generate " ident (ppLine relArg)* 
     let mut failed : Array String := #[]
     let mut onlyPP : Array String := #[]
     let mut k : Nat := 0
-    for (lvl, pat, cs) in [(Level.step, stepPat, st.classes), (Level.state, statePat, sa.classes)] do
+    for (lvl, pat, cs) in [(Level.step, stepSigPat, st.classes), (Level.state, statePat, sa.classes)] do
       let roleOk (b : BranchRec) := if lvl == .step then b.role == "step-own" || b.role == "effect"
         else b.role == "state"
       let occs := pp.branches.filter fun b =>
