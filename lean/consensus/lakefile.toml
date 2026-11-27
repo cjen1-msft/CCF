@@ -3,7 +3,10 @@ version = "0.1.0"
 moreLeanArgs = ["-DwarningAsError=true", "-Dtrace.Kernel=true"]
 leanOptions = { autoImplicit = false }
 builtinLint = true
-defaultTargets = ["Consensus", "consensus-replay"]
+# `consensus-reduction` and `consensus-midtrace` are not default targets: every executable
+# defines `main`, so `lake check` of two in one environment fails. CI checks and builds
+# each explicitly.
+defaultTargets = ["Consensus", "consensus-replay", "MidTrace"]
 
 [[require]]
 name = "ccf_common"
@@ -22,3 +25,17 @@ name = "Consensus"
 name = "consensus-replay"
 srcDir = "replay"
 root = "ReplayMain"
+
+[[lean_lib]]
+name = "MidTrace"
+srcDir = "midtrace"
+
+[[lean_exe]]
+name = "consensus-reduction"
+srcDir = "midtrace"
+root = "ReductionMain"
+
+[[lean_exe]]
+name = "consensus-midtrace"
+srcDir = "midtrace"
+root = "MidTraceMain"

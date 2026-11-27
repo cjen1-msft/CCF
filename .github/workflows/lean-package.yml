@@ -28,6 +28,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y elan python3-jsonschema python3-msgpack
+          if [ "$PACKAGE" = "consensus" ]; then sudo DEBIAN_FRONTEND=noninteractive apt-get install -y z3; fi
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -63,12 +64,14 @@ jobs:
             original="$(mktemp)"
             cp lakefile.toml "$original"
             trap 'cp "$original" lakefile.toml; rm "$original"' EXIT
-            for target in Consensus consensus-replay; do
+            # Every executable defines `main`, so check one target per environment.
+            targets=$(python3 -c 'import tomllib; print(*tomllib.load(open("lakefile.toml", "rb"))["defaultTargets"], "consensus-reduction", "consensus-midtrace", sep="\n")')
+            while IFS= read -r target; do
               echo "::group::Kernel and axiom check: $target"
-              sed "s/^defaultTargets = .*/defaultTargets = [\"$target\"]/" "$original" > lakefile.toml
-              lake check --inadvisably-no-sandbox
+              python3 -c 'import json, re, sys; text, n = re.subn(r"^defaultTargets\s*=\s*\[[^\]]*\]", "defaultTargets = " + json.dumps([sys.argv[2]]), open(sys.argv[1]).read(), count=1, flags=re.M); assert n == 1, "no defaultTargets"; sys.stdout.write(text)' "$original" "$target" > lakefile.toml
+              lake check --inadvisably-no-sandbox </dev/null
               echo "::endgroup::"
-            done
+            done <<< "$targets"
             cp "$original" lakefile.toml
             rm "$original"
             trap - EXIT
@@ -97,12 +100,19 @@ jobs:
           fi
           lake lint
 
-      - name: Build CCF consensus replay
+      - name: Build CCF consensus replay, trace reduction and mid-trace checker
         if: inputs.package == 'consensus'
         working-directory: lean/consensus
         run: |
           set -euo pipefail
-          lake build --wfail consensus-replay
+          lake build --wfail consensus-replay consensus-reduction consensus-midtrace
+
+      - name: Check consensus mid-trace witnesses
+        if: inputs.package == 'consensus'
+        working-directory: lean/consensus
+        run: |
+          set -euo pipefail
+          ./scripts/check-midtrace.py .lake/build/bin/consensus-reduction .lake/build/bin/consensus-midtrace z3 "$RUNNER_TEMP/midtrace"
 
       - name: Validate CCF consensus trace fixtures
         if: inputs.package == 'consensus'

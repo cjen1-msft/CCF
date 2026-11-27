@@ -50,7 +50,9 @@ for package in "${PACKAGES[@]}"; do
     if [ "$package" == "disaster-recovery" ]; then
       lake build ccf_common/+CCF
     fi
-    lake build "$library"
+    targets=("$library")
+    if [ "$package" = "consensus" ]; then targets+=(MidTrace); fi
+    lake build "${targets[@]}"
     # The consensus scenarios are a package outside lean/, without leanfmt.
     # The model driver imports them.
     if [ "$package" == "disaster-recovery" ] || [ "$package" == "consensus" ]; then

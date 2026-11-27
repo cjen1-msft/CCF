@@ -71,9 +71,10 @@ def Event.origin (event : Event) (rule : String) : Origin :=
 
 /--
 Order each process's records by `m_ts`, skip driver command records, split events into
-per-node streams sorted by node, and collect node identities.
+per-node streams sorted by node, and collect node identities. In a mid-run window a
+packet may be the only evidence of a peer; `includePacketPeers` includes those IDs too.
 -/
-def prepareEvents (records : Array Record)
+def prepareEvents (records : Array Record) (includePacketPeers := false)
     : Except String (Array (Array Event) × List String) := do
   let records :=
     records.toList.mergeSort
@@ -101,6 +102,9 @@ def prepareEvents (records : Array Record)
       events := events.push { record, m_ts, ts := record.ts, function, node, body, state }
       declared := node :: declared
       match body with
+      | .send event => if includePacketPeers then declared := event.to_node_id :: declared
+      | .recv event =>
+          if includePacketPeers then declared := event.from_node_id :: declared
       | .retiredCommittedTx event => declared := event.retired_node_id :: declared
       | .addConfiguration event => declared := event.nodes ++ declared
       | _ => pure ()

@@ -51,7 +51,8 @@ The build also runs explicit action traces from an initialized network: committi
 The reconfiguration trace checks each node's ledger before delivery, after setup, after replication and commitment, after election, and after the new primary's client request.
 Append regressions check configuration heartbeats followed by flushing, pre-commit packet headers, per-entry flushing, term-bounded packets, and atomic rejection of invalid flush choices.
 These are regression examples, not exhaustive checking.
-`lake check` checks both default targets, `Consensus` and `consensus-replay`, in one invocation.
+CI runs `lake check` separately for each default target, `Consensus`, `consensus-replay` and `MidTrace`, and for `consensus-reduction` and `consensus-midtrace`.
+`consensus-reduction` and `consensus-midtrace` are not default targets, since every executable defines `main` and no two can be checked in one environment.
 It runs without sandboxing here, so build-time code must be trusted.
 `Consensus.lean` reexports `Properties.lean` and the replay API transitively, while importing tests privately.
 The shared `check-imports` command rejects modules missing from that import closure.
@@ -73,3 +74,17 @@ To list the safety-invariant declarations used by the exported theorems, run `la
 The [trace replayer](replay/README.md) checks finite driver observations against direct model transitions, independently of proofs.
 It checks each native send against the model, delivers any matching queued packet, treats undelivered packets as lost, and never repairs model state.
 The current native Fluentd capture path and replay's assurance limits are documented there.
+
+### Mid-trace validation
+
+`consensus-midtrace` checks a suffix of a trace whose start is missing, such as a capture that begins mid-run, by searching for an initial state that satisfies consensus invariants and from which the model replays the suffix.
+`consensus-reduction --trace` writes a trace's groups as self-contained NDJSON lines for it to read, so a Unix slice selects the suffix:
+
+```sh
+lake exe consensus-reduction --trace path/to/trace.msgpack | lake exe consensus-midtrace check --json
+lake exe consensus-reduction --trace path/to/trace.msgpack | tail -n 100 | lake exe consensus-midtrace check --json
+```
+
+It needs an SMT solver, `yices-smt2` on `PATH` by default or another one given with `--solver PATH`.
+See [`MidTrace/Properties.lean`](midtrace/MidTrace/Properties.lean) for the checked certification theorems and their witnesses.
+The [MidTrace README](midtrace/README.md) documents its guarantees, bounds, performance and usage.

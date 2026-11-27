@@ -72,8 +72,10 @@ def Reduced.watermark (reduced : Reduced) (ran : Array Nat) : Float :=
 Prepare replay identities and reduce each node's events into its queue of groups.
 Request IDs continue across nodes, so they are unique in the trace.
 If `lenient`, a node's groups end before its first event that no rule consumes.
+For a mid-trace window, `requireBootstrap := false` permits an absent bootstrap event.
 -/
 def reduce (streams : Array (Array Event)) (declared : List String) (lenient := false)
+    (requireBootstrap : Bool := true)
     : Except String Reduced := do
   let header : Header := { bootstrap := ∅, declared }
   let mut bootstrap := none
@@ -98,8 +100,11 @@ def reduce (streams : Array (Array Event)) (declared : List String) (lenient := 
     queues := queues.push found
     counts := counts.push (events.size, consumed)
     nextRequestId := state.nextRequestId
-  let some leader := bootstrap | throw "no node bootstraps the network"
-  let header := { header with bootstrap := {← header.nodeId leader} }
+  let header ←
+    match bootstrap with
+    | some leader => pure { header with bootstrap := {← header.nodeId leader} }
+    | none =>
+        if requireBootstrap then throw "no node bootstraps the network" else pure header
   return { header, queues, events := counts }
 
 end Consensus.Replay

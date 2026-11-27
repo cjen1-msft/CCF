@@ -371,6 +371,11 @@ private def runGroup (header : Header) (replay : ReplayState) (group : Group)
         (s!"{instruction.origin.label}: " ++ ·))
     replay
 
+/-- Replay a sequence of groups from a given starting state. -/
+def replayFrom (header : Header) (initial : ReplayState) (groups : Array Group)
+    : Except String ReplayState :=
+  groups.foldlM (runGroup header) initial
+
 structure Result where
   /-- Groups run of each node, fewer than it has only if replay is lenient. -/
   ran : Array Nat

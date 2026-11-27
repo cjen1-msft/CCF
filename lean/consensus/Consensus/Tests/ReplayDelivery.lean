@@ -3,9 +3,9 @@ module
 -- Copyright (c) Microsoft Corporation. All rights reserved.
 -- Licensed under the Apache 2.0 License.
 
-meta import Consensus.Replay.Interpreter
+meta import Consensus.Replay.Groups
 
-public import Consensus.Replay.Interpreter
+public import Consensus.Replay.Groups
 
 public section
 
@@ -35,8 +35,37 @@ private def receive (network : List Envelope) : Except String ReplayState :=
   runInstruction header { state := { header.initial with network } }
     (.action (.receive "0" "1" (Packet.ofMessage (appendEntries 1).payload)) default)
 
+private def checkReplayFrom : Except String Unit := do
+  let append (i : Nat) : Group :=
+    {
+      node := "0",
+      start := i,
+      m_ts := i,
+      ts := none,
+      instructions :=
+        #[
+          .action (.local "0" (.append [{ content := .transaction i {} }])) default
+        ]
+    }
+  let queues := #[#[append 1, append 2]]
+  let (result, groups) := ((schedule header queues false).run).run #[]
+  let _ ← result
+  for cut in [:4] do
+    let pre ← replayFrom header { state := header.initial } (groups.extract 0 cut)
+    let n := min cut 2
+    unless pre.state.nodes.head?.any (fun (_, node) => node.log.length == 1 + n) do
+      throw s!"wrong group boundary at cut {cut}"
+    let final ← replayFrom header pre (groups.extract cut groups.size)
+    unless final.state.nodes.head?.any (fun (_, node) => node.log.length == 3) do
+      throw s!"wrong suffix at cut {cut}"
+  let .error "no node bootstraps the network" := reduce #[] ["0"]
+  | throw "missing bootstrap"
+  let reduced ← reduce #[] ["0"] (requireBootstrap := false)
+  if reduced.header.bootstrap.Nonempty then throw "unexpected bootstrap"
+
 /-- Checks delivery selection among queued envelopes whose rendered packets are equal. -/
 def run : IO Unit := do
+  if let .error reason := checkReplayFrom then throw (IO.userError reason)
   match receive [appendEntries 1, appendEntries 1] with
   | .ok replay =>
       unless replay.state.network.count (appendEntries 1) == 1 do
